@@ -7,20 +7,14 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-// ---------------------------------------------------------------------------
-// Marketplace registry abstraction
-//
-// In the monolith, nous used crate::marketplace::local_registry::LocalRegistry
-// directly. As a standalone crate, we define the minimal interface here.
-// The full mela crate will implement this when extracted.
-// ---------------------------------------------------------------------------
-
+mod error;
 mod registry_stub;
+
+pub use error::{NousError, NousErrorKind, Result};
 use registry_stub::LocalRegistry;
 
 // ---------------------------------------------------------------------------
@@ -29,6 +23,7 @@ use registry_stub::LocalRegistry;
 
 /// Where a package comes from.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum PackageSource {
     /// System package via apt/dpkg.
     System,
@@ -55,7 +50,7 @@ impl std::fmt::Display for PackageSource {
 }
 
 /// A resolved package with source and metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedPackage {
     /// Package name.
     pub name: String,
@@ -75,6 +70,7 @@ pub struct ResolvedPackage {
 
 /// Resolution strategy — how nous decides where to look.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[non_exhaustive]
 pub enum ResolutionStrategy {
     /// Check marketplace first, then system (default).
     #[default]
@@ -88,7 +84,7 @@ pub enum ResolutionStrategy {
 }
 
 /// A unified search result across all sources.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnifiedSearchResult {
     /// All matching packages.
     pub results: Vec<ResolvedPackage>,
@@ -99,7 +95,7 @@ pub struct UnifiedSearchResult {
 }
 
 /// Installed package info (unified view across all sources).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstalledPackage {
     /// Package name.
     pub name: String,
@@ -116,7 +112,7 @@ pub struct InstalledPackage {
 }
 
 /// Update available for an installed package.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AvailableUpdate {
     /// Package name.
     pub name: String,
@@ -142,6 +138,7 @@ pub struct SystemPackageDb {
 
 impl SystemPackageDb {
     /// Create a new `SystemPackageDb`, checking whether apt tools exist on PATH.
+    #[must_use]
     pub fn new() -> Self {
         let apt_available = which_exists("apt-cache") && which_exists("dpkg-query");
         if !apt_available {
@@ -151,6 +148,7 @@ impl SystemPackageDb {
     }
 
     /// Whether apt/dpkg tools are available.
+    #[must_use]
     pub fn is_available(&self) -> bool {
         self.apt_available
     }
@@ -166,7 +164,10 @@ impl SystemPackageDb {
             .arg("--names-only")
             .arg(query)
             .output()
-            .context("Failed to run apt-cache search")?;
+            .map_err(|source| NousError::CommandExec {
+                command: "apt-cache search".into(),
+                source,
+            })?;
 
         if !output.status.success() {
             warn!(
@@ -212,7 +213,10 @@ impl SystemPackageDb {
             .arg("${Status}")
             .arg(name)
             .output()
-            .context("Failed to run dpkg-query")?;
+            .map_err(|source| NousError::CommandExec {
+                command: "dpkg-query".into(),
+                source,
+            })?;
 
         if !output.status.success() {
             return Ok(false);
@@ -234,7 +238,10 @@ impl SystemPackageDb {
             .arg("${Package}\t${Version}\t${Installed-Size}\n")
             .arg(name)
             .output()
-            .context("Failed to run dpkg-query")?;
+            .map_err(|source| NousError::CommandExec {
+                command: "dpkg-query".into(),
+                source,
+            })?;
 
         if !output.status.success() {
             return Ok(None);
@@ -274,7 +281,10 @@ impl SystemPackageDb {
             .arg("-f")
             .arg("${Package}\t${Version}\t${Installed-Size}\t${Status}\n")
             .output()
-            .context("Failed to run dpkg-query")?;
+            .map_err(|source| NousError::CommandExec {
+                command: "dpkg-query".into(),
+                source,
+            })?;
 
         if !output.status.success() {
             warn!(
@@ -322,7 +332,10 @@ impl SystemPackageDb {
             .arg("list")
             .arg("--upgradable")
             .output()
-            .context("Failed to run apt list --upgradable")?;
+            .map_err(|source| NousError::CommandExec {
+                command: "apt list --upgradable".into(),
+                source,
+            })?;
 
         if !output.status.success() {
             warn!(
@@ -373,7 +386,10 @@ impl SystemPackageDb {
             .arg("show")
             .arg(name)
             .output()
-            .context("Failed to run apt-cache show")?;
+            .map_err(|source| NousError::CommandExec {
+                command: "apt-cache show".into(),
+                source,
+            })?;
 
         if !output.status.success() {
             return Ok(None);
@@ -447,6 +463,7 @@ pub struct NousResolver {
 
 impl NousResolver {
     /// Create a new resolver with default strategy (MarketplaceFirst).
+    #[must_use]
     pub fn new(marketplace_dir: &Path, cache_dir: &Path) -> Self {
         Self {
             strategy: ResolutionStrategy::default(),
@@ -457,12 +474,14 @@ impl NousResolver {
     }
 
     /// Set the resolution strategy (builder pattern).
+    #[must_use]
     pub fn with_strategy(mut self, strategy: ResolutionStrategy) -> Self {
         self.strategy = strategy;
         self
     }
 
     /// Get the current resolution strategy.
+    #[must_use]
     pub fn strategy(&self) -> &ResolutionStrategy {
         &self.strategy
     }
@@ -602,6 +621,7 @@ impl NousResolver {
     /// - Contains `/` => Marketplace (publisher/name format)
     /// - Ends with `.flutter` or reverse-domain notation (e.g., `com.example.app`) => FlutterApp
     /// - Otherwise => Unknown (needs resolution)
+    #[must_use]
     pub fn detect_source(name: &str) -> PackageSource {
         if name.is_empty() {
             return PackageSource::Unknown;
@@ -633,6 +653,7 @@ impl NousResolver {
     }
 
     /// Check if a package is installed from the marketplace registry.
+    #[must_use]
     pub fn is_marketplace_package(&self, name: &str) -> bool {
         if let Ok(registry) = LocalRegistry::new(&self.marketplace_dir) {
             registry.get_package(name).is_some()
@@ -642,6 +663,7 @@ impl NousResolver {
     }
 
     /// Check if a package is installed as a system package.
+    #[must_use]
     pub fn is_system_package(&self, name: &str) -> bool {
         self.system_package_db.is_installed(name).unwrap_or(false)
     }
@@ -690,18 +712,18 @@ impl NousResolver {
             Err(_) => return Ok(None),
         };
 
-        if let Some(pkg) = registry.get_package(name) {
-            if pkg.manifest.runtime == "flutter" {
-                return Ok(Some(ResolvedPackage {
-                    name: pkg.manifest.agent.name.clone(),
-                    version: pkg.manifest.agent.version.clone(),
-                    source: PackageSource::FlutterApp,
-                    description: pkg.manifest.agent.description.clone(),
-                    size_bytes: Some(pkg.installed_size),
-                    dependencies: pkg.manifest.dependencies.keys().cloned().collect(),
-                    trusted: true,
-                }));
-            }
+        if let Some(pkg) = registry.get_package(name)
+            && pkg.manifest.runtime == "flutter"
+        {
+            return Ok(Some(ResolvedPackage {
+                name: pkg.manifest.agent.name.clone(),
+                version: pkg.manifest.agent.version.clone(),
+                source: PackageSource::FlutterApp,
+                description: pkg.manifest.agent.description.clone(),
+                size_bytes: Some(pkg.installed_size),
+                dependencies: pkg.manifest.dependencies.keys().cloned().collect(),
+                trusted: true,
+            }));
         }
 
         Ok(None)
@@ -886,10 +908,12 @@ mod tests {
         let resolver = NousResolver::new(dir.path(), cache.path());
         let result = resolver.search("test").unwrap();
         assert!(result.total_matches >= 1);
-        assert!(result
-            .results
-            .iter()
-            .any(|p| p.name == "test-tool" && p.source == PackageSource::Marketplace));
+        assert!(
+            result
+                .results
+                .iter()
+                .any(|p| p.name == "test-tool" && p.source == PackageSource::Marketplace)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -906,9 +930,11 @@ mod tests {
 
         let resolver = NousResolver::new(dir.path(), cache.path());
         let installed = resolver.list_installed().unwrap();
-        assert!(installed
-            .iter()
-            .any(|p| p.name == "installed-agent" && p.source == PackageSource::Marketplace));
+        assert!(
+            installed
+                .iter()
+                .any(|p| p.name == "installed-agent" && p.source == PackageSource::Marketplace)
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1271,5 +1297,279 @@ mod tests {
         let resolver = NousResolver::new(dir.path(), cache.path());
         // market-only is a marketplace package, not a system package
         assert!(!resolver.is_system_package("market-only"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Serde roundtrip tests — required by CLAUDE.md for all types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_package_source_serde_roundtrip() {
+        let sources = [
+            PackageSource::System,
+            PackageSource::Marketplace,
+            PackageSource::FlutterApp,
+            PackageSource::Community,
+            PackageSource::Unknown,
+        ];
+        for source in &sources {
+            let json = serde_json::to_string(source).unwrap();
+            let parsed: PackageSource = serde_json::from_str(&json).unwrap();
+            assert_eq!(&parsed, source);
+        }
+    }
+
+    #[test]
+    fn test_resolution_strategy_serde_roundtrip() {
+        let strategies = [
+            ResolutionStrategy::MarketplaceFirst,
+            ResolutionStrategy::SystemFirst,
+            ResolutionStrategy::OnlySource(PackageSource::Marketplace),
+            ResolutionStrategy::OnlySource(PackageSource::System),
+            ResolutionStrategy::OnlySource(PackageSource::FlutterApp),
+            ResolutionStrategy::SearchAll,
+        ];
+        for strategy in &strategies {
+            let json = serde_json::to_string(strategy).unwrap();
+            let parsed: ResolutionStrategy = serde_json::from_str(&json).unwrap();
+            assert_eq!(&parsed, strategy);
+        }
+    }
+
+    #[test]
+    fn test_unified_search_result_serde_roundtrip() {
+        let result = UnifiedSearchResult {
+            results: vec![ResolvedPackage {
+                name: "test".to_string(),
+                version: "1.0.0".to_string(),
+                source: PackageSource::System,
+                description: "A test".to_string(),
+                size_bytes: Some(1024),
+                dependencies: vec!["dep".to_string()],
+                trusted: true,
+            }],
+            sources_searched: vec![PackageSource::System, PackageSource::Marketplace],
+            total_matches: 1,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: UnifiedSearchResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.total_matches, 1);
+        assert_eq!(parsed.results.len(), 1);
+        assert_eq!(parsed.results[0].name, "test");
+        assert_eq!(parsed.sources_searched.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Community variant coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_package_source_community_display() {
+        assert_eq!(PackageSource::Community.to_string(), "community");
+    }
+
+    #[test]
+    fn test_resolve_only_source_community() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+
+        // Community uses the same marketplace registry path
+        let manifest = sample_manifest("community-pkg");
+        install_test_package(dir.path(), &manifest);
+
+        let resolver = NousResolver::new(dir.path(), cache.path())
+            .with_strategy(ResolutionStrategy::OnlySource(PackageSource::Community));
+
+        let result = resolver.resolve("community-pkg").unwrap();
+        assert!(result.is_some());
+        // Community resolves through marketplace registry
+        assert_eq!(result.unwrap().source, PackageSource::Marketplace);
+    }
+
+    // -----------------------------------------------------------------------
+    // Registry stub serde roundtrip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_marketplace_manifest_serde_roundtrip() {
+        let manifest = MarketplaceManifest {
+            agent: AgentInfo {
+                name: "test-agent".to_string(),
+                version: "2.0.0".to_string(),
+                description: "A test agent".to_string(),
+            },
+            dependencies: HashMap::from([("dep-a".to_string(), ">=1.0".to_string())]),
+            runtime: "native".to_string(),
+        };
+        let json = serde_json::to_string(&manifest).unwrap();
+        let parsed: MarketplaceManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.agent.name, "test-agent");
+        assert_eq!(parsed.agent.version, "2.0.0");
+        assert_eq!(parsed.dependencies.len(), 1);
+        assert_eq!(parsed.runtime, "native");
+    }
+
+    // -----------------------------------------------------------------------
+    // Multiple marketplace packages — dedup in search
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_search_dedup_marketplace_priority() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+
+        let m1 = sample_manifest("dup-pkg");
+        install_test_package(dir.path(), &m1);
+
+        let resolver = NousResolver::new(dir.path(), cache.path());
+        let result = resolver.search("dup").unwrap();
+
+        // Should not have duplicate entries for marketplace package
+        let dup_count = result
+            .results
+            .iter()
+            .filter(|p| p.name == "dup-pkg")
+            .count();
+        assert_eq!(dup_count, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Flutter resolution via marketplace with runtime check
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_flutter_non_flutter_runtime_not_resolved_as_flutter() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+
+        // Install a native package — should NOT resolve as FlutterApp
+        let manifest = sample_manifest("native-pkg");
+        install_test_package(dir.path(), &manifest);
+
+        let resolver = NousResolver::new(dir.path(), cache.path())
+            .with_strategy(ResolutionStrategy::OnlySource(PackageSource::FlutterApp));
+
+        let result = resolver.resolve("native-pkg").unwrap();
+        assert!(
+            result.is_none(),
+            "native runtime should not resolve as FlutterApp"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Multiple installed packages listing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_list_installed_multiple_packages() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+
+        for i in 0..5 {
+            let manifest = sample_manifest(&format!("multi-pkg-{i}"));
+            install_test_package(dir.path(), &manifest);
+        }
+
+        let resolver = NousResolver::new(dir.path(), cache.path());
+        let installed = resolver.list_installed().unwrap();
+        let market_pkgs: Vec<_> = installed
+            .iter()
+            .filter(|p| p.name.starts_with("multi-pkg-"))
+            .collect();
+        assert_eq!(market_pkgs.len(), 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // Error type tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_nous_error_display_command_exec() {
+        let err = NousError::CommandExec {
+            command: "apt-cache search".into(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("apt-cache search"));
+        assert!(msg.contains("not found"));
+    }
+
+    #[test]
+    fn test_nous_error_display_dependency_cycle() {
+        let err = NousError::DependencyCycle {
+            cycle: vec!["A".into(), "B".into(), "C".into(), "A".into()],
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("A -> B -> C -> A"));
+    }
+
+    #[test]
+    fn test_nous_error_display_version_conflict() {
+        let err = NousError::VersionConflict {
+            package: "libfoo".into(),
+            description: "A needs >=2.0, B needs <2.0".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("libfoo"));
+        assert!(msg.contains("A needs >=2.0"));
+    }
+
+    #[test]
+    fn test_nous_error_display_invalid_constraint() {
+        let err = NousError::InvalidVersionConstraint {
+            constraint: ">>1.0".into(),
+            reason: "unknown operator >>".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains(">>1.0"));
+        assert!(msg.contains("unknown operator"));
+    }
+
+    #[test]
+    fn test_nous_error_kind_serde_roundtrip() {
+        let kinds = vec![
+            NousErrorKind::CommandExec {
+                command: "apt-cache".into(),
+                message: "not found".into(),
+            },
+            NousErrorKind::InvalidVersionConstraint {
+                constraint: "^1.0".into(),
+                reason: "unsupported".into(),
+            },
+            NousErrorKind::DependencyCycle {
+                cycle: vec!["A".into(), "B".into()],
+            },
+            NousErrorKind::VersionConflict {
+                package: "foo".into(),
+                description: "conflict".into(),
+            },
+            NousErrorKind::RegistryIo {
+                path: "/tmp/test".into(),
+                message: "permission denied".into(),
+            },
+            NousErrorKind::InvalidManifest {
+                path: "/tmp/test/manifest.json".into(),
+                message: "invalid json".into(),
+            },
+        ];
+        for kind in &kinds {
+            let json = serde_json::to_string(kind).unwrap();
+            let parsed: NousErrorKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(&parsed, kind);
+        }
+    }
+
+    #[test]
+    fn test_nous_error_to_kind_conversion() {
+        let err = NousError::DependencyCycle {
+            cycle: vec!["X".into(), "Y".into()],
+        };
+        let kind = NousErrorKind::from(&err);
+        assert_eq!(
+            kind,
+            NousErrorKind::DependencyCycle {
+                cycle: vec!["X".into(), "Y".into()],
+            }
+        );
     }
 }
