@@ -21,7 +21,7 @@ if [[ "${1:-}" == "--save" ]]; then
     HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
     DATE=$(date +%Y%m%d-%H%M%S)
     BASELINE="$HISTORY_DIR/${DATE}_${HASH}.txt"
-    cargo bench -- --output-format=bencher 2>/dev/null | tee "$BASELINE"
+    cargo bench 2>&1 | grep -E '(time:|bench)' | tee "$BASELINE"
     echo ""
     echo "Baseline saved to: $BASELINE"
 fi

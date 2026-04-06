@@ -79,7 +79,7 @@ Nous uses heuristics to detect package source when no explicit source is provide
 
 | Crate | Purpose |
 |-------|---------|
-| anyhow | Error handling |
+| thiserror | Typed error handling |
 | serde / serde_json | Serialization |
 | tracing | Structured logging |
 | chrono | Timestamps |

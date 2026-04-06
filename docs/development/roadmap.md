@@ -44,9 +44,10 @@
 - Package metadata sync
 - Trust integration with sigil
 
-### P5 — Error Quality (Medium-Low)
+### P5 — Error Quality (Medium-Low) — partially complete
 
-- Replace anyhow with dedicated error types (thiserror)
+- ~~Replace anyhow with dedicated error types (thiserror)~~ — done (v0.1.0 unreleased)
+- ~~Package name validation errors~~ — done (v0.1.0 unreleased)
 - Conflict explanation (which constraints conflict)
 - Suggestion engine for typos
 - Resolution trace with --verbose mode
@@ -62,7 +63,8 @@
 
 - [ ] P1 complete — full dependency graph resolution with cycle detection
 - [ ] P2 complete — zugot recipe awareness
-- [ ] P5 complete — dedicated error types, no anyhow
+- [x] P5 partial — dedicated error types via thiserror, anyhow removed
+- [ ] P5 complete — conflict explanations, suggestion engine, resolution trace
 - [ ] All public API documented with examples
 - [ ] Integration tests against real apt on CI
 - [ ] Benchmark regressions gated in CI

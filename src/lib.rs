@@ -131,6 +131,7 @@ pub struct AvailableUpdate {
 // ---------------------------------------------------------------------------
 
 /// Wrapper around apt/dpkg for querying system packages.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SystemPackageDb {
     /// Whether apt is available on this system.
     apt_available: bool,
@@ -449,28 +450,68 @@ impl Default for SystemPackageDb {
 
 /// The nous resolver — given a package name, determines the source and
 /// returns a resolution plan.
+#[derive(Debug)]
 pub struct NousResolver {
     /// Resolution strategy.
     strategy: ResolutionStrategy,
-    /// Root directory for marketplace packages.
-    marketplace_dir: PathBuf,
     /// Cache directory for resolver metadata.
     #[allow(dead_code)]
     cache_dir: PathBuf,
+    /// Marketplace package registry (cached in memory).
+    registry: LocalRegistry,
     /// System package database (apt/dpkg wrapper).
     system_package_db: SystemPackageDb,
 }
 
+/// Serializable snapshot of a [`NousResolver`]'s configuration.
+///
+/// The resolver holds live runtime state (cached registry, system probe results)
+/// that cannot be meaningfully serialized. This helper captures the configuration
+/// so the resolver can be reconstructed on the other side.
+#[derive(Serialize, Deserialize)]
+struct NousResolverConfig {
+    strategy: ResolutionStrategy,
+    marketplace_dir: PathBuf,
+    cache_dir: PathBuf,
+}
+
+impl Serialize for NousResolver {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        let config = NousResolverConfig {
+            strategy: self.strategy.clone(),
+            marketplace_dir: self.registry.base_dir().to_path_buf(),
+            cache_dir: self.cache_dir.clone(),
+        };
+        config.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for NousResolver {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let config = NousResolverConfig::deserialize(deserializer)?;
+        let mut resolver = NousResolver::new(&config.marketplace_dir, &config.cache_dir)
+            .map_err(serde::de::Error::custom)?;
+        resolver.strategy = config.strategy;
+        Ok(resolver)
+    }
+}
+
 impl NousResolver {
     /// Create a new resolver with default strategy (MarketplaceFirst).
-    #[must_use]
-    pub fn new(marketplace_dir: &Path, cache_dir: &Path) -> Self {
-        Self {
+    ///
+    /// Returns an error if the marketplace directory does not exist.
+    pub fn new(marketplace_dir: &Path, cache_dir: &Path) -> Result<Self> {
+        Ok(Self {
             strategy: ResolutionStrategy::default(),
-            marketplace_dir: marketplace_dir.to_path_buf(),
             cache_dir: cache_dir.to_path_buf(),
+            registry: LocalRegistry::new(marketplace_dir)?,
             system_package_db: SystemPackageDb::new(),
-        }
+        })
     }
 
     /// Set the resolution strategy (builder pattern).
@@ -488,14 +529,15 @@ impl NousResolver {
 
     /// Resolve a single package name using the configured strategy.
     pub fn resolve(&self, name: &str) -> Result<Option<ResolvedPackage>> {
+        validate_package_name(name)?;
         debug!(name, ?self.strategy, "Resolving package");
 
         match &self.strategy {
             ResolutionStrategy::MarketplaceFirst => {
-                if let Some(pkg) = self.resolve_from_marketplace(name)? {
+                if let Some(pkg) = self.resolve_from_marketplace(name) {
                     return Ok(Some(pkg));
                 }
-                if let Some(pkg) = self.resolve_from_flutter(name)? {
+                if let Some(pkg) = self.resolve_from_flutter(name) {
                     return Ok(Some(pkg));
                 }
                 self.resolve_from_system(name)
@@ -504,25 +546,25 @@ impl NousResolver {
                 if let Some(pkg) = self.resolve_from_system(name)? {
                     return Ok(Some(pkg));
                 }
-                if let Some(pkg) = self.resolve_from_marketplace(name)? {
+                if let Some(pkg) = self.resolve_from_marketplace(name) {
                     return Ok(Some(pkg));
                 }
-                self.resolve_from_flutter(name)
+                Ok(self.resolve_from_flutter(name))
             }
             ResolutionStrategy::OnlySource(source) => match source {
                 PackageSource::System => self.resolve_from_system(name),
                 PackageSource::Marketplace | PackageSource::Community => {
-                    self.resolve_from_marketplace(name)
+                    Ok(self.resolve_from_marketplace(name))
                 }
-                PackageSource::FlutterApp => self.resolve_from_flutter(name),
+                PackageSource::FlutterApp => Ok(self.resolve_from_flutter(name)),
                 PackageSource::Unknown => Ok(None),
             },
             ResolutionStrategy::SearchAll => {
                 // Return the first match found in priority order
-                if let Some(pkg) = self.resolve_from_marketplace(name)? {
+                if let Some(pkg) = self.resolve_from_marketplace(name) {
                     return Ok(Some(pkg));
                 }
-                if let Some(pkg) = self.resolve_from_flutter(name)? {
+                if let Some(pkg) = self.resolve_from_flutter(name) {
                     return Ok(Some(pkg));
                 }
                 self.resolve_from_system(name)
@@ -540,21 +582,19 @@ impl NousResolver {
         let mut seen_names = std::collections::HashSet::new();
 
         // 1. Marketplace (highest priority for dedup)
-        if let Ok(registry) = LocalRegistry::new(&self.marketplace_dir) {
-            sources_searched.push(PackageSource::Marketplace);
-            for pkg in registry.search(query) {
-                let resolved = ResolvedPackage {
-                    name: pkg.manifest.agent.name.clone(),
-                    version: pkg.manifest.agent.version.clone(),
-                    source: PackageSource::Marketplace,
-                    description: pkg.manifest.agent.description.clone(),
-                    size_bytes: Some(pkg.installed_size),
-                    dependencies: pkg.manifest.dependencies.keys().cloned().collect(),
-                    trusted: true, // marketplace packages are signed
-                };
-                seen_names.insert(resolved.name.clone());
-                results.push(resolved);
-            }
+        sources_searched.push(PackageSource::Marketplace);
+        for pkg in self.registry.search(query) {
+            let resolved = ResolvedPackage {
+                name: pkg.manifest.agent.name.clone(),
+                version: pkg.manifest.agent.version.clone(),
+                source: PackageSource::Marketplace,
+                description: pkg.manifest.agent.description.clone(),
+                size_bytes: Some(pkg.installed_size),
+                dependencies: pkg.manifest.dependencies.keys().cloned().collect(),
+                trusted: true, // marketplace packages are signed
+            };
+            seen_names.insert(resolved.name.clone());
+            results.push(resolved);
         }
 
         // 2. System packages
@@ -566,6 +606,8 @@ impl NousResolver {
             }
         }
 
+        // Deterministic ordering: sort by name
+        results.sort_by(|a, b| a.name.cmp(&b.name));
         let total_matches = results.len();
 
         Ok(UnifiedSearchResult {
@@ -580,23 +622,24 @@ impl NousResolver {
         let mut packages = Vec::new();
 
         // Marketplace packages
-        if let Ok(registry) = LocalRegistry::new(&self.marketplace_dir) {
-            for pkg in registry.list_installed() {
-                packages.push(InstalledPackage {
-                    name: pkg.manifest.agent.name.clone(),
-                    version: pkg.manifest.agent.version.clone(),
-                    source: PackageSource::Marketplace,
-                    install_date: pkg.installed_at,
-                    size_bytes: Some(pkg.installed_size),
-                    auto_installed: false,
-                });
-            }
+        for pkg in self.registry.list_installed() {
+            packages.push(InstalledPackage {
+                name: pkg.manifest.agent.name.clone(),
+                version: pkg.manifest.agent.version.clone(),
+                source: PackageSource::Marketplace,
+                install_date: pkg.installed_at,
+                size_bytes: Some(pkg.installed_size),
+                auto_installed: false,
+            });
         }
 
         // System packages
         for pkg in self.system_package_db.list_installed()? {
             packages.push(pkg);
         }
+
+        // Deterministic ordering: sort by name
+        packages.sort_by(|a, b| a.name.cmp(&b.name));
 
         Ok(packages)
     }
@@ -655,11 +698,7 @@ impl NousResolver {
     /// Check if a package is installed from the marketplace registry.
     #[must_use]
     pub fn is_marketplace_package(&self, name: &str) -> bool {
-        if let Ok(registry) = LocalRegistry::new(&self.marketplace_dir) {
-            registry.get_package(name).is_some()
-        } else {
-            false
-        }
+        self.registry.get_package(name).is_some()
     }
 
     /// Check if a package is installed as a system package.
@@ -672,29 +711,17 @@ impl NousResolver {
     // Private helpers
     // -----------------------------------------------------------------------
 
-    /// Try to resolve a package from the local marketplace registry.
-    fn resolve_from_marketplace(&self, name: &str) -> Result<Option<ResolvedPackage>> {
-        let registry = match LocalRegistry::new(&self.marketplace_dir) {
-            Ok(r) => r,
-            Err(e) => {
-                debug!("Could not open marketplace registry: {}", e);
-                return Ok(None);
-            }
-        };
-
-        if let Some(pkg) = registry.get_package(name) {
-            return Ok(Some(ResolvedPackage {
-                name: pkg.manifest.agent.name.clone(),
-                version: pkg.manifest.agent.version.clone(),
-                source: PackageSource::Marketplace,
-                description: pkg.manifest.agent.description.clone(),
-                size_bytes: Some(pkg.installed_size),
-                dependencies: pkg.manifest.dependencies.keys().cloned().collect(),
-                trusted: true,
-            }));
-        }
-
-        Ok(None)
+    /// Try to resolve a package from the cached marketplace registry.
+    fn resolve_from_marketplace(&self, name: &str) -> Option<ResolvedPackage> {
+        self.registry.get_package(name).map(|pkg| ResolvedPackage {
+            name: pkg.manifest.agent.name.clone(),
+            version: pkg.manifest.agent.version.clone(),
+            source: PackageSource::Marketplace,
+            description: pkg.manifest.agent.description.clone(),
+            size_bytes: Some(pkg.installed_size),
+            dependencies: pkg.manifest.dependencies.keys().cloned().collect(),
+            trusted: true,
+        })
     }
 
     /// Try to resolve a package from the system package database.
@@ -704,18 +731,12 @@ impl NousResolver {
 
     /// Try to resolve a package as a Flutter app.
     ///
-    /// Currently checks the marketplace registry for packages with
+    /// Checks the cached marketplace registry for packages with
     /// `runtime: "flutter"` in their manifest.
-    fn resolve_from_flutter(&self, name: &str) -> Result<Option<ResolvedPackage>> {
-        let registry = match LocalRegistry::new(&self.marketplace_dir) {
-            Ok(r) => r,
-            Err(_) => return Ok(None),
-        };
-
-        if let Some(pkg) = registry.get_package(name)
-            && pkg.manifest.runtime == "flutter"
-        {
-            return Ok(Some(ResolvedPackage {
+    fn resolve_from_flutter(&self, name: &str) -> Option<ResolvedPackage> {
+        let pkg = self.registry.get_package(name)?;
+        if pkg.manifest.runtime == "flutter" {
+            Some(ResolvedPackage {
                 name: pkg.manifest.agent.name.clone(),
                 version: pkg.manifest.agent.version.clone(),
                 source: PackageSource::FlutterApp,
@@ -723,10 +744,10 @@ impl NousResolver {
                 size_bytes: Some(pkg.installed_size),
                 dependencies: pkg.manifest.dependencies.keys().cloned().collect(),
                 trusted: true,
-            }));
+            })
+        } else {
+            None
         }
-
-        Ok(None)
     }
 }
 
@@ -734,14 +755,47 @@ impl NousResolver {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Check if an executable exists on PATH.
+/// Validate a package name: must be non-empty and contain only allowed characters.
+///
+/// Allowed: alphanumeric, `-`, `_`, `.`, `/`, `@`.
+fn validate_package_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(NousError::InvalidPackageName {
+            name: name.to_string(),
+            reason: "package name cannot be empty".to_string(),
+        });
+    }
+
+    let name_trimmed = name.trim();
+    if name_trimmed.len() != name.len() {
+        return Err(NousError::InvalidPackageName {
+            name: name.to_string(),
+            reason: "package name cannot have leading or trailing whitespace".to_string(),
+        });
+    }
+
+    if let Some(bad) = name
+        .chars()
+        .find(|c| !c.is_alphanumeric() && !matches!(c, '-' | '_' | '.' | '/' | '@' | '+'))
+    {
+        return Err(NousError::InvalidPackageName {
+            name: name.to_string(),
+            reason: format!("invalid character '{bad}'"),
+        });
+    }
+
+    Ok(())
+}
+
+/// Check if an executable exists on PATH without shelling out.
 fn which_exists(name: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(name)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths).any(|dir| {
+                let candidate = dir.join(name);
+                candidate.is_file()
+            })
+        })
         .unwrap_or(false)
 }
 
@@ -839,7 +893,7 @@ mod tests {
     fn test_nous_resolver_new() {
         let dir = tempfile::tempdir().unwrap();
         let cache = tempfile::tempdir().unwrap();
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         assert_eq!(*resolver.strategy(), ResolutionStrategy::MarketplaceFirst);
     }
 
@@ -852,6 +906,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = tempfile::tempdir().unwrap();
         let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
             .with_strategy(ResolutionStrategy::SystemFirst);
         assert_eq!(*resolver.strategy(), ResolutionStrategy::SystemFirst);
     }
@@ -868,7 +923,7 @@ mod tests {
         let manifest = sample_manifest("test-scanner");
         install_test_package(dir.path(), &manifest);
 
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         let result = resolver.resolve("test-scanner").unwrap();
         assert!(result.is_some());
         let pkg = result.unwrap();
@@ -888,6 +943,7 @@ mod tests {
 
         // Empty marketplace dir, so nothing to find there
         let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
             .with_strategy(ResolutionStrategy::OnlySource(PackageSource::Marketplace));
         let result = resolver.resolve("nonexistent-package-xyz").unwrap();
         assert!(result.is_none());
@@ -905,7 +961,7 @@ mod tests {
         let manifest = sample_manifest("test-tool");
         install_test_package(dir.path(), &manifest);
 
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         let result = resolver.search("test").unwrap();
         assert!(result.total_matches >= 1);
         assert!(
@@ -928,7 +984,7 @@ mod tests {
         let manifest = sample_manifest("installed-agent");
         install_test_package(dir.path(), &manifest);
 
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         let installed = resolver.list_installed().unwrap();
         assert!(
             installed
@@ -1084,7 +1140,7 @@ mod tests {
         let manifest = sample_manifest("my-agent");
         install_test_package(dir.path(), &manifest);
 
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         assert!(resolver.is_marketplace_package("my-agent"));
         assert!(!resolver.is_marketplace_package("not-installed"));
     }
@@ -1098,7 +1154,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = tempfile::tempdir().unwrap();
 
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         // Should not error even with no packages
         let updates = resolver.check_updates().unwrap();
         // Can't assert exact count (depends on host), just that it doesn't panic
@@ -1118,6 +1174,7 @@ mod tests {
         install_test_package(dir.path(), &manifest);
 
         let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
             .with_strategy(ResolutionStrategy::OnlySource(PackageSource::System));
 
         // This package exists only in marketplace, but strategy is System-only
@@ -1140,6 +1197,7 @@ mod tests {
         install_test_package(dir.path(), &manifest);
 
         let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
             .with_strategy(ResolutionStrategy::OnlySource(PackageSource::Marketplace));
 
         let result = resolver.resolve("market-pkg").unwrap();
@@ -1178,6 +1236,7 @@ mod tests {
         install_test_package(dir.path(), &manifest);
 
         let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
             .with_strategy(ResolutionStrategy::SystemFirst);
 
         // Package exists in marketplace but not system; SystemFirst should
@@ -1198,6 +1257,7 @@ mod tests {
         install_test_package(dir.path(), &manifest);
 
         let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
             .with_strategy(ResolutionStrategy::SearchAll);
 
         let result = resolver.resolve("search-all-pkg").unwrap();
@@ -1212,6 +1272,7 @@ mod tests {
         let cache = tempfile::tempdir().unwrap();
 
         let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
             .with_strategy(ResolutionStrategy::SearchAll);
 
         let result = resolver.resolve("nonexistent-pkg").unwrap();
@@ -1227,6 +1288,7 @@ mod tests {
         install_test_package(dir.path(), &manifest);
 
         let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
             .with_strategy(ResolutionStrategy::OnlySource(PackageSource::FlutterApp));
 
         let result = resolver.resolve("flutter-pkg").unwrap();
@@ -1242,6 +1304,7 @@ mod tests {
         let cache = tempfile::tempdir().unwrap();
 
         let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
             .with_strategy(ResolutionStrategy::OnlySource(PackageSource::Unknown));
 
         let result = resolver.resolve("any-pkg").unwrap();
@@ -1256,7 +1319,7 @@ mod tests {
         let manifest = sample_manifest("searchable-pkg");
         install_test_package(dir.path(), &manifest);
 
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         let result = resolver.search("searchable").unwrap();
         assert!(!result.results.is_empty());
         assert!(result.total_matches > 0);
@@ -1267,7 +1330,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cache = tempfile::tempdir().unwrap();
 
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         let result = resolver.search("nonexistent-xyz-123").unwrap();
         // Marketplace should be empty; system results depend on environment
         assert!(!result.sources_searched.is_empty());
@@ -1281,7 +1344,7 @@ mod tests {
         let manifest = sample_manifest("list-pkg-a");
         install_test_package(dir.path(), &manifest);
 
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         let installed = resolver.list_installed().unwrap();
         assert!(installed.iter().any(|p| p.name == "list-pkg-a"));
     }
@@ -1294,7 +1357,7 @@ mod tests {
         let manifest = sample_manifest("market-only");
         install_test_package(dir.path(), &manifest);
 
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         // market-only is a marketplace package, not a system package
         assert!(!resolver.is_system_package("market-only"));
     }
@@ -1378,6 +1441,7 @@ mod tests {
         install_test_package(dir.path(), &manifest);
 
         let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
             .with_strategy(ResolutionStrategy::OnlySource(PackageSource::Community));
 
         let result = resolver.resolve("community-pkg").unwrap();
@@ -1421,7 +1485,7 @@ mod tests {
         let m1 = sample_manifest("dup-pkg");
         install_test_package(dir.path(), &m1);
 
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         let result = resolver.search("dup").unwrap();
 
         // Should not have duplicate entries for marketplace package
@@ -1447,6 +1511,7 @@ mod tests {
         install_test_package(dir.path(), &manifest);
 
         let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
             .with_strategy(ResolutionStrategy::OnlySource(PackageSource::FlutterApp));
 
         let result = resolver.resolve("native-pkg").unwrap();
@@ -1470,7 +1535,7 @@ mod tests {
             install_test_package(dir.path(), &manifest);
         }
 
-        let resolver = NousResolver::new(dir.path(), cache.path());
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
         let installed = resolver.list_installed().unwrap();
         let market_pkgs: Vec<_> = installed
             .iter()
@@ -1551,6 +1616,10 @@ mod tests {
                 path: "/tmp/test/manifest.json".into(),
                 message: "invalid json".into(),
             },
+            NousErrorKind::InvalidPackageName {
+                name: "bad;pkg".into(),
+                reason: "invalid character ';'".into(),
+            },
         ];
         for kind in &kinds {
             let json = serde_json::to_string(kind).unwrap();
@@ -1571,5 +1640,144 @@ mod tests {
                 cycle: vec!["X".into(), "Y".into()],
             }
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Package name validation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_resolve_rejects_empty_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
+        let err = resolver.resolve("").unwrap_err();
+        assert!(matches!(err, NousError::InvalidPackageName { .. }));
+    }
+
+    #[test]
+    fn test_resolve_rejects_whitespace_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
+        let err = resolver.resolve(" leading").unwrap_err();
+        assert!(matches!(err, NousError::InvalidPackageName { .. }));
+    }
+
+    #[test]
+    fn test_resolve_rejects_special_chars() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
+        let err = resolver.resolve("pkg;rm -rf /").unwrap_err();
+        assert!(matches!(err, NousError::InvalidPackageName { .. }));
+    }
+
+    #[test]
+    fn test_resolve_accepts_valid_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
+            .with_strategy(ResolutionStrategy::OnlySource(PackageSource::Marketplace));
+        // These should not error (may return None, but won't fail validation)
+        assert!(resolver.resolve("valid-pkg").is_ok());
+        assert!(resolver.resolve("publisher/agent").is_ok());
+        assert!(resolver.resolve("com.example.app").is_ok());
+        assert!(resolver.resolve("lib_foo+bar").is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Deterministic ordering
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_list_installed_deterministic_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+
+        // Install in reverse alphabetical order
+        for name in &["zeta-pkg", "alpha-pkg", "mid-pkg"] {
+            let manifest = sample_manifest(name);
+            install_test_package(dir.path(), &manifest);
+        }
+
+        let resolver = NousResolver::new(dir.path(), cache.path()).unwrap();
+        let installed = resolver.list_installed().unwrap();
+        let names: Vec<&str> = installed
+            .iter()
+            .filter(|p| p.source == PackageSource::Marketplace)
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(names, &["alpha-pkg", "mid-pkg", "zeta-pkg"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // InvalidPackageName error display and serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_nous_error_display_invalid_package_name() {
+        let err = NousError::InvalidPackageName {
+            name: "bad;pkg".into(),
+            reason: "invalid character ';'".into(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("bad;pkg"));
+        assert!(msg.contains("invalid character"));
+    }
+
+    #[test]
+    fn test_nous_error_kind_invalid_package_name_serde() {
+        let kind = NousErrorKind::InvalidPackageName {
+            name: "bad".into(),
+            reason: "empty".into(),
+        };
+        let json = serde_json::to_string(&kind).unwrap();
+        let parsed: NousErrorKind = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, kind);
+    }
+
+    // -----------------------------------------------------------------------
+    // Registry error propagation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_resolver_new_fails_with_nonexistent_dir() {
+        let cache = tempfile::tempdir().unwrap();
+        let bad_path = std::path::Path::new("/nonexistent/marketplace/path");
+        let err = NousResolver::new(bad_path, cache.path()).unwrap_err();
+        assert!(matches!(err, NousError::RegistryIo { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Serde roundtrip for service types
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_system_package_db_serde_roundtrip() {
+        let db = SystemPackageDb::new();
+        let json = serde_json::to_string(&db).unwrap();
+        let parsed: SystemPackageDb = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.is_available(), db.is_available());
+    }
+
+    #[test]
+    fn test_nous_resolver_serde_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+
+        let manifest = sample_manifest("serde-test-pkg");
+        install_test_package(dir.path(), &manifest);
+
+        let resolver = NousResolver::new(dir.path(), cache.path())
+            .unwrap()
+            .with_strategy(ResolutionStrategy::SystemFirst);
+        let json = serde_json::to_string(&resolver).unwrap();
+        let parsed: NousResolver = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(*parsed.strategy(), ResolutionStrategy::SystemFirst);
+        // The reconstructed resolver should find the same packages
+        assert!(parsed.is_marketplace_package("serde-test-pkg"));
     }
 }

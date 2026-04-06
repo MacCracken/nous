@@ -41,6 +41,15 @@ pub enum NousError {
         source: serde_json::Error,
     },
 
+    /// A package name contains invalid characters.
+    #[error("invalid package name `{name}`: {reason}")]
+    InvalidPackageName {
+        /// The invalid name.
+        name: String,
+        /// Why it's invalid.
+        reason: String,
+    },
+
     /// A version constraint string could not be parsed.
     ///
     /// Reserved for P1 dependency resolution.
@@ -106,6 +115,13 @@ pub enum NousErrorKind {
         /// The error message.
         message: String,
     },
+    /// Invalid package name.
+    InvalidPackageName {
+        /// The invalid name.
+        name: String,
+        /// Why it's invalid.
+        reason: String,
+    },
     /// Invalid version constraint.
     InvalidVersionConstraint {
         /// The constraint string.
@@ -141,6 +157,10 @@ impl From<&NousError> for NousErrorKind {
             NousError::InvalidManifest { path, source } => NousErrorKind::InvalidManifest {
                 path: path.clone(),
                 message: source.to_string(),
+            },
+            NousError::InvalidPackageName { name, reason } => NousErrorKind::InvalidPackageName {
+                name: name.clone(),
+                reason: reason.clone(),
             },
             NousError::InvalidVersionConstraint { constraint, reason } => {
                 NousErrorKind::InvalidVersionConstraint {

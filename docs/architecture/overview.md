@@ -5,6 +5,7 @@
 ```
 src/
   lib.rs              Main library — types, NousResolver, SystemPackageDb
+  error.rs            Typed error handling (NousError, NousErrorKind)
   registry_stub.rs    Marketplace registry (local filesystem, placeholder for mela)
 ```
 
@@ -51,4 +52,3 @@ See [gaps.md](../development/gaps.md) for prioritized backlog.
 | `recipe.rs` | Zugot build recipe parsing |
 | `cache.rs` | Resolution cache |
 | `registry.rs` | Mela marketplace client (replaces registry_stub) |
-| `error.rs` | Dedicated error types (replace anyhow) |

@@ -1,6 +1,6 @@
 # Nous — Known Gaps & Hardening Targets
 
-> **Status**: Active | **Last Updated**: 2026-04-04
+> **Status**: Active | **Last Updated**: 2026-04-05
 >
 > Nous is currently a minimal resolver. This document tracks the gaps between
 > what exists and what a production resolver needs. Use this as the hardening roadmap.
@@ -9,7 +9,7 @@
 
 ## Current State
 
-Two source files: `lib.rs` (everything) and `registry_stub.rs` (placeholder for mela).
+Three source files: `lib.rs` (types + resolver), `error.rs` (typed errors), and `registry_stub.rs` (placeholder for mela).
 
 **What works:**
 - Single-package resolution across 4 sources (System, Marketplace, FlutterApp, Community)
@@ -91,19 +91,19 @@ Nous currently doesn't read zugot recipes directly. It should.
 
 ## Structural Recommendations
 
-Current structure (everything in `lib.rs`) should split into:
+Current structure should split further as the crate grows:
 
 ```
 src/
 ├── lib.rs              — re-exports, NousResolver
+├── error.rs            — dedicated error types (done)
 ├── types.rs            — PackageSource, ResolvedPackage, etc.
 ├── graph.rs            — dependency graph, topological sort, cycle detection
 ├── strategy.rs         — ResolutionStrategy logic
 ├── system.rs           — SystemPackageDb (extracted from lib.rs)
 ├── recipe.rs           — zugot recipe parsing
 ├── cache.rs            — resolution cache
-├── registry.rs         — mela marketplace client (replaces registry_stub.rs)
-└── error.rs            — dedicated error types (replace anyhow in public API)
+└── registry.rs         — mela marketplace client (replaces registry_stub.rs)
 ```
 
 ---

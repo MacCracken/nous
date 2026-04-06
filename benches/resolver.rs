@@ -51,7 +51,7 @@ fn bench_detect_source(c: &mut Criterion) {
 
 fn bench_resolve_marketplace(c: &mut Criterion) {
     let (market, cache) = setup_registry(50);
-    let resolver = NousResolver::new(market.path(), cache.path());
+    let resolver = NousResolver::new(market.path(), cache.path()).unwrap();
 
     c.bench_function("resolve_marketplace_hit", |b| {
         b.iter(|| {
@@ -68,7 +68,7 @@ fn bench_resolve_marketplace(c: &mut Criterion) {
 
 fn bench_search(c: &mut Criterion) {
     let (market, cache) = setup_registry(100);
-    let resolver = NousResolver::new(market.path(), cache.path());
+    let resolver = NousResolver::new(market.path(), cache.path()).unwrap();
 
     c.bench_function("search_100_packages", |b| {
         b.iter(|| {
@@ -79,7 +79,7 @@ fn bench_search(c: &mut Criterion) {
 
 fn bench_list_installed(c: &mut Criterion) {
     let (market, cache) = setup_registry(100);
-    let resolver = NousResolver::new(market.path(), cache.path());
+    let resolver = NousResolver::new(market.path(), cache.path()).unwrap();
 
     c.bench_function("list_installed_100", |b| {
         b.iter(|| {
@@ -103,8 +103,9 @@ fn bench_resolve_strategies(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("resolve_strategy");
     for (name, strategy) in &strategies {
-        let resolver =
-            NousResolver::new(market.path(), cache.path()).with_strategy(strategy.clone());
+        let resolver = NousResolver::new(market.path(), cache.path())
+            .unwrap()
+            .with_strategy(strategy.clone());
         group.bench_function(*name, |b| {
             b.iter(|| {
                 black_box(resolver.resolve("bench-pkg-10").unwrap());
