@@ -44,7 +44,7 @@ jobs:
       - name: Build
         run: |
           mkdir -p build
-          cyrius build src/main.cyr build/nous
+          CYRIUS_DCE=1 cyrius build src/main.cyr build/nous
 
       - name: Smoke check
         run: ./build/nous
@@ -143,7 +143,7 @@ jobs:
       - name: Build
         run: |
           mkdir -p build
-          cyrius build src/main.cyr build/nous
+          CYRIUS_DCE=1 cyrius build src/main.cyr build/nous
 
       - name: Run test suite (includes integration_apt)
         run: cyrius test tests/nous.tcyr
