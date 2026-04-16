@@ -64,10 +64,41 @@ fn setup_resolver(n) {
     br = payload(resolver_new(d, c));
 }
 
-fn b_hit() { resolver_resolve(br, str_from("bench-pkg-25")); return 0; }
+fn b_hit() { resolver_resolve(br, str_from("bench-pkg-50")); return 0; }
 fn b_miss() { resolver_resolve(br, str_from("nonexistent-xyz")); return 0; }
 fn b_search() { resolver_search(br, str_from("bench")); return 0; }
 fn b_list() { resolver_list(br); return 0; }
+
+# Strategy benchmarks
+fn b_strat_mkt_first() {
+    resolver_with_strategy(br, strategy_default());
+    resolver_resolve(br, str_from("bench-pkg-50"));
+    return 0;
+}
+fn b_strat_sys_first() {
+    resolver_with_strategy(br, strategy_system_first());
+    resolver_resolve(br, str_from("bench-pkg-50"));
+    return 0;
+}
+fn b_strat_only_mkt() {
+    resolver_with_strategy(br, strategy_only(SOURCE_MARKETPLACE));
+    resolver_resolve(br, str_from("bench-pkg-50"));
+    return 0;
+}
+fn b_strat_search_all() {
+    resolver_with_strategy(br, strategy_search_all());
+    resolver_resolve(br, str_from("bench-pkg-50"));
+    return 0;
+}
+
+# Serde roundtrip benchmark
+fn b_serde() {
+    var pkg = resolved_pkg_new(str_from("bench-pkg"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from("A bench package"), 4096, vec_new(), 1);
+    var json = resolved_to_json(pkg);
+    resolved_from_json(json);
+    return 0;
+}
 
 fn main() {
     alloc_init();
@@ -84,23 +115,46 @@ fn main() {
     bench_run(b2, &b_validate, 100000);
     vec_push(benches, b2);
 
-    setup_resolver(50);
+    setup_resolver(100);
 
-    var b3 = bench_new("resolve_hit");
+    var b3 = bench_new("resolve_mkt_hit");
     bench_run(b3, &b_hit, 10000);
     vec_push(benches, b3);
 
-    var b4 = bench_new("resolve_miss");
+    var b4 = bench_new("resolve_mkt_miss");
     bench_run(b4, &b_miss, 10000);
     vec_push(benches, b4);
 
-    var b5 = bench_new("search_50");
+    var b5 = bench_new("search_100");
     bench_run(b5, &b_search, 1000);
     vec_push(benches, b5);
 
-    var b6 = bench_new("list_installed");
+    var b6 = bench_new("list_installed_100");
     bench_run(b6, &b_list, 1000);
     vec_push(benches, b6);
+
+    # Strategy benchmarks
+    resolver_with_strategy(br, strategy_default());
+    var b7 = bench_new("strat_mkt_first");
+    bench_run(b7, &b_strat_mkt_first, 10000);
+    vec_push(benches, b7);
+
+    var b8 = bench_new("strat_sys_first");
+    bench_run(b8, &b_strat_sys_first, 10000);
+    vec_push(benches, b8);
+
+    var b9 = bench_new("strat_only_mkt");
+    bench_run(b9, &b_strat_only_mkt, 10000);
+    vec_push(benches, b9);
+
+    var b10 = bench_new("strat_search_all");
+    bench_run(b10, &b_strat_search_all, 10000);
+    vec_push(benches, b10);
+
+    # Serde roundtrip
+    var b11 = bench_new("serde_roundtrip");
+    bench_run(b11, &b_serde, 100000);
+    vec_push(benches, b11);
 
     bench_report_all(benches);
     return 0;

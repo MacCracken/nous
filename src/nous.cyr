@@ -351,8 +351,28 @@ fn nous_error_msg(e) {
     var msg = ne_msg(e);
     var detail = ne_detail(e);
     var sb = str_builder_new();
-    if (kind == ERR_INVALID_PACKAGE_NAME) {
+    if (kind == ERR_COMMAND_EXEC) {
+        str_builder_add_cstr(sb, "failed to run `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == ERR_REGISTRY_IO) {
+        str_builder_add_cstr(sb, "registry I/O error at `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == ERR_INVALID_MANIFEST) {
+        str_builder_add_cstr(sb, "invalid manifest at `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == ERR_INVALID_PACKAGE_NAME) {
         str_builder_add_cstr(sb, "invalid package name `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == ERR_INVALID_VERSION_CONSTRAINT) {
+        str_builder_add_cstr(sb, "invalid version constraint `");
         str_builder_add(sb, msg);
         str_builder_add_cstr(sb, "`: ");
         if (detail != 0) { str_builder_add(sb, detail); }
@@ -364,12 +384,13 @@ fn nous_error_msg(e) {
         str_builder_add(sb, msg);
         str_builder_add_cstr(sb, "`: ");
         if (detail != 0) { str_builder_add(sb, detail); }
-    } else {
-        str_builder_add_cstr(sb, "nous error: ");
-        if (msg != 0) { str_builder_add(sb, msg); }
-        if (detail != 0) { str_builder_add_cstr(sb, ": "); str_builder_add(sb, detail); }
     }
     return str_builder_build(sb);
+}
+
+# Serializable error kind companion (mirrors NousErrorKind in Rust)
+fn nous_error_to_kind(e) {
+    return nous_error_new(ne_kind(e), ne_msg(e), ne_detail(e));
 }
 
 # ===================================================================
@@ -562,6 +583,64 @@ fn sort_mpkg(v) {
 # LocalRegistry
 # ===================================================================
 
+# Extract the "dependencies":{...} object from raw JSON into a hashmap.
+# Keys are dep names (C strings in map), values are version constraint Strs.
+fn json_extract_deps(data) {
+    var deps = map_new();
+    var d = str_data(data);
+    var dl = str_len(data);
+    # Find "dependencies"
+    var marker = "dependencies";
+    var mlen = 12;
+    var i = 0;
+    while (i < dl) {
+        if (load8(d + i) == 34 && i + 1 + mlen + 1 <= dl) {
+            if (memeq(d + i + 1, marker, mlen) == 1 && load8(d + i + 1 + mlen) == 34) {
+                # Found "dependencies", skip to opening {
+                var j = i + 1 + mlen + 1;
+                while (j < dl && load8(d + j) != 123) { j = j + 1; }
+                if (j >= dl) { return deps; }
+                j = j + 1;
+                # Parse key:value pairs until }
+                while (j < dl && load8(d + j) != 125) {
+                    # Skip whitespace/commas
+                    while (j < dl) {
+                        var c = load8(d + j);
+                        if (c != 32 && c != 9 && c != 10 && c != 13 && c != 44) { break; }
+                        j = j + 1;
+                    }
+                    if (j >= dl || load8(d + j) == 125) { break; }
+                    # Expect "key"
+                    if (load8(d + j) != 34) { break; }
+                    j = j + 1;
+                    var ks = j;
+                    while (j < dl && load8(d + j) != 34) { j = j + 1; }
+                    var key_str = str_new(d + ks, j - ks);
+                    j = j + 1;
+                    # Skip : and whitespace
+                    while (j < dl) {
+                        var c2 = load8(d + j);
+                        if (c2 != 32 && c2 != 9 && c2 != 10 && c2 != 13 && c2 != 58) { break; }
+                        j = j + 1;
+                    }
+                    # Expect "value"
+                    if (j < dl && load8(d + j) == 34) {
+                        j = j + 1;
+                        var vs = j;
+                        while (j < dl && load8(d + j) != 34) { j = j + 1; }
+                        var val_str = str_new(d + vs, j - vs);
+                        j = j + 1;
+                        map_set(deps, to_cstr(key_str), val_str);
+                    }
+                }
+                return deps;
+            }
+        }
+        i = i + 1;
+    }
+    return deps;
+}
+
 fn parse_manifest_file(file_path) {
     var buf = alloc(8192);
     var n = file_read_all(to_cstr(file_path), buf, 8192);
@@ -575,8 +654,9 @@ fn parse_manifest_file(file_path) {
     if (version == 0) { version = str_from(""); }
     if (desc == 0) { desc = str_from(""); }
     if (runtime == 0) { runtime = str_from("native"); }
+    var deps = json_extract_deps(content);
     var agent = agent_info_new(name, version, desc);
-    return manifest_new(agent, map_new(), runtime);
+    return manifest_new(agent, deps, runtime);
 }
 
 fn scan_installed(base_dir) {
@@ -639,6 +719,17 @@ fn registry_get(reg, name) {
 }
 
 fn registry_list(reg) { return rg_pkgs(reg); }
+
+fn registry_reload(reg) {
+    var dir = rg_dir(reg);
+    var new_pkgs = scan_installed(dir);
+    store64(reg + 8, new_pkgs);
+}
+
+# Stub — real implementation lives in mela. Kept for interface parity.
+fn registry_install_package(reg, tarball, dest) {
+    return Ok(0);
+}
 
 # ===================================================================
 # SystemPackageDb
@@ -944,6 +1035,36 @@ fn source_json(src) {
     return "\"unknown\"";
 }
 
+fn source_from_json(s) {
+    if (str_eq(s, str_from("system")) == 1) { return SOURCE_SYSTEM; }
+    if (str_eq(s, str_from("marketplace")) == 1) { return SOURCE_MARKETPLACE; }
+    if (str_eq(s, str_from("flutter-app")) == 1) { return SOURCE_FLUTTER_APP; }
+    if (str_eq(s, str_from("community")) == 1) { return SOURCE_COMMUNITY; }
+    return SOURCE_UNKNOWN;
+}
+
+fn bool_json(v) {
+    if (v == 1) { return "true"; }
+    return "false";
+}
+
+fn json_str_vec(v) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "[");
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\"");
+        str_builder_add(sb, vec_get(v, i));
+        str_builder_add_cstr(sb, "\"");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "]");
+    return str_builder_build(sb);
+}
+
+# --- ResolvedPkg ---
+
 fn resolved_to_json(pkg) {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"name\":\"");
@@ -956,9 +1077,200 @@ fn resolved_to_json(pkg) {
     str_builder_add(sb, rp_desc(pkg));
     str_builder_add_cstr(sb, "\",\"size_bytes\":");
     str_builder_add_int(sb, rp_size(pkg));
+    str_builder_add_cstr(sb, ",\"dependencies\":");
+    str_builder_add(sb, json_str_vec(rp_deps(pkg)));
     str_builder_add_cstr(sb, ",\"trusted\":");
-    if (rp_trust(pkg) == 1) { str_builder_add_cstr(sb, "true"); }
-    else { str_builder_add_cstr(sb, "false"); }
+    str_builder_add_cstr(sb, bool_json(rp_trust(pkg)));
     str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}
+
+fn resolved_from_json(data) {
+    var name = json_extract_str(data, "name");
+    var ver = json_extract_str(data, "version");
+    var src_s = json_extract_str(data, "source");
+    var desc = json_extract_str(data, "description");
+    if (name == 0) { return 0; }
+    if (ver == 0) { ver = str_from(""); }
+    if (desc == 0) { desc = str_from(""); }
+    var src = SOURCE_UNKNOWN;
+    if (src_s != 0) { src = source_from_json(src_s); }
+    return resolved_pkg_new(name, ver, src, desc, 0, vec_new(), 0);
+}
+
+# --- InstalledPkg ---
+
+fn installed_to_json(pkg) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"");
+    str_builder_add(sb, ip_name(pkg));
+    str_builder_add_cstr(sb, "\",\"version\":\"");
+    str_builder_add(sb, ip_ver(pkg));
+    str_builder_add_cstr(sb, "\",\"source\":");
+    str_builder_add_cstr(sb, source_json(ip_src(pkg)));
+    str_builder_add_cstr(sb, ",\"install_date\":");
+    str_builder_add_int(sb, ip_date(pkg));
+    str_builder_add_cstr(sb, ",\"size_bytes\":");
+    str_builder_add_int(sb, ip_size(pkg));
+    str_builder_add_cstr(sb, ",\"auto_installed\":");
+    str_builder_add_cstr(sb, bool_json(ip_auto(pkg)));
+    str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}
+
+fn installed_from_json(data) {
+    var name = json_extract_str(data, "name");
+    var ver = json_extract_str(data, "version");
+    var src_s = json_extract_str(data, "source");
+    if (name == 0) { return 0; }
+    if (ver == 0) { ver = str_from(""); }
+    var src = SOURCE_UNKNOWN;
+    if (src_s != 0) { src = source_from_json(src_s); }
+    return installed_pkg_new(name, ver, src, 0, 0, 0);
+}
+
+# --- AvailUpdate ---
+
+fn update_to_json(u) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"");
+    str_builder_add(sb, load64(u));
+    str_builder_add_cstr(sb, "\",\"source\":");
+    str_builder_add_cstr(sb, source_json(load64(u + 8)));
+    str_builder_add_cstr(sb, ",\"installed_version\":\"");
+    str_builder_add(sb, load64(u + 16));
+    str_builder_add_cstr(sb, "\",\"available_version\":\"");
+    str_builder_add(sb, load64(u + 24));
+    str_builder_add_cstr(sb, "\"");
+    var changelog = load64(u + 32);
+    if (changelog != 0) {
+        str_builder_add_cstr(sb, ",\"changelog\":\"");
+        str_builder_add(sb, changelog);
+        str_builder_add_cstr(sb, "\"");
+    } else {
+        str_builder_add_cstr(sb, ",\"changelog\":null");
+    }
+    str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}
+
+# --- Strategy ---
+
+fn strategy_to_json(s) {
+    var k = st_kind(s);
+    if (k == STRAT_MARKETPLACE_FIRST) { return str_from("\"MarketplaceFirst\""); }
+    if (k == STRAT_SYSTEM_FIRST) { return str_from("\"SystemFirst\""); }
+    if (k == STRAT_SEARCH_ALL) { return str_from("\"SearchAll\""); }
+    if (k == STRAT_ONLY_SOURCE) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "{\"OnlySource\":");
+        str_builder_add_cstr(sb, source_json(st_only(s)));
+        str_builder_add_cstr(sb, "}");
+        return str_builder_build(sb);
+    }
+    return str_from("\"MarketplaceFirst\"");
+}
+
+fn strategy_from_json(data) {
+    if (str_contains(data, str_from("MarketplaceFirst")) == 1) { return strategy_default(); }
+    if (str_contains(data, str_from("SystemFirst")) == 1) { return strategy_system_first(); }
+    if (str_contains(data, str_from("SearchAll")) == 1) { return strategy_search_all(); }
+    if (str_contains(data, str_from("OnlySource")) == 1) {
+        var src_s = json_extract_str(data, "OnlySource");
+        if (src_s != 0) { return strategy_only(source_from_json(src_s)); }
+    }
+    return strategy_default();
+}
+
+# --- SearchResult ---
+
+fn search_result_to_json(sr) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"results\":[");
+    var res = sr_results(sr);
+    var i = 0;
+    while (i < vec_len(res)) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add(sb, resolved_to_json(vec_get(res, i)));
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "],\"total_matches\":");
+    str_builder_add_int(sb, sr_total(sr));
+    str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}
+
+# --- NousErrorKind ---
+
+fn error_kind_to_json(e) {
+    var sb = str_builder_new();
+    var k = ne_kind(e);
+    str_builder_add_cstr(sb, "{\"kind\":");
+    str_builder_add_int(sb, k);
+    str_builder_add_cstr(sb, ",\"message\":\"");
+    var msg = ne_msg(e);
+    if (msg != 0) { str_builder_add(sb, msg); }
+    str_builder_add_cstr(sb, "\",\"detail\":\"");
+    var det = ne_detail(e);
+    if (det != 0) { str_builder_add(sb, det); }
+    str_builder_add_cstr(sb, "\"}");
+    return str_builder_build(sb);
+}
+
+fn error_kind_from_json(data) {
+    var msg = json_extract_str(data, "message");
+    var det = json_extract_str(data, "detail");
+    if (msg == 0) { msg = str_from(""); }
+    if (det == 0) { det = str_from(""); }
+    # kind is numeric — extract manually
+    var d = str_data(data);
+    var dl = str_len(data);
+    var kind = 0;
+    var kp = str_find(data, str_from("\"kind\":"));
+    if (kp >= 0) {
+        var j = kp + 7;
+        while (j < dl && load8(d + j) >= 48 && load8(d + j) <= 57) {
+            kind = kind * 10 + load8(d + j) - 48;
+            j = j + 1;
+        }
+    }
+    return nous_error_new(kind, msg, det);
+}
+
+# --- AgentInfo ---
+
+fn agent_info_to_json(a) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"");
+    str_builder_add(sb, ai_name(a));
+    str_builder_add_cstr(sb, "\",\"version\":\"");
+    str_builder_add(sb, ai_version(a));
+    str_builder_add_cstr(sb, "\",\"description\":\"");
+    str_builder_add(sb, ai_desc(a));
+    str_builder_add_cstr(sb, "\"}");
+    return str_builder_build(sb);
+}
+
+# --- Manifest ---
+
+fn manifest_to_json(m) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"agent\":");
+    str_builder_add(sb, agent_info_to_json(mf_agent(m)));
+    str_builder_add_cstr(sb, ",\"dependencies\":{");
+    var keys = map_keys(mf_deps(m));
+    var i = 0;
+    while (i < vec_len(keys)) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\"");
+        str_builder_add_cstr(sb, vec_get(keys, i));
+        str_builder_add_cstr(sb, "\":\"");
+        str_builder_add(sb, map_get(mf_deps(m), vec_get(keys, i)));
+        str_builder_add_cstr(sb, "\"");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "},\"runtime\":\"");
+    str_builder_add(sb, mf_runtime(m));
+    str_builder_add_cstr(sb, "\"}");
     return str_builder_build(sb);
 }

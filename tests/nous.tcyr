@@ -384,6 +384,213 @@ fn test_json() {
     assert(str_eq(nb, str_from("test-pkg")), "roundtrip");
 }
 
+# --- New tests ported from Rust for completeness ---
+
+fn test_sysdb_new() {
+    test_group("sysdb_new");
+    var db = sysdb_new();
+    # Just verify construction doesn't crash; apt_available depends on host
+    var avail = sysdb_available(db);
+    assert(avail == 0 || avail == 1, "valid bool");
+}
+
+fn test_check_updates_empty() {
+    test_group("check_updates_empty");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var r = payload(resolver_new(d, c));
+    var upd = resolver_updates(r);
+    assert(is_ok(upd), "updates ok");
+    # Can't assert exact count (depends on host), just that it works
+    var v = payload(upd);
+    assert(vec_len(v) >= 0, "no crash");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_resolver_fails_nonexistent() {
+    test_group("resolver_fails_nonexistent");
+    var c = mkdir_test();
+    var bad = str_from("/nonexistent/marketplace/path");
+    var res = resolver_new(bad, c);
+    assert(is_err_result(res), "bad dir fails");
+    rm_rf(c);
+}
+
+fn test_source_serde_roundtrip() {
+    test_group("source_serde");
+    var sources = vec_new();
+    vec_push(sources, SOURCE_SYSTEM);
+    vec_push(sources, SOURCE_MARKETPLACE);
+    vec_push(sources, SOURCE_FLUTTER_APP);
+    vec_push(sources, SOURCE_COMMUNITY);
+    vec_push(sources, SOURCE_UNKNOWN);
+    var i = 0;
+    while (i < vec_len(sources)) {
+        var src = vec_get(sources, i);
+        var s = source_to_str(src);
+        var back = source_from_json(s);
+        assert_eq(back, src, "source roundtrip");
+        i = i + 1;
+    }
+}
+
+fn test_strategy_serde_roundtrip() {
+    test_group("strategy_serde");
+    var strats = vec_new();
+    vec_push(strats, strategy_default());
+    vec_push(strats, strategy_system_first());
+    vec_push(strats, strategy_search_all());
+    vec_push(strats, strategy_only(SOURCE_MARKETPLACE));
+    vec_push(strats, strategy_only(SOURCE_SYSTEM));
+    vec_push(strats, strategy_only(SOURCE_FLUTTER_APP));
+    var i = 0;
+    while (i < vec_len(strats)) {
+        var s = vec_get(strats, i);
+        var json = strategy_to_json(s);
+        var back = strategy_from_json(json);
+        assert(strategy_eq(s, back), "strategy roundtrip");
+        i = i + 1;
+    }
+}
+
+fn test_search_result_serde() {
+    test_group("search_result_serde");
+    var results = vec_new();
+    vec_push(results, resolved_pkg_new(str_from("test"), str_from("1.0.0"),
+        SOURCE_SYSTEM, str_from("A test"), 1024, vec_new(), 1));
+    var sr = search_result_new(results, vec_new(), 1);
+    var json = search_result_to_json(sr);
+    assert(str_contains(json, str_from("test")), "has name");
+    assert(str_contains(json, str_from("total_matches")), "has total");
+}
+
+fn test_manifest_serde_roundtrip() {
+    test_group("manifest_serde");
+    var deps = map_new();
+    map_set(deps, "dep-a", str_from(">=1.0"));
+    var agent = agent_info_new(str_from("test-agent"), str_from("2.0.0"),
+        str_from("A test agent"));
+    var m = manifest_new(agent, deps, str_from("native"));
+    var json = manifest_to_json(m);
+    assert(str_contains(json, str_from("test-agent")), "has name");
+    assert(str_contains(json, str_from("2.0.0")), "has version");
+    assert(str_contains(json, str_from("dep-a")), "has dep");
+    assert(str_contains(json, str_from("native")), "has runtime");
+}
+
+fn test_error_kind_serde_roundtrip() {
+    test_group("error_kind_serde");
+    var e1 = nous_error_new(ERR_COMMAND_EXEC, str_from("apt-cache"), str_from("not found"));
+    var j1 = error_kind_to_json(e1);
+    var b1 = error_kind_from_json(j1);
+    assert_eq(ne_kind(b1), ERR_COMMAND_EXEC, "kind roundtrip");
+    assert(str_eq(ne_msg(b1), str_from("apt-cache")), "msg roundtrip");
+
+    var e2 = nous_error_new(ERR_DEPENDENCY_CYCLE, str_from("A -> B -> A"), 0);
+    var j2 = error_kind_to_json(e2);
+    assert(str_contains(j2, str_from("A -> B -> A")), "cycle in json");
+
+    var e3 = nous_error_new(ERR_VERSION_CONFLICT, str_from("foo"), str_from("conflict"));
+    var j3 = error_kind_to_json(e3);
+    var b3 = error_kind_from_json(j3);
+    assert_eq(ne_kind(b3), ERR_VERSION_CONFLICT, "conflict kind");
+    assert(str_eq(ne_msg(b3), str_from("foo")), "conflict msg");
+}
+
+fn test_error_display_all_variants() {
+    test_group("error_display_all");
+    var e1 = nous_error_new(ERR_COMMAND_EXEC, str_from("apt-cache search"), str_from("not found"));
+    var m1 = nous_error_msg(e1);
+    assert(str_contains(m1, str_from("apt-cache search")), "cmd exec msg");
+    assert(str_contains(m1, str_from("not found")), "cmd exec detail");
+
+    var e2 = nous_error_new(ERR_REGISTRY_IO, str_from("/tmp/test"), str_from("permission denied"));
+    var m2 = nous_error_msg(e2);
+    assert(str_contains(m2, str_from("/tmp/test")), "registry io path");
+
+    var e3 = nous_error_new(ERR_INVALID_MANIFEST, str_from("/tmp/manifest.json"), str_from("invalid json"));
+    var m3 = nous_error_msg(e3);
+    assert(str_contains(m3, str_from("manifest")), "manifest keyword");
+
+    var e4 = nous_error_new(ERR_INVALID_VERSION_CONSTRAINT, str_from(">>1.0"), str_from("unknown operator >>"));
+    var m4 = nous_error_msg(e4);
+    assert(str_contains(m4, str_from(">>1.0")), "constraint msg");
+    assert(str_contains(m4, str_from("unknown operator")), "constraint detail");
+}
+
+fn test_registry_reload() {
+    test_group("registry_reload");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var reg = payload(registry_new(d));
+    assert_eq(vec_len(registry_list(reg)), 0, "starts empty");
+    write_manifest(d, "late-pkg", "native");
+    registry_reload(reg);
+    assert_eq(vec_len(registry_list(reg)), 1, "after reload");
+    assert(str_eq(mpkg_name(registry_get(reg, str_from("late-pkg"))), str_from("late-pkg")), "found late-pkg");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_deps_parsing() {
+    test_group("deps_parsing");
+    var d = mkdir_test();
+    var inst = join_path(d, str_from("installed"));
+    mkdir_str(inst);
+    var pd = join_path(inst, str_from("dep-test"));
+    mkdir_str(pd);
+    var mp = join_path(pd, str_from("manifest.json"));
+    var json = "{\"agent\":{\"name\":\"dep-test\",\"version\":\"1.0.0\",\"description\":\"test\"},\"dependencies\":{\"libfoo\":\">=1.0\",\"libbar\":\">=2.0\"},\"runtime\":\"native\"}";
+    file_write_all(to_cstr(mp), json, strlen(json));
+    var reg = payload(registry_new(d));
+    var pkg = registry_get(reg, str_from("dep-test"));
+    assert(pkg != 0, "found");
+    var deps = mpkg_deps(pkg);
+    assert_eq(map_has(deps, "libfoo"), 1, "has libfoo");
+    assert_eq(map_has(deps, "libbar"), 1, "has libbar");
+    rm_rf(d);
+}
+
+fn test_resolved_json_roundtrip() {
+    test_group("resolved_json_full");
+    var deps = vec_new();
+    vec_push(deps, str_from("libc"));
+    vec_push(deps, str_from("libssl"));
+    var pkg = resolved_pkg_new(str_from("test-pkg"), str_from("1.2.3"),
+        SOURCE_SYSTEM, str_from("A test package"), 4096, deps, 1);
+    var json = resolved_to_json(pkg);
+    assert(str_contains(json, str_from("libc")), "deps in json");
+    assert(str_contains(json, str_from("libssl")), "deps 2 in json");
+    var back = resolved_from_json(json);
+    assert(back != 0, "parsed back");
+    assert(str_eq(rp_name(back), str_from("test-pkg")), "name back");
+    assert(str_eq(rp_ver(back), str_from("1.2.3")), "ver back");
+    assert_eq(rp_src(back), SOURCE_SYSTEM, "src back");
+}
+
+fn test_installed_json_roundtrip() {
+    test_group("installed_json");
+    var pkg = installed_pkg_new(str_from("my-agent"), str_from("2.0.0"),
+        SOURCE_MARKETPLACE, 1000000, 8192, 0);
+    var json = installed_to_json(pkg);
+    assert(str_contains(json, str_from("my-agent")), "name");
+    assert(str_contains(json, str_from("marketplace")), "src");
+    var back = installed_from_json(json);
+    assert(back != 0, "parsed");
+    assert(str_eq(ip_name(back), str_from("my-agent")), "name back");
+    assert_eq(ip_src(back), SOURCE_MARKETPLACE, "src back");
+}
+
+fn test_update_json() {
+    test_group("update_json");
+    var u = avail_update_new(str_from("openssl"), SOURCE_SYSTEM,
+        str_from("3.0.0"), str_from("3.1.0"), str_from("Security fixes"));
+    var json = update_to_json(u);
+    assert(str_contains(json, str_from("openssl")), "name");
+    assert(str_contains(json, str_from("3.0.0")), "inst ver");
+    assert(str_contains(json, str_from("3.1.0")), "avail ver");
+    assert(str_contains(json, str_from("Security fixes")), "changelog");
+}
+
 fn test_sysdb_unavailable() {
     test_group("sysdb_unavailable");
     var db = sysdb_make(0);
@@ -424,6 +631,20 @@ fn main() {
     test_is_mkt();
     test_errors();
     test_json();
+    test_sysdb_new();
+    test_check_updates_empty();
+    test_resolver_fails_nonexistent();
+    test_source_serde_roundtrip();
+    test_strategy_serde_roundtrip();
+    test_search_result_serde();
+    test_manifest_serde_roundtrip();
+    test_error_kind_serde_roundtrip();
+    test_error_display_all_variants();
+    test_registry_reload();
+    test_deps_parsing();
+    test_resolved_json_roundtrip();
+    test_installed_json_roundtrip();
+    test_update_json();
     test_sysdb_unavailable();
     return assert_summary();
 }
