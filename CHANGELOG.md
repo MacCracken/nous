@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - External research: 8 attack categories analyzed (dependency confusion, supply chain, etc.)
   - Full audit report: `docs/audit/2026-04-16.md`
 
+- **CI/CD** — complete GitHub Actions pipeline
+  - `build-and-test` job: lint all source, build, smoke check, 271 tests, fuzz
+  - `bench` job: run 18 benchmarks, check regression thresholds (1ms micro / 30ms db load)
+  - `integration` job: test suite on ubuntu-latest with real apt/dpkg
+  - `docs` job: verify all required documentation exists
+  - Release workflow: CI gate, version verification, DCE build, tar+sha256 packaging
+  - `docs/api.md` — complete API reference with code examples for all consumer functions
+
 ### Changed
 
 - All sysdb_* functions now use array-based `exec_capture()` instead of shell string concatenation

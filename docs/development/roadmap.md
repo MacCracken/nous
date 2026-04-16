@@ -79,5 +79,5 @@
 - [x] `cyrius lint` clean on all source (0 warnings)
 - [x] 271 tests, 18 benchmarks, 3 fuzz harnesses — all pass
 - [x] All public API documented with examples (`docs/api.md`)
-- [ ] Integration tests against real apt on CI
-- [ ] Benchmark regressions gated in CI
+- [x] Integration tests against real apt on CI (`integration` job runs test suite on ubuntu-latest with apt/dpkg)
+- [x] Benchmark regressions gated in CI (`bench` job checks thresholds: 1ms micro, 30ms recipe_db_load)
