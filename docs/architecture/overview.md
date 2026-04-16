@@ -13,7 +13,6 @@ tests/
   nous.bcyr           Benchmarks (11 benches)
   nous.fcyr           Fuzz harnesses (3 harnesses)
 
-rust-old/             Original Rust source (preserved for reference)
 ```
 
 ## Data Flow

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-04-16
+
+### Removed
+
+- `rust-old/` directory (934MB, mostly target/ artifacts). Original Rust source is preserved in git history. Benchmark comparison captured in `benchmarks-rust-v-cyrius.md`.
+
+### Changed
+
+- Cleaned `.gitignore` — removed `/rust-old/target/` entry
+- Updated architecture overview and CHANGELOG references
+
 ## [1.0.0] - 2026-04-16
 
 ### Added
@@ -96,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking**: Language changed from Rust to Cyrius 5.1.7. All APIs renamed to snake_case function style (e.g., `NousResolver::resolve()` → `resolver_resolve(r, name)`).
 - **Breaking**: Serde derives replaced with manual JSON serialization functions.
 - **Breaking**: Struct field access via accessor functions (e.g., `rp_name(pkg)` instead of `pkg.name`).
-- Rust source preserved in `rust-old/` for reference.
+- Rust source removed (preserved in git history and `benchmarks-rust-v-cyrius.md`).
 
 ### Removed
 

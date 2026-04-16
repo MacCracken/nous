@@ -21,6 +21,5 @@ tarpaulin-report.*
 *.pem
 *.key
 
-# Cyrius port
-/rust-old/target/
+# Cyrius
 /build/

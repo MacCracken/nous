@@ -2016,6 +2016,8 @@ fn cyml_parse(src) {
                 if (kc == 61 || kc == 32 || kc == 9 || kc == 10) { break; }
                 pos = pos + 1;
             }
+            # Guard: if key loop didn't advance, force progress to prevent infinite loop
+            if (pos == kstart) { pos = pos + 1; continue; }
             var key = str_new(d + kstart, pos - kstart);
             # Skip to =
             while (pos < len && (load8(d + pos) == 32 || load8(d + pos) == 9)) { pos = pos + 1; }
