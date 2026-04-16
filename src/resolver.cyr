@@ -10,7 +10,7 @@ fn resolver_new(mkt_dir, cache_dir) {
 }
 
 fn resolver_with_strategy(r, strat) { rs_set_strat(r, strat); return r; }
-fn resolver_strategy(r) { return rs_strat(r); }
+
 
 fn mpkg_to_resolved(pkg, src) {
     var dk = map_keys(mpkg_deps(pkg));
@@ -146,12 +146,5 @@ fn resolver_list(r) {
 }
 
 fn resolver_updates(r) { return sysdb_updates(rs_sys(r)); }
-fn resolver_detect_source(name) { return detect_source(name); }
 fn resolver_is_mkt(r, name) { if (registry_get(rs_reg(r), name) != 0) { return 1; } return 0; }
-
-fn resolver_is_sys(r, name) {
-    var res = sysdb_is_installed(rs_sys(r), name);
-    if (is_ok(res) == 1) { return payload(res); }
-    return 0;
-}
 

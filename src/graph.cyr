@@ -16,7 +16,6 @@ fn dep_graph_new() {
 }
 fn dg_nodes(g) { return load64(g); }
 fn dg_edges(g) { return load64(g + 8); }
-fn dg_versions(g) { return load64(g + 16); }
 
 fn dep_graph_add(g, pkg) {
     var cname = to_cstr(rp_name(pkg));

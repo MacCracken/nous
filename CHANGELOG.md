@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-04-16
+
+### Removed
+
+- Dead code cleanup — 7 unused functions removed:
+  - `recipe_new` — replaced by `recipe_alloc` + `recipe_set_pkg/meta/deps` pattern
+  - `resolver_make_with_recipes` — superseded by `resolver_make` (already allocates rdb slot)
+  - `trace_add` — `trace_msg` used instead
+  - `resolver_detect_source` — thin wrapper; callers use `detect_source` directly
+  - `resolver_is_sys` — unused by any consumer path
+  - `resolver_strategy` — accessor; callers use `rs_strat` directly
+  - `dg_versions` — graph versions field defined but never read
+
+### Changed
+
+- Zero dead functions in library — every defined function is referenced
+
 ## [1.1.0] - 2026-04-16
 
 ### Changed

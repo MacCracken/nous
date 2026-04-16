@@ -16,15 +16,7 @@ fn recipe_set_meta(r, groups, release, url, sha256, patches) {
 fn recipe_set_deps(r, rt_deps, bd_deps) {
     store64(r + 80, rt_deps); store64(r + 88, bd_deps);
 }
-fn recipe_new(name, ver, desc, license, arch, groups) {
-    var r = recipe_alloc();
-    recipe_set_pkg(r, name, ver, desc, license, arch);
-    store64(r + 40, groups); store64(r + 48, 1);
-    store64(r + 56, 0); store64(r + 64, 0);
-    store64(r + 72, vec_new()); store64(r + 80, vec_new());
-    store64(r + 88, vec_new());
-    return r;
-}
+
 
 # Recipe accessors
 fn rc_name(r) { return load64(r); }
@@ -372,28 +364,12 @@ fn recipe_to_resolved(recipe) {
 
 # --- Wire recipes into resolver ---
 
-# Resolver: rs_strat(0) rs_cache(8) rs_reg(16) rs_sys(24) rs_rdb(32)
-# Extended resolver with recipe DB (add 5th field at offset 32)
-fn resolver_make_with_recipes(strat, cache, reg, sysdb, rdb) {
-    var p = alloc(56);
-    store64(p, strat); store64(p + 8, cache);
-    store64(p + 16, reg); store64(p + 24, sysdb);
-    store64(p + 32, rdb); store64(p + 40, vec_new());
-    store64(p + 48, 0);
-    return p;
-}
 fn rs_rdb(r) { return load64(r + 32); }
 fn rs_set_rdb(r, rdb) { store64(r + 32, rdb); }
 fn rs_trace(r) { return load64(r + 40); }
 fn rs_trace_on(r) { return load64(r + 48); }
 
 fn resolver_with_trace(r) { store64(r + 48, 1); return r; }
-
-fn trace_add(r, msg) {
-    if (rs_trace_on(r) == 1) {
-        vec_push(rs_trace(r), msg);
-    }
-}
 
 fn trace_msg(r, prefix, name, result) {
     if (rs_trace_on(r) == 0) { return 0; }
