@@ -1,0 +1,545 @@
+# nous/recipe — zugot recipe parsing, recipe DB, recipe-based resolution
+# ===================================================================
+# P2: Zugot Recipe Integration
+# ===================================================================
+
+# Recipe constructor — split into <=6 arg functions to avoid stack arg corruption
+fn recipe_alloc() { return alloc(96); }
+fn recipe_set_pkg(r, name, ver, desc, license, arch) {
+    store64(r, name); store64(r + 8, ver); store64(r + 16, desc);
+    store64(r + 24, license); store64(r + 32, arch);
+}
+fn recipe_set_meta(r, groups, release, url, sha256, patches) {
+    store64(r + 40, groups); store64(r + 48, release);
+    store64(r + 56, url); store64(r + 64, sha256); store64(r + 72, patches);
+}
+fn recipe_set_deps(r, rt_deps, bd_deps) {
+    store64(r + 80, rt_deps); store64(r + 88, bd_deps);
+}
+fn recipe_new(name, ver, desc, license, arch, groups) {
+    var r = recipe_alloc();
+    recipe_set_pkg(r, name, ver, desc, license, arch);
+    store64(r + 40, groups); store64(r + 48, 1);
+    store64(r + 56, 0); store64(r + 64, 0);
+    store64(r + 72, vec_new()); store64(r + 80, vec_new());
+    store64(r + 88, vec_new());
+    return r;
+}
+
+# Recipe accessors
+fn rc_name(r) { return load64(r); }
+fn rc_ver(r) { return load64(r + 8); }
+fn rc_desc(r) { return load64(r + 16); }
+fn rc_license(r) { return load64(r + 24); }
+fn rc_arch(r) { return load64(r + 32); }
+fn rc_groups(r) { return load64(r + 40); }
+fn rc_release(r) { return load64(r + 48); }
+fn rc_url(r) { return load64(r + 56); }
+fn rc_sha256(r) { return load64(r + 64); }
+fn rc_patches(r) { return load64(r + 72); }
+fn rc_rt_deps(r) { return load64(r + 80); }
+fn rc_bd_deps(r) { return load64(r + 88); }
+
+# RecipeDb constructor (3 fields, 24 bytes)
+fn recipe_db_new(path, recipes, order) {
+    var p = alloc(24);
+    store64(p, path); store64(p + 8, recipes); store64(p + 16, order);
+    return p;
+}
+fn rdb_path(d) { return load64(d); }
+fn rdb_recipes(d) { return load64(d + 8); }
+fn rdb_order(d) { return load64(d + 16); }
+
+# Parse a TOML inline array: ["a", "b", "c"] -> vec of Str
+fn parse_toml_array(s) {
+    var result = vec_new();
+    if (s == 0) { return result; }
+    var d = str_data(s);
+    var len = str_len(s);
+    var i = 0;
+    while (i < len) {
+        if (load8(d + i) == 34) {
+            # Start of quoted string
+            i = i + 1;
+            var start = i;
+            while (i < len && load8(d + i) != 34) { i = i + 1; }
+            if (i > start) {
+                vec_push(result, str_new(d + start, i - start));
+            }
+            i = i + 1;
+        } else {
+            i = i + 1;
+        }
+    }
+    return result;
+}
+
+# CYML parser — handles [section] and [[array]] headers (stdlib toml.cyr misses [section])
+fn cyml_parse(src) {
+    var sections = vec_new();
+    var d = str_data(src);
+    var len = str_len(src);
+    var pos = 0;
+    var cur_name = str_from("");
+    var cur_pairs = vec_new();
+
+    while (pos < len) {
+        var c = load8(d + pos);
+        if (c == 10 || c == 13 || c == 32 || c == 9) { pos = pos + 1; }
+        elif (c == 35) {
+            while (pos < len && load8(d + pos) != 10) { pos = pos + 1; }
+        }
+        elif (c == 91) {
+            # Save current section
+            if (vec_len(cur_pairs) > 0 || str_len(cur_name) > 0) {
+                vec_push(sections, toml_section_new(cur_name, cur_pairs));
+            }
+            pos = pos + 1;
+            # Skip second [ for [[array]]
+            if (pos < len && load8(d + pos) == 91) { pos = pos + 1; }
+            # Read section name (may contain dots: marketplace.sandbox)
+            while (pos < len && load8(d + pos) == 32) { pos = pos + 1; }
+            var nstart = pos;
+            while (pos < len && load8(d + pos) != 93) { pos = pos + 1; }
+            cur_name = str_new(d + nstart, pos - nstart);
+            # Skip ] and optional second ]
+            if (pos < len && load8(d + pos) == 93) { pos = pos + 1; }
+            if (pos < len && load8(d + pos) == 93) { pos = pos + 1; }
+            cur_pairs = vec_new();
+            while (pos < len && load8(d + pos) != 10) { pos = pos + 1; }
+        } else {
+            # key = value
+            var kstart = pos;
+            while (pos < len) {
+                var kc = load8(d + pos);
+                if (kc == 61 || kc == 32 || kc == 9 || kc == 10) { break; }
+                pos = pos + 1;
+            }
+            # Guard: if key loop didn't advance, force progress to prevent infinite loop
+            if (pos == kstart) { pos = pos + 1; continue; }
+            var key = str_new(d + kstart, pos - kstart);
+            # Skip to =
+            while (pos < len && (load8(d + pos) == 32 || load8(d + pos) == 9)) { pos = pos + 1; }
+            if (pos < len && load8(d + pos) == 61) {
+                pos = pos + 1;
+                while (pos < len && (load8(d + pos) == 32 || load8(d + pos) == 9)) { pos = pos + 1; }
+                var value = str_from("");
+                if (pos < len) {
+                    var vc = load8(d + pos);
+                    # Triple-quoted """..."""
+                    if (vc == 34 && pos + 2 < len && load8(d + pos + 1) == 34 && load8(d + pos + 2) == 34) {
+                        pos = pos + 3;
+                        # Skip leading newline
+                        if (pos < len && load8(d + pos) == 10) { pos = pos + 1; }
+                        var vs = pos;
+                        while (pos + 2 < len) {
+                            if (load8(d + pos) == 34 && load8(d + pos + 1) == 34 && load8(d + pos + 2) == 34) { break; }
+                            pos = pos + 1;
+                        }
+                        # Trim trailing newline
+                        var ve = pos;
+                        if (ve > vs && load8(d + ve - 1) == 10) { ve = ve - 1; }
+                        value = str_new(d + vs, ve - vs);
+                        pos = pos + 3;
+                    }
+                    # Double-quoted "..."
+                    elif (vc == 34) {
+                        pos = pos + 1;
+                        var vs = pos;
+                        while (pos < len && load8(d + pos) != 34) { pos = pos + 1; }
+                        value = str_new(d + vs, pos - vs);
+                        if (pos < len) { pos = pos + 1; }
+                    }
+                    # Unquoted: read to end of line
+                    else {
+                        var ustart = pos;
+                        while (pos < len && load8(d + pos) != 10) { pos = pos + 1; }
+                        var uend = pos;
+                        while (uend > ustart) {
+                            var tc = load8(d + uend - 1);
+                            if (tc != 32 && tc != 13) { break; }
+                            uend = uend - 1;
+                        }
+                        value = str_new(d + ustart, uend - ustart);
+                    }
+                }
+                vec_push(cur_pairs, toml_pair_new(key, value));
+            }
+            while (pos < len && load8(d + pos) != 10) { pos = pos + 1; }
+        }
+    }
+    if (vec_len(cur_pairs) > 0 || str_len(cur_name) > 0) {
+        vec_push(sections, toml_section_new(cur_name, cur_pairs));
+    }
+    return sections;
+}
+
+fn cyml_parse_file(path) {
+    var buf = alloc(65536);
+    var n = file_read_all(to_cstr(path), buf, 65536);
+    if (n <= 0) { return vec_new(); }
+    return cyml_parse(str_new(buf, n));
+}
+
+# Get a section's pairs by name from parsed sections
+fn cyml_section_by_name(sections, name) {
+    var i = 0;
+    while (i < vec_len(sections)) {
+        var sec = vec_get(sections, i);
+        if (str_eq(toml_section_name(sec), str_from(name)) == 1) {
+            return toml_section_pairs(sec);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn cyml_get(pairs, key) {
+    var skey = str_from(key);
+    var i = 0;
+    while (i < vec_len(pairs)) {
+        var p = vec_get(pairs, i);
+        if (str_eq(toml_pair_key(p), skey) == 1) {
+            return toml_pair_value(p);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# Parse a .cyml recipe file into a Recipe struct.
+# Returns 0 on failure.
+fn recipe_parse_file(path) {
+    var sections = cyml_parse_file(path);
+    if (vec_len(sections) == 0) { return 0; }
+
+    # [package] section
+    var pkg = cyml_section_by_name(sections, "package");
+    if (pkg == 0) { return 0; }
+    var name = cyml_get(pkg, "name");
+    var ver = cyml_get(pkg, "version");
+    var desc = cyml_get(pkg, "description");
+    var license = cyml_get(pkg, "license");
+    var arch = cyml_get(pkg, "arch");
+    var groups_raw = cyml_get(pkg, "groups");
+    var release_str = cyml_get(pkg, "release");
+    if (name == 0) { name = str_from(""); }
+    if (ver == 0) { ver = str_from(""); }
+    if (desc == 0) { desc = str_from(""); }
+    if (license == 0) { license = str_from(""); }
+    if (arch == 0) { arch = str_from("x86_64"); }
+    var groups = parse_toml_array(groups_raw);
+    var release = 1;
+    if (release_str != 0) { release = str_to_int(release_str); }
+
+    # [source] section
+    var src = cyml_section_by_name(sections, "source");
+    var url = str_from("");
+    var sha256 = str_from("");
+    var patches = vec_new();
+    if (src != 0) {
+        var u = cyml_get(src, "url");
+        if (u != 0) { url = u; }
+        # github_release fallback
+        if (str_len(url) == 0) {
+            var gh = cyml_get(src, "github_release");
+            if (gh != 0) {
+                var asset = cyml_get(src, "release_asset");
+                if (asset == 0) { asset = str_from(""); }
+                # Build URL placeholder: github.com/owner/repo/releases
+                var sb = str_builder_new();
+                str_builder_add_cstr(sb, "https://github.com/");
+                str_builder_add(sb, gh);
+                str_builder_add_cstr(sb, "/releases");
+                url = str_builder_build(sb);
+            }
+        }
+        var s = cyml_get(src, "sha256");
+        if (s != 0) { sha256 = s; }
+        var pa = cyml_get(src, "patches");
+        if (pa != 0) { patches = parse_toml_array(pa); }
+    }
+
+    # [depends] section
+    var deps = cyml_section_by_name(sections, "depends");
+    var rt_deps = vec_new();
+    var bd_deps = vec_new();
+    if (deps != 0) {
+        var rt = cyml_get(deps, "runtime");
+        if (rt != 0) { rt_deps = parse_toml_array(rt); }
+        var bd = cyml_get(deps, "build");
+        if (bd != 0) { bd_deps = parse_toml_array(bd); }
+    }
+
+    var r = recipe_alloc();
+    recipe_set_pkg(r, name, ver, desc, license, arch);
+    recipe_set_meta(r, groups, release, url, sha256, patches);
+    recipe_set_deps(r, rt_deps, bd_deps);
+    return r;
+}
+
+# Read build-order.txt: returns vec of Str ("category/name" entries)
+fn read_build_order(zugot_path) {
+    var order = vec_new();
+    var bo_path = join_path(zugot_path, str_from("build-order.txt"));
+    var buf = alloc(65536);
+    var n = file_read_all(to_cstr(bo_path), buf, 65536);
+    if (n <= 0) { return order; }
+    var content = str_new(buf, n);
+    var lines = str_split(content, 10);
+    var i = 0;
+    while (i < vec_len(lines)) {
+        var line = str_trim(vec_get(lines, i));
+        # Skip empty lines and comments
+        if (str_len(line) > 0 && load8(str_data(line)) != 35) {
+            vec_push(order, line);
+        }
+        i = i + 1;
+    }
+    return order;
+}
+
+# Scan a zugot directory and load all .cyml recipes into a hashmap.
+# Returns a RecipeDb.
+fn recipe_db_load(zugot_path) {
+    var recipes = map_new();
+    var order = read_build_order(zugot_path);
+    var cp = to_cstr(zugot_path);
+
+    # Scan known category directories
+    var categories = vec_new();
+    vec_push(categories, "base");
+    vec_push(categories, "desktop");
+    vec_push(categories, "marketplace");
+    vec_push(categories, "ai");
+    vec_push(categories, "edge");
+    vec_push(categories, "network");
+    vec_push(categories, "browser");
+    vec_push(categories, "python");
+    vec_push(categories, "database");
+    vec_push(categories, "sandbox");
+    vec_push(categories, "bazaar");
+
+    var ci = 0;
+    while (ci < vec_len(categories)) {
+        var cat = str_from(vec_get(categories, ci));
+        var cat_dir = join_path(zugot_path, cat);
+        var cdir = to_cstr(cat_dir);
+        if (our_is_dir(cdir) == 1) {
+            var entries = dir_list(cat_dir);
+            var ei = 0;
+            while (ei < vec_len(entries)) {
+                var entry = vec_get(entries, ei);
+                # Only .cyml files
+                if (str_ends_with(entry, str_from(".cyml")) == 1) {
+                    var fpath = join_path(cat_dir, entry);
+                    var recipe = recipe_parse_file(fpath);
+                    if (recipe != 0) {
+                        map_set(recipes, to_cstr(rc_name(recipe)), recipe);
+                    }
+                }
+                ei = ei + 1;
+            }
+        }
+        ci = ci + 1;
+    }
+
+    return recipe_db_new(zugot_path, recipes, order);
+}
+
+# Look up a recipe by package name.
+fn recipe_db_get(db, name) {
+    return map_get(rdb_recipes(db), to_cstr(name));
+}
+
+# Get the build order as a vec of Str.
+fn recipe_db_order(db) {
+    return rdb_order(db);
+}
+
+# Get total recipe count.
+fn recipe_db_count(db) {
+    return map_count(rdb_recipes(db));
+}
+
+# Convert a Recipe to a ResolvedPkg for use in the resolver.
+fn recipe_to_resolved(recipe) {
+    return resolved_pkg_new(
+        rc_name(recipe), rc_ver(recipe), SOURCE_COMMUNITY,
+        rc_desc(recipe), 0, rc_rt_deps(recipe), 0
+    );
+}
+
+# --- Wire recipes into resolver ---
+
+# Resolver: rs_strat(0) rs_cache(8) rs_reg(16) rs_sys(24) rs_rdb(32)
+# Extended resolver with recipe DB (add 5th field at offset 32)
+fn resolver_make_with_recipes(strat, cache, reg, sysdb, rdb) {
+    var p = alloc(56);
+    store64(p, strat); store64(p + 8, cache);
+    store64(p + 16, reg); store64(p + 24, sysdb);
+    store64(p + 32, rdb); store64(p + 40, vec_new());
+    store64(p + 48, 0);
+    return p;
+}
+fn rs_rdb(r) { return load64(r + 32); }
+fn rs_set_rdb(r, rdb) { store64(r + 32, rdb); }
+fn rs_trace(r) { return load64(r + 40); }
+fn rs_trace_on(r) { return load64(r + 48); }
+
+fn resolver_with_trace(r) { store64(r + 48, 1); return r; }
+
+fn trace_add(r, msg) {
+    if (rs_trace_on(r) == 1) {
+        vec_push(rs_trace(r), msg);
+    }
+}
+
+fn trace_msg(r, prefix, name, result) {
+    if (rs_trace_on(r) == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, prefix);
+    str_builder_add(sb, name);
+    str_builder_add_cstr(sb, " ... ");
+    str_builder_add_cstr(sb, result);
+    vec_push(rs_trace(r), str_builder_build(sb));
+    return 0;
+}
+
+fn resolver_get_trace(r) { return rs_trace(r); }
+fn resolver_clear_trace(r) { store64(r + 40, vec_new()); }
+
+# Attach a recipe database to a resolver.
+fn resolver_with_recipes(r, rdb) {
+    rs_set_rdb(r, rdb);
+    return r;
+}
+
+# Resolve from recipe DB (fallback source).
+fn resolve_from_recipe(r, name) {
+    var rdb = rs_rdb(r);
+    if (rdb == 0) { return 0; }
+    var recipe = recipe_db_get(rdb, name);
+    if (recipe == 0) { return 0; }
+    return recipe_to_resolved(recipe);
+}
+
+# Extended resolve_all that also checks recipe DB.
+fn resolver_resolve_all_with_recipes(r, names) {
+    var graph = dep_graph_new();
+    var pending = vec_new();
+    var visited = map_new();
+
+    var i = 0;
+    while (i < vec_len(names)) {
+        vec_push(pending, vec_get(names, i));
+        i = i + 1;
+    }
+
+    while (vec_len(pending) > 0) {
+        var name = vec_get(pending, 0);
+        vec_remove(pending, 0);
+        var cname = to_cstr(name);
+        if (map_has(visited, cname) == 1) { continue; }
+        map_set(visited, cname, 1);
+
+        # Try normal resolution first
+        var res = resolver_resolve(r, name);
+        if (is_err_result(res) == 1) { return res; }
+        var pkg = payload(res);
+
+        # Fallback to recipe DB
+        if (pkg == 0) {
+            pkg = resolve_from_recipe(r, name);
+        }
+        if (pkg == 0) { continue; }
+
+        dep_graph_add(graph, pkg);
+        var deps = rp_deps(pkg);
+        var j = 0;
+        while (j < vec_len(deps)) {
+            var dep = vec_get(deps, j);
+            if (map_has(visited, to_cstr(dep)) == 0) {
+                vec_push(pending, dep);
+            }
+            j = j + 1;
+        }
+    }
+
+    return finalize_graph(r, graph);
+}
+
+# Shared finalization: cycle check, conflict check, topo sort, build plan.
+fn finalize_graph(r, graph) {
+    var cycle = dep_graph_detect_cycle(graph);
+    if (cycle != 0) {
+        return nous_err(ERR_DEPENDENCY_CYCLE, format_cycle(cycle), 0);
+    }
+
+    # Conflict detection with detailed explanation
+    var constraint_map = map_new();
+    var source_map = map_new();
+    var all_nodes = map_keys(dg_nodes(graph));
+    var i = 0;
+    while (i < vec_len(all_nodes)) {
+        var cname = vec_get(all_nodes, i);
+        var pkg = map_get(dg_nodes(graph), cname);
+        var deps = rp_deps(pkg);
+        var manifest_deps = map_new();
+        var mp = registry_get(rs_reg(r), rp_name(pkg));
+        if (mp != 0) { manifest_deps = mpkg_deps(mp); }
+        # Also check recipe DB if attached
+        if (rs_rdb(r) != 0) {
+            var rc = recipe_db_get(rs_rdb(r), rp_name(pkg));
+            if (rc != 0) {
+                # Recipe deps don't have version constraints in the dep list,
+                # but the recipe's own version is fixed
+            }
+        }
+        var j = 0;
+        while (j < vec_len(deps)) {
+            var dep = vec_get(deps, j);
+            var cdep = to_cstr(dep);
+            var constraint_str = map_get(manifest_deps, cdep);
+            if (constraint_str != 0) {
+                var ct = constraint_parse(constraint_str);
+                if (map_has(constraint_map, cdep) == 1) {
+                    var existing = map_get(constraint_map, cdep);
+                    if (constraints_compatible(existing, ct) == 0) {
+                        var prev_src = map_get(source_map, cdep);
+                        var sb = str_builder_new();
+                        if (prev_src != 0) { str_builder_add(sb, prev_src); }
+                        str_builder_add_cstr(sb, " conflicts with ");
+                        str_builder_add(sb, rp_name(pkg));
+                        str_builder_add_cstr(sb, " requires ");
+                        str_builder_add(sb, constraint_str);
+                        return nous_err(ERR_VERSION_CONFLICT, dep,
+                            str_builder_build(sb));
+                    }
+                } else {
+                    map_set(constraint_map, cdep, ct);
+                    var ssb = str_builder_new();
+                    str_builder_add(ssb, rp_name(pkg));
+                    str_builder_add_cstr(ssb, " requires ");
+                    str_builder_add(ssb, constraint_str);
+                    map_set(source_map, cdep, str_builder_build(ssb));
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    var order = dep_graph_topo_sort(graph);
+    var ordered_pkgs = vec_new();
+    var oi = vec_len(order) - 1;
+    while (oi >= 0) {
+        var oname = to_cstr(vec_get(order, oi));
+        if (map_has(dg_nodes(graph), oname) == 1) {
+            vec_push(ordered_pkgs, map_get(dg_nodes(graph), oname));
+        }
+        oi = oi - 1;
+    }
+
+    return Ok(res_plan_new(ordered_pkgs, order));
+}

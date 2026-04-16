@@ -1,0 +1,176 @@
+# nous/version — SemVer parsing, constraint matching
+# ===================================================================
+# P1: Version Constraints
+# ===================================================================
+
+# Constraint operators
+enum ConstraintOp {
+    OP_EQ = 0;
+    OP_GTE = 1;
+    OP_GT = 2;
+    OP_LTE = 3;
+    OP_LT = 4;
+    OP_CARET = 5;
+    OP_TILDE = 6;
+    OP_ANY = 7;
+}
+
+# SemVer: sv_major(0) sv_minor(8) sv_patch(16)
+fn semver_new(major, minor, patch) {
+    var p = alloc(24);
+    store64(p, major); store64(p + 8, minor); store64(p + 16, patch);
+    return p;
+}
+fn sv_major(v) { return load64(v); }
+fn sv_minor(v) { return load64(v + 8); }
+fn sv_patch(v) { return load64(v + 16); }
+
+# Constraint: ct_op(0) ct_ver(8)
+fn constraint_new(op, ver) {
+    var p = alloc(16);
+    store64(p, op); store64(p + 8, ver);
+    return p;
+}
+fn ct_op(c) { return load64(c); }
+fn ct_ver(c) { return load64(c + 8); }
+
+# Parse "1.2.3" into SemVer. Returns 0 on failure.
+fn semver_parse(s) {
+    var d = str_data(s);
+    var len = str_len(s);
+    var pos = 0;
+    # Max safe value for overflow check: 922337203685477580 (INT64_MAX / 10)
+    var MAX_SAFE = 922337203685477580;
+    # Parse major
+    var major = 0;
+    while (pos < len && load8(d + pos) >= 48 && load8(d + pos) <= 57) {
+        if (major > MAX_SAFE) { return 0; }
+        major = major * 10 + load8(d + pos) - 48;
+        pos = pos + 1;
+    }
+    if (pos >= len || load8(d + pos) != 46) {
+        return semver_new(major, 0, 0);
+    }
+    pos = pos + 1;
+    # Parse minor
+    var minor = 0;
+    while (pos < len && load8(d + pos) >= 48 && load8(d + pos) <= 57) {
+        if (minor > MAX_SAFE) { return 0; }
+        minor = minor * 10 + load8(d + pos) - 48;
+        pos = pos + 1;
+    }
+    if (pos >= len || load8(d + pos) != 46) {
+        return semver_new(major, minor, 0);
+    }
+    pos = pos + 1;
+    # Parse patch
+    var patch = 0;
+    while (pos < len && load8(d + pos) >= 48 && load8(d + pos) <= 57) {
+        if (patch > MAX_SAFE) { return 0; }
+        patch = patch * 10 + load8(d + pos) - 48;
+        pos = pos + 1;
+    }
+    return semver_new(major, minor, patch);
+}
+
+# Compare two SemVers. Returns -1, 0, or 1.
+fn semver_cmp(a, b) {
+    if (sv_major(a) < sv_major(b)) { return (0 - 1); }
+    if (sv_major(a) > sv_major(b)) { return 1; }
+    if (sv_minor(a) < sv_minor(b)) { return (0 - 1); }
+    if (sv_minor(a) > sv_minor(b)) { return 1; }
+    if (sv_patch(a) < sv_patch(b)) { return (0 - 1); }
+    if (sv_patch(a) > sv_patch(b)) { return 1; }
+    return 0;
+}
+
+fn semver_eq(a, b) { return semver_cmp(a, b) == 0; }
+
+fn semver_to_str(v) {
+    var sb = str_builder_new();
+    str_builder_add_int(sb, sv_major(v));
+    str_builder_add_cstr(sb, ".");
+    str_builder_add_int(sb, sv_minor(v));
+    str_builder_add_cstr(sb, ".");
+    str_builder_add_int(sb, sv_patch(v));
+    return str_builder_build(sb);
+}
+
+# Parse ">=1.2.3", "^1.0", "~1.2", "=1.0.0", ">2.0", "*"
+fn constraint_parse(s) {
+    var d = str_data(s);
+    var len = str_len(s);
+    if (len == 0) { return constraint_new(OP_ANY, semver_new(0, 0, 0)); }
+    var pos = 0;
+    # Skip leading whitespace
+    while (pos < len && load8(d + pos) == 32) { pos = pos + 1; }
+    if (pos >= len) { return constraint_new(OP_ANY, semver_new(0, 0, 0)); }
+    var c = load8(d + pos);
+    var op = OP_EQ;
+    if (c == 42) {
+        return constraint_new(OP_ANY, semver_new(0, 0, 0));
+    } elif (c == 94) {
+        op = OP_CARET;
+        pos = pos + 1;
+    } elif (c == 126) {
+        op = OP_TILDE;
+        pos = pos + 1;
+    } elif (c == 62) {
+        pos = pos + 1;
+        if (pos < len && load8(d + pos) == 61) {
+            op = OP_GTE;
+            pos = pos + 1;
+        } else {
+            op = OP_GT;
+        }
+    } elif (c == 60) {
+        pos = pos + 1;
+        if (pos < len && load8(d + pos) == 61) {
+            op = OP_LTE;
+            pos = pos + 1;
+        } else {
+            op = OP_LT;
+        }
+    } elif (c == 61) {
+        op = OP_EQ;
+        pos = pos + 1;
+    }
+    # Skip whitespace after operator
+    while (pos < len && load8(d + pos) == 32) { pos = pos + 1; }
+    var ver_str = str_sub(s, pos, len - pos);
+    var ver = semver_parse(ver_str);
+    return constraint_new(op, ver);
+}
+
+# Check if version v satisfies constraint c.
+fn constraint_matches(c, v) {
+    var op = ct_op(c);
+    var cv = ct_ver(c);
+    if (op == OP_ANY) { return 1; }
+    var cmp = semver_cmp(v, cv);
+    if (op == OP_EQ) { return cmp == 0; }
+    if (op == OP_GTE) { return cmp >= 0; }
+    if (op == OP_GT) { return cmp > 0; }
+    if (op == OP_LTE) { return cmp <= 0; }
+    if (op == OP_LT) { return cmp < 0; }
+    if (op == OP_CARET) {
+        # ^1.2.3 means >=1.2.3, <2.0.0 (for major>0)
+        # ^0.2.3 means >=0.2.3, <0.3.0 (for major==0, minor>0)
+        # ^0.0.3 means >=0.0.3, <0.0.4 (for major==0, minor==0)
+        if (cmp < 0) { return 0; }
+        if (sv_major(cv) > 0) {
+            return sv_major(v) == sv_major(cv);
+        }
+        if (sv_minor(cv) > 0) {
+            return sv_major(v) == 0 && sv_minor(v) == sv_minor(cv);
+        }
+        return sv_major(v) == 0 && sv_minor(v) == 0 && sv_patch(v) == sv_patch(cv);
+    }
+    if (op == OP_TILDE) {
+        # ~1.2.3 means >=1.2.3, <1.3.0
+        if (cmp < 0) { return 0; }
+        return sv_major(v) == sv_major(cv) && sv_minor(v) == sv_minor(cv);
+    }
+    return 0;
+}
+

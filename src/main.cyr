@@ -1,15 +1,27 @@
 # nous — package resolver for AGNOS
 # Entry point for standalone build
 
-include "src/nous.cyr"
+include "src/types.cyr"
+include "src/util.cyr"
+include "src/error.cyr"
+include "src/strategy.cyr"
+include "src/source.cyr"
+include "src/command.cyr"
+include "src/sort.cyr"
+include "src/registry.cyr"
+include "src/sysdb.cyr"
+include "src/resolver.cyr"
+include "src/json.cyr"
+include "src/version.cyr"
+include "src/graph.cyr"
+include "src/recipe.cyr"
 
 fn main() {
     alloc_init();
     args_init();
 
-    println("nous 0.1.0 — package resolver for AGNOS");
+    println("nous 1.1.0 — package resolver for AGNOS");
 
-    # Smoke: source detection
     if (detect_source(str_from("acme/scanner")) != SOURCE_MARKETPLACE) {
         println("FAIL: detect_source marketplace");
         return 1;
@@ -22,8 +34,6 @@ fn main() {
         println("FAIL: detect_source unknown");
         return 1;
     }
-
-    # Smoke: name validation
     if (is_ok(validate_package_name(str_from("valid-pkg"))) == 0) {
         println("FAIL: validate valid name");
         return 1;

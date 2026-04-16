@@ -1,0 +1,158 @@
+# nous/registry — marketplace package registry
+# ===================================================================
+# LocalRegistry
+# ===================================================================
+
+# Extract the "dependencies":{...} object from raw JSON into a hashmap.
+# Keys are dep names (C strings in map), values are version constraint Strs.
+fn json_extract_deps(data) {
+    var deps = map_new();
+    var d = str_data(data);
+    var dl = str_len(data);
+    # Find "dependencies"
+    var marker = "dependencies";
+    var mlen = 12;
+    var i = 0;
+    while (i < dl) {
+        if (load8(d + i) == 34 && i + 1 + mlen + 1 <= dl) {
+            if (memeq(d + i + 1, marker, mlen) == 1 && load8(d + i + 1 + mlen) == 34) {
+                # Found "dependencies", skip to opening {
+                var j = i + 1 + mlen + 1;
+                while (j < dl && load8(d + j) != 123) { j = j + 1; }
+                if (j >= dl) { return deps; }
+                j = j + 1;
+                # Parse key:value pairs until }
+                while (j < dl && load8(d + j) != 125) {
+                    # Skip whitespace/commas
+                    while (j < dl) {
+                        var c = load8(d + j);
+                        if (c != 32 && c != 9 && c != 10 && c != 13 && c != 44) { break; }
+                        j = j + 1;
+                    }
+                    if (j >= dl || load8(d + j) == 125) { break; }
+                    # Expect "key"
+                    if (load8(d + j) != 34) { break; }
+                    j = j + 1;
+                    var ks = j;
+                    while (j < dl && load8(d + j) != 34) { j = j + 1; }
+                    var key_str = str_new(d + ks, j - ks);
+                    j = j + 1;
+                    # Skip : and whitespace
+                    while (j < dl) {
+                        var c2 = load8(d + j);
+                        if (c2 != 32 && c2 != 9 && c2 != 10 && c2 != 13 && c2 != 58) { break; }
+                        j = j + 1;
+                    }
+                    # Expect "value"
+                    if (j < dl && load8(d + j) == 34) {
+                        j = j + 1;
+                        var vs = j;
+                        while (j < dl && load8(d + j) != 34) { j = j + 1; }
+                        var val_str = str_new(d + vs, j - vs);
+                        j = j + 1;
+                        map_set(deps, to_cstr(key_str), val_str);
+                    }
+                }
+                return deps;
+            }
+        }
+        i = i + 1;
+    }
+    return deps;
+}
+
+fn parse_manifest_file(file_path) {
+    var buf = alloc(8192);
+    var n = file_read_all(to_cstr(file_path), buf, 8192);
+    if (n <= 0) { return 0; }
+    var content = str_new(buf, n);
+    var name = json_extract_str(content, "name");
+    var version = json_extract_str(content, "version");
+    var desc = json_extract_str(content, "description");
+    var runtime = json_extract_str(content, "runtime");
+    if (name == 0) { name = str_from(""); }
+    if (version == 0) { version = str_from(""); }
+    if (desc == 0) { desc = str_from(""); }
+    if (runtime == 0) { runtime = str_from("native"); }
+    var deps = json_extract_deps(content);
+    var agent = agent_info_new(name, version, desc);
+    return manifest_new(agent, deps, runtime);
+}
+
+fn scan_installed(base_dir) {
+    var pkgs = vec_new();
+    var idir = join_path(base_dir, str_from("installed"));
+    var cd = to_cstr(idir);
+    if (our_is_dir(cd) == 0) { return pkgs; }
+    var entries = dir_list(idir);
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var entry = vec_get(entries, i);
+        # Reject path traversal: no ".." or "/" in entry names
+        if (str_contains(entry, str_from("..")) == 1 ||
+            str_index_of(entry, 47) >= 0) {
+            i = i + 1;
+            continue;
+        }
+        var pdir = join_path(idir, entry);
+        var mpath = join_path(pdir, str_from("manifest.json"));
+        var cm = to_cstr(mpath);
+        # Read directly — no TOCTOU gap from file_exists+read
+        var manifest = parse_manifest_file(mpath);
+        if (manifest != 0) {
+            var sz = dir_size_recursive(pdir);
+            var mt = file_mtime(cm);
+            vec_push(pkgs, installed_mpkg_new(manifest, sz, pdir, mt));
+        }
+        i = i + 1;
+    }
+    sort_mpkg(pkgs);
+    return pkgs;
+}
+
+fn registry_new(base_dir) {
+    if (our_is_dir(to_cstr(base_dir)) == 0) {
+        return err_registry_io(base_dir, str_from("marketplace directory does not exist"));
+    }
+    return Ok(registry_make(base_dir, scan_installed(base_dir)));
+}
+
+fn registry_search(reg, query) {
+    var results = vec_new();
+    var pkgs = rg_pkgs(reg);
+    var i = 0;
+    while (i < vec_len(pkgs)) {
+        var pkg = vec_get(pkgs, i);
+        if (str_contains(mpkg_name(pkg), query) == 1 ||
+            str_contains(mpkg_desc(pkg), query) == 1) {
+            vec_push(results, pkg);
+        }
+        i = i + 1;
+    }
+    return results;
+}
+
+fn registry_get(reg, name) {
+    var pkgs = rg_pkgs(reg);
+    var i = 0;
+    while (i < vec_len(pkgs)) {
+        var pkg = vec_get(pkgs, i);
+        if (str_eq(mpkg_name(pkg), name) == 1) { return pkg; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn registry_list(reg) { return rg_pkgs(reg); }
+
+fn registry_reload(reg) {
+    var dir = rg_dir(reg);
+    var new_pkgs = scan_installed(dir);
+    store64(reg + 8, new_pkgs);
+}
+
+# Stub — real implementation lives in mela. Kept for interface parity.
+fn registry_install_package(reg, tarball, dest) {
+    return Ok(0);
+}
+

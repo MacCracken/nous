@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-04-16
+
+### Changed
+
+- **Module split** — `src/nous.cyr` (2,444 lines) split into 14 focused modules matching ark's architecture pattern:
+  - `types.cyr` (233) — enums, constructors, accessors
+  - `util.cyr` (132) — filesystem, string, path helpers
+  - `error.cyr` (110) — error constructors, display, name validation
+  - `strategy.cyr` (16) — resolution strategy constructors
+  - `source.cyr` (139) — source display, detection, typo suggestions
+  - `command.cyr` (33) — shell execution, PATH scanning
+  - `sort.cyr` (56) — insertion sort by name
+  - `registry.cyr` (158) — marketplace registry
+  - `sysdb.cyr` (184) — apt/dpkg wrapper
+  - `resolver.cyr` (157) — main resolver engine
+  - `json.cyr` (253) — JSON serialization/deserialization
+  - `version.cyr` (176) — SemVer, constraint matching
+  - `graph.cyr` (264) — dependency graph, cycle detection, topo sort
+  - `recipe.cyr` (545) — CYML parser, recipe DB, recipe-based resolution
+- `nous.cyr` is now a barrel file that includes all modules in order
+- `cyrius.cyml` version bumped to 1.1.0, modules list added for consumer dependency declarations
+- No API changes — all function names and signatures are identical
+
+## [1.0.2] - 2026-04-16
+
+### Fixed
+
+- `cyml_parse` infinite loop guard — force `pos` advance if key loop produces zero-length key, guaranteeing termination on any input (flagged by external audit)
+
 ## [1.0.1] - 2026-04-16
 
 ### Removed

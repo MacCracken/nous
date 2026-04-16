@@ -4,9 +4,22 @@
 
 ```
 src/
-  nous.cyr            Library — types, constructors, accessors, resolver, registry, sysdb,
-                      JSON serialization, version constraints, dependency graph
-  main.cyr            Entry point (includes nous.cyr)
+  nous.cyr            Barrel file — includes all modules in dependency order
+  main.cyr            Entry point
+  types.cyr           Enums, struct layout, constructors, accessors
+  util.cyr            Filesystem, string, path helpers
+  error.cyr           Error constructors, display, name validation
+  strategy.cyr        Resolution strategy constructors
+  source.cyr          Source display, detection, typo suggestions
+  command.cyr         Shell command execution, PATH scanning
+  sort.cyr            Insertion sort by name
+  registry.cyr        Marketplace package registry
+  sysdb.cyr           apt/dpkg system package database
+  resolver.cyr        Main resolver engine, trace
+  json.cyr            JSON serialization and deserialization
+  version.cyr         SemVer parsing, constraint matching
+  graph.cyr           Dependency graph, cycle detection, topological sort
+  recipe.cyr          Zugot CYML parsing, recipe DB, recipe-based resolution
 
 tests/
   nous.tcyr           Test suite (140 assertions, 40 groups)

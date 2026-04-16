@@ -1,0 +1,56 @@
+# nous/sort — insertion sort by name
+# ===================================================================
+# Sorting
+# ===================================================================
+
+fn sort_resolved(v) {
+    var len = vec_len(v);
+    var i = 1;
+    while (i < len) {
+        var key = vec_get(v, i);
+        var kn = rp_name(key);
+        var j = i - 1;
+        while (j >= 0) {
+            if (str_compare(rp_name(vec_get(v, j)), kn) <= 0) { break; }
+            vec_set(v, j + 1, vec_get(v, j));
+            j = j - 1;
+        }
+        vec_set(v, j + 1, key);
+        i = i + 1;
+    }
+}
+
+fn sort_installed(v) {
+    var len = vec_len(v);
+    var i = 1;
+    while (i < len) {
+        var key = vec_get(v, i);
+        var kn = ip_name(key);
+        var j = i - 1;
+        while (j >= 0) {
+            if (str_compare(ip_name(vec_get(v, j)), kn) <= 0) { break; }
+            vec_set(v, j + 1, vec_get(v, j));
+            j = j - 1;
+        }
+        vec_set(v, j + 1, key);
+        i = i + 1;
+    }
+}
+
+fn sort_mpkg(v) {
+    var len = vec_len(v);
+    var i = 1;
+    while (i < len) {
+        var key = vec_get(v, i);
+        var kn = mpkg_name(key);
+        var j = i - 1;
+        while (j >= 0) {
+            if (str_compare(mpkg_name(vec_get(v, j)), kn) <= 0) { break; }
+            vec_set(v, j + 1, vec_get(v, j));
+            j = j - 1;
+        }
+        vec_set(v, j + 1, key);
+        i = i + 1;
+    }
+}
+

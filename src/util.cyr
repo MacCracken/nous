@@ -1,0 +1,132 @@
+# nous/util — filesystem, string, path helpers
+# ===================================================================
+# Filesystem helpers (is_dir from fs.cyr is broken, use stat directly)
+# ===================================================================
+
+fn our_is_dir(cpath) {
+    var statbuf[18];
+    var r = syscall(SYS_STAT, cpath, &statbuf);
+    if (r < 0) { return 0; }
+    var mode = load32(&statbuf + 24);
+    if ((mode & 61440) == 16384) { return 1; }
+    return 0;
+}
+
+# ===================================================================
+# Utility functions
+# ===================================================================
+
+fn to_cstr(s) {
+    if (s == 0) { return ""; }
+    var data = str_data(s);
+    var len = str_len(s);
+    var buf = alloc(len + 1);
+    memcpy(buf, data, len);
+    store8(buf + len, 0);
+    return buf;
+}
+
+fn str_compare(a, b) {
+    var ad = str_data(a);
+    var al = str_len(a);
+    var bd = str_data(b);
+    var bl = str_len(b);
+    var ml = al;
+    if (bl < ml) { ml = bl; }
+    var i = 0;
+    while (i < ml) {
+        var ca = load8(ad + i);
+        var cb = load8(bd + i);
+        if (ca < cb) { return (0 - 1); }
+        if (ca > cb) { return 1; }
+        i = i + 1;
+    }
+    if (al < bl) { return (0 - 1); }
+    if (al > bl) { return 1; }
+    return 0;
+}
+
+fn str_find(haystack, needle) {
+    var hd = str_data(haystack);
+    var hl = str_len(haystack);
+    var nd = str_data(needle);
+    var nl = str_len(needle);
+    if (nl > hl) { return (0 - 1); }
+    if (nl == 0) { return 0; }
+    var lim = hl - nl;
+    var i = 0;
+    while (i <= lim) {
+        if (memeq(hd + i, nd, nl) == 1) { return i; }
+        i = i + 1;
+    }
+    return (0 - 1);
+}
+
+fn json_extract_str(data, key) {
+    var d = str_data(data);
+    var dl = str_len(data);
+    var kl = strlen(key);
+    var i = 0;
+    while (i < dl) {
+        if (load8(d + i) == 34 && i + 1 + kl + 1 <= dl) {
+            if (memeq(d + i + 1, key, kl) == 1 && load8(d + i + 1 + kl) == 34) {
+                var j = i + 1 + kl + 1;
+                while (j < dl) {
+                    var c = load8(d + j);
+                    if (c != 32 && c != 9 && c != 10 && c != 13 && c != 58) { break; }
+                    j = j + 1;
+                }
+                if (j < dl && load8(d + j) == 34) {
+                    j = j + 1;
+                    var start = j;
+                    while (j < dl && load8(d + j) != 34) {
+                        if (load8(d + j) == 92) { j = j + 1; }
+                        j = j + 1;
+                    }
+                    return str_new(d + start, j - start);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn file_mtime(cpath) {
+    var statbuf[18];
+    var r = syscall(SYS_STAT, cpath, &statbuf);
+    if (r < 0) { return 0; }
+    return load64(&statbuf + 88);
+}
+
+fn file_stat_size(cpath) {
+    var statbuf[18];
+    var r = syscall(SYS_STAT, cpath, &statbuf);
+    if (r < 0) { return 0; }
+    return load64(&statbuf + 48);
+}
+
+fn dir_size_recursive(path) {
+    var cp = to_cstr(path);
+    if (our_is_dir(cp) == 0) { return file_stat_size(cp); }
+    var entries = dir_list(path);
+    var total = 0;
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var full = join_path(path, vec_get(entries, i));
+        total = total + dir_size_recursive(full);
+        i = i + 1;
+    }
+    return total;
+}
+
+fn join_path(dir, name) {
+    var sb = str_builder_new();
+    str_builder_add(sb, dir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add(sb, name);
+    return str_builder_build(sb);
+}
+
+fn mkdir_str(path) { sys_mkdir(to_cstr(path), 493); }
+

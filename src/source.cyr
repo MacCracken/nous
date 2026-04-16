@@ -1,0 +1,139 @@
+# nous/source — source display, detection, typo suggestions
+# ===================================================================
+# Source display
+# ===================================================================
+
+fn source_to_str(src) {
+    if (src == SOURCE_SYSTEM) { return str_from("system"); }
+    if (src == SOURCE_MARKETPLACE) { return str_from("marketplace"); }
+    if (src == SOURCE_FLUTTER_APP) { return str_from("flutter-app"); }
+    if (src == SOURCE_COMMUNITY) { return str_from("community"); }
+    return str_from("unknown");
+}
+
+
+# ===================================================================
+# Source detection
+# ===================================================================
+
+fn detect_source(name) {
+    if (str_len(name) == 0) { return SOURCE_UNKNOWN; }
+    if (str_index_of(name, 47) >= 0) { return SOURCE_MARKETPLACE; }
+    if (str_ends_with(name, str_from(".flutter")) == 1) { return SOURCE_FLUTTER_APP; }
+    var d = str_data(name);
+    var len = str_len(name);
+    var dots = 0;
+    var i = 0;
+    while (i < len) {
+        if (load8(d + i) == 46) { dots = dots + 1; }
+        i = i + 1;
+    }
+    if (dots >= 2) {
+        var dp = str_index_of(name, 46);
+        if (dp > 0) {
+            var first = str_sub(name, 0, dp);
+            if (str_eq(first, str_from("com")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("org")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("net")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("io")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("dev")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("app")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("me")) == 1) { return SOURCE_FLUTTER_APP; }
+        }
+    }
+    return SOURCE_UNKNOWN;
+}
+
+# ===================================================================
+# Typo suggestion engine (Levenshtein distance)
+# ===================================================================
+
+fn levenshtein(a, b) {
+    var al = str_len(a);
+    var bl = str_len(b);
+    var ad = str_data(a);
+    var bd = str_data(b);
+    if (al == 0) { return bl; }
+    if (bl == 0) { return al; }
+    # Two-row approach: prev_row and curr_row, each (bl+1) entries
+    var prev = alloc((bl + 1) * 8);
+    var curr = alloc((bl + 1) * 8);
+    var j = 0;
+    while (j <= bl) { store64(prev + j * 8, j); j = j + 1; }
+    var i = 0;
+    while (i < al) {
+        store64(curr, i + 1);
+        j = 0;
+        while (j < bl) {
+            var cost = 1;
+            if (load8(ad + i) == load8(bd + j)) { cost = 0; }
+            var del = load64(prev + (j + 1) * 8) + 1;
+            var ins = load64(curr + j * 8) + 1;
+            var sub = load64(prev + j * 8) + cost;
+            var best = del;
+            if (ins < best) { best = ins; }
+            if (sub < best) { best = sub; }
+            store64(curr + (j + 1) * 8, best);
+            j = j + 1;
+        }
+        # Swap prev and curr
+        var tmp = prev;
+        prev = curr;
+        curr = tmp;
+        i = i + 1;
+    }
+    return load64(prev + bl * 8);
+}
+
+# Find the closest matching package name from a list.
+# Returns the best match Str, or 0 if nothing is close enough (distance > 3).
+fn suggest_package(name, known_names) {
+    var best = 0;
+    var best_dist = 4;
+    var i = 0;
+    while (i < vec_len(known_names)) {
+        var candidate = vec_get(known_names, i);
+        var dist = levenshtein(name, candidate);
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = candidate;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+# Build suggestion message: "Package 'ngins' not found. Did you mean 'nginx'?"
+fn build_suggestion(name, suggestion) {
+    if (suggestion == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "package '");
+    str_builder_add(sb, name);
+    str_builder_add_cstr(sb, "' not found. Did you mean '");
+    str_builder_add(sb, suggestion);
+    str_builder_add_cstr(sb, "'?");
+    return str_builder_build(sb);
+}
+
+# Collect all known package names from resolver sources.
+fn collect_known_names(r) {
+    var names = vec_new();
+    # From marketplace registry
+    var pkgs = rg_pkgs(rs_reg(r));
+    var i = 0;
+    while (i < vec_len(pkgs)) {
+        vec_push(names, mpkg_name(vec_get(pkgs, i)));
+        i = i + 1;
+    }
+    # From recipe DB if attached
+    if (rs_rdb(r) != 0) {
+        var rkeys = map_keys(rdb_recipes(rs_rdb(r)));
+        i = 0;
+        while (i < vec_len(rkeys)) {
+            vec_push(names, str_from(vec_get(rkeys, i)));
+            i = i + 1;
+        }
+    }
+    return names;
+}
+

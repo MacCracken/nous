@@ -1,0 +1,184 @@
+# nous/sysdb — apt/dpkg system package database
+# ===================================================================
+# SystemPackageDb
+# ===================================================================
+
+fn sysdb_new() {
+    var ok = 0;
+    if (which_exists("apt-cache") == 1 && which_exists("dpkg-query") == 1) { ok = 1; }
+    return sysdb_make(ok);
+}
+
+fn sysdb_available(db) { return sd_apt(db); }
+
+fn sysdb_search(db, query) {
+    if (sd_apt(db) == 0) { return Ok(vec_new()); }
+    # Validate query to prevent command injection
+    var vr = validate_package_name(query);
+    if (is_err_result(vr) == 1) { return Ok(vec_new()); }
+    var args = vec_new();
+    vec_push(args, "apt-cache");
+    vec_push(args, "search");
+    vec_push(args, "--names-only");
+    vec_push(args, to_cstr(query));
+    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
+    var n = exec_capture(args, cmd_buf, 65536);
+    var output = 0;
+    if (n > 0) { output = str_new(cmd_buf, n); }
+    if (output == 0) { return Ok(vec_new()); }
+    var lines = str_split(output, 10);
+    var results = vec_new();
+    var i = 0;
+    while (i < vec_len(lines)) {
+        var line = str_trim(vec_get(lines, i));
+        if (str_len(line) > 0) {
+            var sp = str_find(line, str_from(" - "));
+            if (sp >= 0) {
+                var n = str_trim(str_sub(line, 0, sp));
+                var d = str_trim(str_sub(line, sp + 3, str_len(line) - sp - 3));
+                vec_push(results, resolved_pkg_new(n, str_from(""), SOURCE_SYSTEM, d, 0, vec_new(), 1));
+            }
+        }
+        i = i + 1;
+    }
+    return Ok(results);
+}
+
+fn sysdb_is_installed(db, name) {
+    if (sd_apt(db) == 0) { return Ok(0); }
+    var vr = validate_package_name(name);
+    if (is_err_result(vr) == 1) { return Ok(0); }
+    var args = vec_new();
+    vec_push(args, "dpkg-query");
+    vec_push(args, "-W");
+    vec_push(args, "-f");
+    vec_push(args, "${Status}");
+    vec_push(args, to_cstr(name));
+    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
+    var n = exec_capture(args, cmd_buf, 65536);
+    var output = 0;
+    if (n > 0) { output = str_new(cmd_buf, n); }
+    if (output == 0) { return Ok(0); }
+    if (str_contains(output, str_from("install ok installed")) == 1) { return Ok(1); }
+    return Ok(0);
+}
+
+fn sysdb_get_installed(db, name) {
+    if (sd_apt(db) == 0) { return Ok(0); }
+    var vr = validate_package_name(name);
+    if (is_err_result(vr) == 1) { return Ok(0); }
+    var args = vec_new();
+    vec_push(args, "dpkg-query");
+    vec_push(args, "-W");
+    vec_push(args, "-f");
+    vec_push(args, "${Package}\t${Version}\t${Installed-Size}\n");
+    vec_push(args, to_cstr(name));
+    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
+    var n = exec_capture(args, cmd_buf, 65536);
+    var output = 0;
+    if (n > 0) { output = str_new(cmd_buf, n); }
+    if (output == 0) { return Ok(0); }
+    var lines = str_split(output, 10);
+    if (vec_len(lines) == 0) { return Ok(0); }
+    var fields = str_split(vec_get(lines, 0), 9);
+    if (vec_len(fields) < 3) { return Ok(0); }
+    var skb = str_to_int(str_trim(vec_get(fields, 2)));
+    return Ok(installed_pkg_new(vec_get(fields, 0), vec_get(fields, 1), SOURCE_SYSTEM, 0, skb * 1024, 0));
+}
+
+fn sysdb_list(db) {
+    if (sd_apt(db) == 0) { return Ok(vec_new()); }
+    var output = cmd_run(str_from("dpkg-query -W -f '${Package}\t${Version}\t${Installed-Size}\t${Status}\n'"));
+    if (output == 0) { return Ok(vec_new()); }
+    var lines = str_split(output, 10);
+    var pkgs = vec_new();
+    var i = 0;
+    while (i < vec_len(lines)) {
+        var line = str_trim(vec_get(lines, i));
+        if (str_len(line) > 0) {
+            var f = str_split(line, 9);
+            if (vec_len(f) >= 4 && str_contains(vec_get(f, 3), str_from("install ok installed")) == 1) {
+                var skb = str_to_int(str_trim(vec_get(f, 2)));
+                vec_push(pkgs, installed_pkg_new(vec_get(f, 0), vec_get(f, 1), SOURCE_SYSTEM, 0, skb * 1024, 0));
+            }
+        }
+        i = i + 1;
+    }
+    return Ok(pkgs);
+}
+
+fn sysdb_updates(db) {
+    if (sd_apt(db) == 0) { return Ok(vec_new()); }
+    var output = cmd_run(str_from("apt list --upgradable 2>/dev/null"));
+    if (output == 0) { return Ok(vec_new()); }
+    var lines = str_split(output, 10);
+    var upd = vec_new();
+    var i = 0;
+    while (i < vec_len(lines)) {
+        var line = vec_get(lines, i);
+        if (str_starts_with(line, "Listing") == 0 && str_contains(line, str_from("[upgradable")) == 1) {
+            var sp = str_index_of(line, 47);
+            if (sp > 0) {
+                var pn = str_sub(line, 0, sp);
+                var rest = str_split(str_sub(line, sp + 1, str_len(line) - sp - 1), 32);
+                var av = str_from("");
+                if (vec_len(rest) >= 2) { av = vec_get(rest, 1); }
+                var fp = str_find(line, str_from("from: "));
+                var iv = str_from("");
+                if (fp >= 0) {
+                    var after = str_sub(line, fp + 6, str_len(line) - fp - 6);
+                    var br = str_index_of(after, 93);
+                    if (br > 0) { iv = str_sub(after, 0, br); }
+                }
+                vec_push(upd, avail_update_new(pn, SOURCE_SYSTEM, iv, av, 0));
+            }
+        }
+        i = i + 1;
+    }
+    return Ok(upd);
+}
+
+fn sysdb_info(db, name) {
+    if (sd_apt(db) == 0) { return Ok(0); }
+    var vr = validate_package_name(name);
+    if (is_err_result(vr) == 1) { return Ok(0); }
+    var args = vec_new();
+    vec_push(args, "apt-cache");
+    vec_push(args, "show");
+    vec_push(args, to_cstr(name));
+    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
+    var n = exec_capture(args, cmd_buf, 65536);
+    var output = 0;
+    if (n > 0) { output = str_new(cmd_buf, n); }
+    if (output == 0) { return Ok(0); }
+    var version = str_from("");
+    var desc = str_from("");
+    var sz = 0;
+    var deps = vec_new();
+    var lines = str_split(output, 10);
+    var li = 0;
+    while (li < vec_len(lines)) {
+        var line = vec_get(lines, li);
+        if (str_starts_with(line, "Version: ") == 1) {
+            version = str_trim(str_sub(line, 9, str_len(line) - 9));
+        } elif (str_starts_with(line, "Description: ") == 1) {
+            desc = str_trim(str_sub(line, 13, str_len(line) - 13));
+        } elif (str_starts_with(line, "Size: ") == 1) {
+            sz = str_to_int(str_trim(str_sub(line, 6, str_len(line) - 6)));
+        } elif (str_starts_with(line, "Depends: ") == 1) {
+            var dp = str_split(str_sub(line, 9, str_len(line) - 9), 44);
+            var di = 0;
+            while (di < vec_len(dp)) {
+                var dep = str_trim(vec_get(dp, di));
+                var spc = str_index_of(dep, 32);
+                if (spc > 0) { dep = str_sub(dep, 0, spc); }
+                if (str_len(dep) > 0) { vec_push(deps, dep); }
+                di = di + 1;
+            }
+        }
+        li = li + 1;
+    }
+    if (str_len(version) == 0) { return Ok(0); }
+    return Ok(resolved_pkg_new(name, version, SOURCE_SYSTEM, desc, sz, deps, 1));
+}
+

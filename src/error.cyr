@@ -1,0 +1,110 @@
+# nous/error — error constructors, display, validation
+# ===================================================================
+# Error constructors
+# ===================================================================
+
+fn nous_err(kind, msg, detail) {
+    return Err(nous_error_new(kind, msg, detail));
+}
+fn err_registry_io(path, detail) { return nous_err(ERR_REGISTRY_IO, path, detail); }
+fn err_invalid_name(name, reason) { return nous_err(ERR_INVALID_PACKAGE_NAME, name, reason); }
+
+fn format_cycle(cycle) {
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < vec_len(cycle)) {
+        if (i > 0) { str_builder_add_cstr(sb, " -> "); }
+        str_builder_add(sb, vec_get(cycle, i));
+        i = i + 1;
+    }
+    return str_builder_build(sb);
+}
+
+fn nous_error_msg(e) {
+    var kind = ne_kind(e);
+    var msg = ne_msg(e);
+    var detail = ne_detail(e);
+    var sb = str_builder_new();
+    if (kind == ERR_COMMAND_EXEC) {
+        str_builder_add_cstr(sb, "failed to run `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == ERR_REGISTRY_IO) {
+        str_builder_add_cstr(sb, "registry I/O error at `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == ERR_INVALID_MANIFEST) {
+        str_builder_add_cstr(sb, "invalid manifest at `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == ERR_INVALID_PACKAGE_NAME) {
+        str_builder_add_cstr(sb, "invalid package name `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == ERR_INVALID_VERSION_CONSTRAINT) {
+        str_builder_add_cstr(sb, "invalid version constraint `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == ERR_DEPENDENCY_CYCLE) {
+        str_builder_add_cstr(sb, "dependency cycle detected: ");
+        str_builder_add(sb, msg);
+    } elif (kind == ERR_VERSION_CONFLICT) {
+        str_builder_add_cstr(sb, "version conflict for `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    }
+    return str_builder_build(sb);
+}
+
+# Serializable error kind companion (mirrors NousErrorKind in Rust)
+fn nous_error_to_kind(e) {
+    return nous_error_new(ne_kind(e), ne_msg(e), ne_detail(e));
+}
+
+
+# ===================================================================
+# Package name validation
+# ===================================================================
+
+fn is_valid_name_char(c) {
+    if (c >= 97 && c <= 122) { return 1; }
+    if (c >= 65 && c <= 90) { return 1; }
+    if (c >= 48 && c <= 57) { return 1; }
+    if (c == 45 || c == 95 || c == 46 || c == 47 || c == 64 || c == 43) { return 1; }
+    return 0;
+}
+
+fn validate_package_name(name) {
+    if (str_len(name) == 0) {
+        return err_invalid_name(name, str_from("package name cannot be empty"));
+    }
+    var trimmed = str_trim(name);
+    if (str_len(trimmed) != str_len(name)) {
+        return err_invalid_name(name, str_from("package name cannot have leading or trailing whitespace"));
+    }
+    var d = str_data(name);
+    var len = str_len(name);
+    var i = 0;
+    while (i < len) {
+        var c = load8(d + i);
+        if (is_valid_name_char(c) == 0) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "invalid character '");
+            var ch = alloc(2);
+            store8(ch, c);
+            store8(ch + 1, 0);
+            str_builder_add_cstr(sb, ch);
+            str_builder_add_cstr(sb, "'");
+            return err_invalid_name(name, str_builder_build(sb));
+        }
+        i = i + 1;
+    }
+    return Ok(1);
+}
+

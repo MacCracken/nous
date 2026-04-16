@@ -1,6 +1,19 @@
 # nous benchmarks
 
-include "src/nous.cyr"
+include "src/types.cyr"
+include "src/util.cyr"
+include "src/error.cyr"
+include "src/strategy.cyr"
+include "src/source.cyr"
+include "src/command.cyr"
+include "src/sort.cyr"
+include "src/registry.cyr"
+include "src/sysdb.cyr"
+include "src/resolver.cyr"
+include "src/json.cyr"
+include "src/version.cyr"
+include "src/graph.cyr"
+include "src/recipe.cyr"
 
 var detect_names = 0;
 

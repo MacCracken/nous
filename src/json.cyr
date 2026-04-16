@@ -1,0 +1,253 @@
+# nous/json — JSON serialization and deserialization
+# ===================================================================
+# JSON serialization
+# ===================================================================
+
+fn source_json(src) {
+    if (src == SOURCE_SYSTEM) { return "\"system\""; }
+    if (src == SOURCE_MARKETPLACE) { return "\"marketplace\""; }
+    if (src == SOURCE_FLUTTER_APP) { return "\"flutter-app\""; }
+    if (src == SOURCE_COMMUNITY) { return "\"community\""; }
+    return "\"unknown\"";
+}
+
+fn source_from_json(s) {
+    if (str_eq(s, str_from("system")) == 1) { return SOURCE_SYSTEM; }
+    if (str_eq(s, str_from("marketplace")) == 1) { return SOURCE_MARKETPLACE; }
+    if (str_eq(s, str_from("flutter-app")) == 1) { return SOURCE_FLUTTER_APP; }
+    if (str_eq(s, str_from("community")) == 1) { return SOURCE_COMMUNITY; }
+    return SOURCE_UNKNOWN;
+}
+
+fn bool_json(v) {
+    if (v == 1) { return "true"; }
+    return "false";
+}
+
+fn json_str_vec(v) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "[");
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\"");
+        str_builder_add(sb, vec_get(v, i));
+        str_builder_add_cstr(sb, "\"");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "]");
+    return str_builder_build(sb);
+}
+
+# --- ResolvedPkg ---
+
+fn resolved_to_json(pkg) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"");
+    str_builder_add(sb, rp_name(pkg));
+    str_builder_add_cstr(sb, "\",\"version\":\"");
+    str_builder_add(sb, rp_ver(pkg));
+    str_builder_add_cstr(sb, "\",\"source\":");
+    str_builder_add_cstr(sb, source_json(rp_src(pkg)));
+    str_builder_add_cstr(sb, ",\"description\":\"");
+    str_builder_add(sb, rp_desc(pkg));
+    str_builder_add_cstr(sb, "\",\"size_bytes\":");
+    str_builder_add_int(sb, rp_size(pkg));
+    str_builder_add_cstr(sb, ",\"dependencies\":");
+    str_builder_add(sb, json_str_vec(rp_deps(pkg)));
+    str_builder_add_cstr(sb, ",\"trusted\":");
+    str_builder_add_cstr(sb, bool_json(rp_trust(pkg)));
+    str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}
+
+fn resolved_from_json(data) {
+    var name = json_extract_str(data, "name");
+    var ver = json_extract_str(data, "version");
+    var src_s = json_extract_str(data, "source");
+    var desc = json_extract_str(data, "description");
+    if (name == 0) { return 0; }
+    if (ver == 0) { ver = str_from(""); }
+    if (desc == 0) { desc = str_from(""); }
+    var src = SOURCE_UNKNOWN;
+    if (src_s != 0) { src = source_from_json(src_s); }
+    return resolved_pkg_new(name, ver, src, desc, 0, vec_new(), 0);
+}
+
+# --- InstalledPkg ---
+
+fn installed_to_json(pkg) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"");
+    str_builder_add(sb, ip_name(pkg));
+    str_builder_add_cstr(sb, "\",\"version\":\"");
+    str_builder_add(sb, ip_ver(pkg));
+    str_builder_add_cstr(sb, "\",\"source\":");
+    str_builder_add_cstr(sb, source_json(ip_src(pkg)));
+    str_builder_add_cstr(sb, ",\"install_date\":");
+    str_builder_add_int(sb, ip_date(pkg));
+    str_builder_add_cstr(sb, ",\"size_bytes\":");
+    str_builder_add_int(sb, ip_size(pkg));
+    str_builder_add_cstr(sb, ",\"auto_installed\":");
+    str_builder_add_cstr(sb, bool_json(ip_auto(pkg)));
+    str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}
+
+fn installed_from_json(data) {
+    var name = json_extract_str(data, "name");
+    var ver = json_extract_str(data, "version");
+    var src_s = json_extract_str(data, "source");
+    if (name == 0) { return 0; }
+    if (ver == 0) { ver = str_from(""); }
+    var src = SOURCE_UNKNOWN;
+    if (src_s != 0) { src = source_from_json(src_s); }
+    return installed_pkg_new(name, ver, src, 0, 0, 0);
+}
+
+# --- AvailUpdate ---
+
+fn update_to_json(u) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"");
+    str_builder_add(sb, load64(u));
+    str_builder_add_cstr(sb, "\",\"source\":");
+    str_builder_add_cstr(sb, source_json(load64(u + 8)));
+    str_builder_add_cstr(sb, ",\"installed_version\":\"");
+    str_builder_add(sb, load64(u + 16));
+    str_builder_add_cstr(sb, "\",\"available_version\":\"");
+    str_builder_add(sb, load64(u + 24));
+    str_builder_add_cstr(sb, "\"");
+    var changelog = load64(u + 32);
+    if (changelog != 0) {
+        str_builder_add_cstr(sb, ",\"changelog\":\"");
+        str_builder_add(sb, changelog);
+        str_builder_add_cstr(sb, "\"");
+    } else {
+        str_builder_add_cstr(sb, ",\"changelog\":null");
+    }
+    str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}
+
+# --- Strategy ---
+
+fn strategy_to_json(s) {
+    var k = st_kind(s);
+    if (k == STRAT_MARKETPLACE_FIRST) { return str_from("\"MarketplaceFirst\""); }
+    if (k == STRAT_SYSTEM_FIRST) { return str_from("\"SystemFirst\""); }
+    if (k == STRAT_SEARCH_ALL) { return str_from("\"SearchAll\""); }
+    if (k == STRAT_ONLY_SOURCE) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "{\"OnlySource\":");
+        str_builder_add_cstr(sb, source_json(st_only(s)));
+        str_builder_add_cstr(sb, "}");
+        return str_builder_build(sb);
+    }
+    return str_from("\"MarketplaceFirst\"");
+}
+
+fn strategy_from_json(data) {
+    if (str_contains(data, str_from("MarketplaceFirst")) == 1) { return strategy_default(); }
+    if (str_contains(data, str_from("SystemFirst")) == 1) { return strategy_system_first(); }
+    if (str_contains(data, str_from("SearchAll")) == 1) { return strategy_search_all(); }
+    if (str_contains(data, str_from("OnlySource")) == 1) {
+        var src_s = json_extract_str(data, "OnlySource");
+        if (src_s != 0) { return strategy_only(source_from_json(src_s)); }
+    }
+    return strategy_default();
+}
+
+# --- SearchResult ---
+
+fn search_result_to_json(sr) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"results\":[");
+    var res = sr_results(sr);
+    var i = 0;
+    while (i < vec_len(res)) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add(sb, resolved_to_json(vec_get(res, i)));
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "],\"total_matches\":");
+    str_builder_add_int(sb, sr_total(sr));
+    str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}
+
+# --- NousErrorKind ---
+
+fn error_kind_to_json(e) {
+    var sb = str_builder_new();
+    var k = ne_kind(e);
+    str_builder_add_cstr(sb, "{\"kind\":");
+    str_builder_add_int(sb, k);
+    str_builder_add_cstr(sb, ",\"message\":\"");
+    var msg = ne_msg(e);
+    if (msg != 0) { str_builder_add(sb, msg); }
+    str_builder_add_cstr(sb, "\",\"detail\":\"");
+    var det = ne_detail(e);
+    if (det != 0) { str_builder_add(sb, det); }
+    str_builder_add_cstr(sb, "\"}");
+    return str_builder_build(sb);
+}
+
+fn error_kind_from_json(data) {
+    var msg = json_extract_str(data, "message");
+    var det = json_extract_str(data, "detail");
+    if (msg == 0) { msg = str_from(""); }
+    if (det == 0) { det = str_from(""); }
+    # kind is numeric — extract manually
+    var d = str_data(data);
+    var dl = str_len(data);
+    var kind = 0;
+    var kp = str_find(data, str_from("\"kind\":"));
+    if (kp >= 0) {
+        var j = kp + 7;
+        while (j < dl && load8(d + j) >= 48 && load8(d + j) <= 57) {
+            kind = kind * 10 + load8(d + j) - 48;
+            j = j + 1;
+        }
+    }
+    return nous_error_new(kind, msg, det);
+}
+
+# --- AgentInfo ---
+
+fn agent_info_to_json(a) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"");
+    str_builder_add(sb, ai_name(a));
+    str_builder_add_cstr(sb, "\",\"version\":\"");
+    str_builder_add(sb, ai_version(a));
+    str_builder_add_cstr(sb, "\",\"description\":\"");
+    str_builder_add(sb, ai_desc(a));
+    str_builder_add_cstr(sb, "\"}");
+    return str_builder_build(sb);
+}
+
+# --- Manifest ---
+
+fn manifest_to_json(m) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"agent\":");
+    str_builder_add(sb, agent_info_to_json(mf_agent(m)));
+    str_builder_add_cstr(sb, ",\"dependencies\":{");
+    var keys = map_keys(mf_deps(m));
+    var i = 0;
+    while (i < vec_len(keys)) {
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        str_builder_add_cstr(sb, "\"");
+        str_builder_add_cstr(sb, vec_get(keys, i));
+        str_builder_add_cstr(sb, "\":\"");
+        str_builder_add(sb, map_get(mf_deps(m), vec_get(keys, i)));
+        str_builder_add_cstr(sb, "\"");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "},\"runtime\":\"");
+    str_builder_add(sb, mf_runtime(m));
+    str_builder_add_cstr(sb, "\"}");
+    return str_builder_build(sb);
+}
+

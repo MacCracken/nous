@@ -1,0 +1,16 @@
+# nous/strategy — resolution strategy constructors
+# ===================================================================
+# Strategy
+# ===================================================================
+
+fn strategy_default() { return strategy_new(STRAT_MARKETPLACE_FIRST, 0); }
+fn strategy_system_first() { return strategy_new(STRAT_SYSTEM_FIRST, 0); }
+fn strategy_only(src) { return strategy_new(STRAT_ONLY_SOURCE, src); }
+fn strategy_search_all() { return strategy_new(STRAT_SEARCH_ALL, 0); }
+
+fn strategy_eq(a, b) {
+    if (st_kind(a) != st_kind(b)) { return 0; }
+    if (st_kind(a) == STRAT_ONLY_SOURCE) { return st_only(a) == st_only(b); }
+    return 1;
+}
+
