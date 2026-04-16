@@ -1,0 +1,14 @@
+[package]
+name = "nous"
+version = "0.1.0"
+description = "nous — package resolver for AGNOS (system, marketplace, Flutter)"
+license = "GPL-3.0-only"
+language = "cyrius"
+cyrius = "5.1.7"
+
+[build]
+entry = "src/main.cyr"
+output = "nous"
+
+[deps]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "json", "fs", "tagged", "process", "bench", "fnptr"]

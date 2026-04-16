@@ -1,0 +1,110 @@
+# nous benchmarks
+
+include "src/nous.cyr"
+
+var detect_names = 0;
+
+fn setup_names() {
+    detect_names = vec_new();
+    vec_push(detect_names, str_from("acme/scanner"));
+    vec_push(detect_names, str_from("com.example.app"));
+    vec_push(detect_names, str_from("nginx"));
+    vec_push(detect_names, str_from("publisher/agent"));
+    vec_push(detect_names, str_from("myapp.flutter"));
+    vec_push(detect_names, str_from("curl"));
+}
+
+fn b_detect() {
+    var i = 0;
+    while (i < vec_len(detect_names)) { detect_source(vec_get(detect_names, i)); i = i + 1; }
+    return 0;
+}
+
+fn b_validate() {
+    validate_package_name(str_from("valid-package-name"));
+    validate_package_name(str_from("publisher/agent"));
+    validate_package_name(str_from("com.example.app"));
+    return 0;
+}
+
+var br = 0;
+
+fn setup_resolver(n) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/tmp/nous-bench-");
+    str_builder_add_int(sb, sys_getpid());
+    var d = str_builder_build(sb);
+    mkdir_str(d);
+    sb = str_builder_new();
+    str_builder_add_cstr(sb, "/tmp/nous-bcache-");
+    str_builder_add_int(sb, sys_getpid());
+    var c = str_builder_build(sb);
+    mkdir_str(c);
+    var inst = join_path(d, str_from("installed"));
+    mkdir_str(inst);
+    var i = 0;
+    while (i < n) {
+        var nsb = str_builder_new();
+        str_builder_add_cstr(nsb, "bench-pkg-");
+        str_builder_add_int(nsb, i);
+        var name = str_builder_build(nsb);
+        var pd = join_path(inst, name);
+        mkdir_str(pd);
+        var mp = join_path(pd, str_from("manifest.json"));
+        var jsb = str_builder_new();
+        str_builder_add_cstr(jsb, "{\"agent\":{\"name\":\"");
+        str_builder_add(jsb, name);
+        str_builder_add_cstr(jsb, "\",\"version\":\"1.0.0\",\"description\":\"Bench ");
+        str_builder_add(jsb, name);
+        str_builder_add_cstr(jsb, "\"},\"dependencies\":{},\"runtime\":\"native\"}");
+        var json = str_builder_build(jsb);
+        file_write_all(to_cstr(mp), to_cstr(json), str_len(json));
+        i = i + 1;
+    }
+    br = payload(resolver_new(d, c));
+}
+
+fn b_hit() { resolver_resolve(br, str_from("bench-pkg-25")); return 0; }
+fn b_miss() { resolver_resolve(br, str_from("nonexistent-xyz")); return 0; }
+fn b_search() { resolver_search(br, str_from("bench")); return 0; }
+fn b_list() { resolver_list(br); return 0; }
+
+fn main() {
+    alloc_init();
+    args_init();
+    setup_names();
+
+    var benches = vec_new();
+
+    var b1 = bench_new("detect_source");
+    bench_run(b1, &b_detect, 100000);
+    vec_push(benches, b1);
+
+    var b2 = bench_new("validate_name");
+    bench_run(b2, &b_validate, 100000);
+    vec_push(benches, b2);
+
+    setup_resolver(50);
+
+    var b3 = bench_new("resolve_hit");
+    bench_run(b3, &b_hit, 10000);
+    vec_push(benches, b3);
+
+    var b4 = bench_new("resolve_miss");
+    bench_run(b4, &b_miss, 10000);
+    vec_push(benches, b4);
+
+    var b5 = bench_new("search_50");
+    bench_run(b5, &b_search, 1000);
+    vec_push(benches, b5);
+
+    var b6 = bench_new("list_installed");
+    bench_run(b6, &b_list, 1000);
+    vec_push(benches, b6);
+
+    bench_report_all(benches);
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);

@@ -1,0 +1,964 @@
+# nous — package resolver for AGNOS
+# Ported from Rust (2143 lines)
+#
+# Resolves package dependencies across system (apt), marketplace,
+# and Flutter sources. Returns resolution plans for ark to execute.
+
+# ===================================================================
+# Enums
+# ===================================================================
+
+enum PackageSource {
+    SOURCE_SYSTEM = 0;
+    SOURCE_MARKETPLACE = 1;
+    SOURCE_FLUTTER_APP = 2;
+    SOURCE_COMMUNITY = 3;
+    SOURCE_UNKNOWN = 4;
+}
+
+enum StrategyKind {
+    STRAT_MARKETPLACE_FIRST = 0;
+    STRAT_SYSTEM_FIRST = 1;
+    STRAT_ONLY_SOURCE = 2;
+    STRAT_SEARCH_ALL = 3;
+}
+
+enum ErrKind {
+    ERR_COMMAND_EXEC = 0;
+    ERR_REGISTRY_IO = 1;
+    ERR_INVALID_MANIFEST = 2;
+    ERR_INVALID_PACKAGE_NAME = 3;
+    ERR_INVALID_VERSION_CONSTRAINT = 4;
+    ERR_DEPENDENCY_CYCLE = 5;
+    ERR_VERSION_CONFLICT = 6;
+}
+
+# ===================================================================
+# Struct layout documentation (field offsets = index * 8)
+# Constructors use alloc + store64 for non-main function compatibility
+# ===================================================================
+
+# NousError:    err_kind(0) err_msg(8) err_detail(16)     = 24 bytes
+# AgentInfo:    ai_name(0) ai_version(8) ai_desc(16)      = 24 bytes
+# Manifest:     mf_agent(0) mf_deps(8) mf_runtime(16)     = 24 bytes
+# InstalledMPkg: mp_manifest(0) mp_size(8) mp_path(16) mp_at(24) = 32 bytes
+# ResolvedPkg:  rp_name(0) rp_ver(8) rp_src(16) rp_desc(24) rp_size(32) rp_deps(40) rp_trust(48) = 56 bytes
+# InstalledPkg: ip_name(0) ip_ver(8) ip_src(16) ip_date(24) ip_size(32) ip_auto(40) = 48 bytes
+# AvailUpdate:  au_name(0) au_src(8) au_inst_ver(16) au_avail_ver(24) au_log(32) = 40 bytes
+# SearchResult: sr_results(0) sr_sources(8) sr_total(16)   = 24 bytes
+# SysDb:        sd_apt(0)                                   = 8 bytes
+# Registry:     rg_dir(0) rg_pkgs(8)                       = 16 bytes
+# Strategy:     st_kind(0) st_only(8)                      = 16 bytes
+# Resolver:     rs_strat(0) rs_cache(8) rs_reg(16) rs_sys(24) = 32 bytes
+
+# ===================================================================
+# Constructors
+# ===================================================================
+
+fn nous_error_new(kind, msg, detail) {
+    var p = alloc(24);
+    store64(p, kind); store64(p + 8, msg); store64(p + 16, detail);
+    return p;
+}
+
+fn agent_info_new(name, version, desc) {
+    var p = alloc(24);
+    store64(p, name); store64(p + 8, version); store64(p + 16, desc);
+    return p;
+}
+
+fn manifest_new(agent, deps, runtime) {
+    var p = alloc(24);
+    store64(p, agent); store64(p + 8, deps); store64(p + 16, runtime);
+    return p;
+}
+
+fn installed_mpkg_new(manifest, size, path, at) {
+    var p = alloc(32);
+    store64(p, manifest); store64(p + 8, size);
+    store64(p + 16, path); store64(p + 24, at);
+    return p;
+}
+
+fn resolved_pkg_new(name, ver, src, desc, size, deps, trusted) {
+    var p = alloc(56);
+    store64(p, name); store64(p + 8, ver); store64(p + 16, src);
+    store64(p + 24, desc); store64(p + 32, size);
+    store64(p + 40, deps); store64(p + 48, trusted);
+    return p;
+}
+
+fn installed_pkg_new(name, ver, src, date, size, auto_inst) {
+    var p = alloc(48);
+    store64(p, name); store64(p + 8, ver); store64(p + 16, src);
+    store64(p + 24, date); store64(p + 32, size); store64(p + 40, auto_inst);
+    return p;
+}
+
+fn avail_update_new(name, src, inst_ver, avail_ver, changelog) {
+    var p = alloc(40);
+    store64(p, name); store64(p + 8, src); store64(p + 16, inst_ver);
+    store64(p + 24, avail_ver); store64(p + 32, changelog);
+    return p;
+}
+
+fn search_result_new(results, sources, total) {
+    var p = alloc(24);
+    store64(p, results); store64(p + 8, sources); store64(p + 16, total);
+    return p;
+}
+
+fn sysdb_make(apt_available) {
+    var p = alloc(8);
+    store64(p, apt_available);
+    return p;
+}
+
+fn registry_make(base_dir, packages) {
+    var p = alloc(16);
+    store64(p, base_dir); store64(p + 8, packages);
+    return p;
+}
+
+fn strategy_new(kind, only_source) {
+    var p = alloc(16);
+    store64(p, kind); store64(p + 8, only_source);
+    return p;
+}
+
+fn resolver_make(strat, cache, reg, sysdb) {
+    var p = alloc(32);
+    store64(p, strat); store64(p + 8, cache);
+    store64(p + 16, reg); store64(p + 24, sysdb);
+    return p;
+}
+
+# ===================================================================
+# Accessors (field_index * 8)
+# ===================================================================
+
+fn ne_kind(p) { return load64(p); }
+fn ne_msg(p) { return load64(p + 8); }
+fn ne_detail(p) { return load64(p + 16); }
+
+fn ai_name(p) { return load64(p); }
+fn ai_version(p) { return load64(p + 8); }
+fn ai_desc(p) { return load64(p + 16); }
+
+fn mf_agent(p) { return load64(p); }
+fn mf_deps(p) { return load64(p + 8); }
+fn mf_runtime(p) { return load64(p + 16); }
+
+fn mp_manifest(p) { return load64(p); }
+fn mp_size(p) { return load64(p + 8); }
+fn mp_path(p) { return load64(p + 16); }
+fn mp_at(p) { return load64(p + 24); }
+
+fn rp_name(p) { return load64(p); }
+fn rp_ver(p) { return load64(p + 8); }
+fn rp_src(p) { return load64(p + 16); }
+fn rp_desc(p) { return load64(p + 24); }
+fn rp_size(p) { return load64(p + 32); }
+fn rp_deps(p) { return load64(p + 40); }
+fn rp_trust(p) { return load64(p + 48); }
+
+fn ip_name(p) { return load64(p); }
+fn ip_ver(p) { return load64(p + 8); }
+fn ip_src(p) { return load64(p + 16); }
+fn ip_date(p) { return load64(p + 24); }
+fn ip_size(p) { return load64(p + 32); }
+fn ip_auto(p) { return load64(p + 40); }
+
+fn sr_results(p) { return load64(p); }
+fn sr_sources(p) { return load64(p + 8); }
+fn sr_total(p) { return load64(p + 16); }
+
+fn sd_apt(p) { return load64(p); }
+
+fn rg_dir(p) { return load64(p); }
+fn rg_pkgs(p) { return load64(p + 8); }
+
+fn st_kind(p) { return load64(p); }
+fn st_only(p) { return load64(p + 8); }
+
+fn rs_strat(p) { return load64(p); }
+fn rs_cache(p) { return load64(p + 8); }
+fn rs_reg(p) { return load64(p + 16); }
+fn rs_sys(p) { return load64(p + 24); }
+fn rs_set_strat(p, v) { store64(p, v); }
+
+# Shorthand for deep access: InstalledMPkg -> name/version/desc/runtime/deps
+fn mpkg_name(p) { return ai_name(mf_agent(mp_manifest(p))); }
+fn mpkg_version(p) { return ai_version(mf_agent(mp_manifest(p))); }
+fn mpkg_desc(p) { return ai_desc(mf_agent(mp_manifest(p))); }
+fn mpkg_runtime(p) { return mf_runtime(mp_manifest(p)); }
+fn mpkg_deps(p) { return mf_deps(mp_manifest(p)); }
+
+# ===================================================================
+# Filesystem helpers (is_dir from fs.cyr is broken, use stat directly)
+# ===================================================================
+
+fn our_is_dir(cpath) {
+    var statbuf[18];
+    var r = syscall(SYS_STAT, cpath, &statbuf);
+    if (r < 0) { return 0; }
+    var mode = load32(&statbuf + 24);
+    if ((mode & 61440) == 16384) { return 1; }
+    return 0;
+}
+
+# ===================================================================
+# Utility functions
+# ===================================================================
+
+fn to_cstr(s) {
+    if (s == 0) { return ""; }
+    var data = str_data(s);
+    var len = str_len(s);
+    var buf = alloc(len + 1);
+    memcpy(buf, data, len);
+    store8(buf + len, 0);
+    return buf;
+}
+
+fn str_compare(a, b) {
+    var ad = str_data(a);
+    var al = str_len(a);
+    var bd = str_data(b);
+    var bl = str_len(b);
+    var ml = al;
+    if (bl < ml) { ml = bl; }
+    var i = 0;
+    while (i < ml) {
+        var ca = load8(ad + i);
+        var cb = load8(bd + i);
+        if (ca < cb) { return (0 - 1); }
+        if (ca > cb) { return 1; }
+        i = i + 1;
+    }
+    if (al < bl) { return (0 - 1); }
+    if (al > bl) { return 1; }
+    return 0;
+}
+
+fn str_find(haystack, needle) {
+    var hd = str_data(haystack);
+    var hl = str_len(haystack);
+    var nd = str_data(needle);
+    var nl = str_len(needle);
+    if (nl > hl) { return (0 - 1); }
+    if (nl == 0) { return 0; }
+    var lim = hl - nl;
+    var i = 0;
+    while (i <= lim) {
+        if (memeq(hd + i, nd, nl) == 1) { return i; }
+        i = i + 1;
+    }
+    return (0 - 1);
+}
+
+fn json_extract_str(data, key) {
+    var d = str_data(data);
+    var dl = str_len(data);
+    var kl = strlen(key);
+    var i = 0;
+    while (i < dl) {
+        if (load8(d + i) == 34 && i + 1 + kl + 1 <= dl) {
+            if (memeq(d + i + 1, key, kl) == 1 && load8(d + i + 1 + kl) == 34) {
+                var j = i + 1 + kl + 1;
+                while (j < dl) {
+                    var c = load8(d + j);
+                    if (c != 32 && c != 9 && c != 10 && c != 13 && c != 58) { break; }
+                    j = j + 1;
+                }
+                if (j < dl && load8(d + j) == 34) {
+                    j = j + 1;
+                    var start = j;
+                    while (j < dl && load8(d + j) != 34) {
+                        if (load8(d + j) == 92) { j = j + 1; }
+                        j = j + 1;
+                    }
+                    return str_new(d + start, j - start);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn file_mtime(cpath) {
+    var statbuf[18];
+    var r = syscall(SYS_STAT, cpath, &statbuf);
+    if (r < 0) { return 0; }
+    return load64(&statbuf + 88);
+}
+
+fn file_stat_size(cpath) {
+    var statbuf[18];
+    var r = syscall(SYS_STAT, cpath, &statbuf);
+    if (r < 0) { return 0; }
+    return load64(&statbuf + 48);
+}
+
+fn dir_size_recursive(path) {
+    var cp = to_cstr(path);
+    if (our_is_dir(cp) == 0) { return file_stat_size(cp); }
+    var entries = dir_list(path);
+    var total = 0;
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var full = join_path(path, vec_get(entries, i));
+        total = total + dir_size_recursive(full);
+        i = i + 1;
+    }
+    return total;
+}
+
+fn join_path(dir, name) {
+    var sb = str_builder_new();
+    str_builder_add(sb, dir);
+    str_builder_add_cstr(sb, "/");
+    str_builder_add(sb, name);
+    return str_builder_build(sb);
+}
+
+fn mkdir_str(path) { sys_mkdir(to_cstr(path), 493); }
+
+# ===================================================================
+# Error constructors
+# ===================================================================
+
+fn nous_err(kind, msg, detail) {
+    return Err(nous_error_new(kind, msg, detail));
+}
+fn err_registry_io(path, detail) { return nous_err(ERR_REGISTRY_IO, path, detail); }
+fn err_invalid_name(name, reason) { return nous_err(ERR_INVALID_PACKAGE_NAME, name, reason); }
+
+fn format_cycle(cycle) {
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < vec_len(cycle)) {
+        if (i > 0) { str_builder_add_cstr(sb, " -> "); }
+        str_builder_add(sb, vec_get(cycle, i));
+        i = i + 1;
+    }
+    return str_builder_build(sb);
+}
+
+fn nous_error_msg(e) {
+    var kind = ne_kind(e);
+    var msg = ne_msg(e);
+    var detail = ne_detail(e);
+    var sb = str_builder_new();
+    if (kind == ERR_INVALID_PACKAGE_NAME) {
+        str_builder_add_cstr(sb, "invalid package name `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == ERR_DEPENDENCY_CYCLE) {
+        str_builder_add_cstr(sb, "dependency cycle detected: ");
+        str_builder_add(sb, msg);
+    } elif (kind == ERR_VERSION_CONFLICT) {
+        str_builder_add_cstr(sb, "version conflict for `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } else {
+        str_builder_add_cstr(sb, "nous error: ");
+        if (msg != 0) { str_builder_add(sb, msg); }
+        if (detail != 0) { str_builder_add_cstr(sb, ": "); str_builder_add(sb, detail); }
+    }
+    return str_builder_build(sb);
+}
+
+# ===================================================================
+# Source display
+# ===================================================================
+
+fn source_to_str(src) {
+    if (src == SOURCE_SYSTEM) { return str_from("system"); }
+    if (src == SOURCE_MARKETPLACE) { return str_from("marketplace"); }
+    if (src == SOURCE_FLUTTER_APP) { return str_from("flutter-app"); }
+    if (src == SOURCE_COMMUNITY) { return str_from("community"); }
+    return str_from("unknown");
+}
+
+# ===================================================================
+# Strategy
+# ===================================================================
+
+fn strategy_default() { return strategy_new(STRAT_MARKETPLACE_FIRST, 0); }
+fn strategy_system_first() { return strategy_new(STRAT_SYSTEM_FIRST, 0); }
+fn strategy_only(src) { return strategy_new(STRAT_ONLY_SOURCE, src); }
+fn strategy_search_all() { return strategy_new(STRAT_SEARCH_ALL, 0); }
+
+fn strategy_eq(a, b) {
+    if (st_kind(a) != st_kind(b)) { return 0; }
+    if (st_kind(a) == STRAT_ONLY_SOURCE) { return st_only(a) == st_only(b); }
+    return 1;
+}
+
+# ===================================================================
+# Package name validation
+# ===================================================================
+
+fn is_valid_name_char(c) {
+    if (c >= 97 && c <= 122) { return 1; }
+    if (c >= 65 && c <= 90) { return 1; }
+    if (c >= 48 && c <= 57) { return 1; }
+    if (c == 45 || c == 95 || c == 46 || c == 47 || c == 64 || c == 43) { return 1; }
+    return 0;
+}
+
+fn validate_package_name(name) {
+    if (str_len(name) == 0) {
+        return err_invalid_name(name, str_from("package name cannot be empty"));
+    }
+    var trimmed = str_trim(name);
+    if (str_len(trimmed) != str_len(name)) {
+        return err_invalid_name(name, str_from("package name cannot have leading or trailing whitespace"));
+    }
+    var d = str_data(name);
+    var len = str_len(name);
+    var i = 0;
+    while (i < len) {
+        var c = load8(d + i);
+        if (is_valid_name_char(c) == 0) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "invalid character '");
+            var ch = alloc(2);
+            store8(ch, c);
+            store8(ch + 1, 0);
+            str_builder_add_cstr(sb, ch);
+            str_builder_add_cstr(sb, "'");
+            return err_invalid_name(name, str_builder_build(sb));
+        }
+        i = i + 1;
+    }
+    return Ok(1);
+}
+
+# ===================================================================
+# Source detection
+# ===================================================================
+
+fn detect_source(name) {
+    if (str_len(name) == 0) { return SOURCE_UNKNOWN; }
+    if (str_index_of(name, 47) >= 0) { return SOURCE_MARKETPLACE; }
+    if (str_ends_with(name, str_from(".flutter")) == 1) { return SOURCE_FLUTTER_APP; }
+    var d = str_data(name);
+    var len = str_len(name);
+    var dots = 0;
+    var i = 0;
+    while (i < len) {
+        if (load8(d + i) == 46) { dots = dots + 1; }
+        i = i + 1;
+    }
+    if (dots >= 2) {
+        var dp = str_index_of(name, 46);
+        if (dp > 0) {
+            var first = str_sub(name, 0, dp);
+            if (str_eq(first, str_from("com")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("org")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("net")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("io")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("dev")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("app")) == 1) { return SOURCE_FLUTTER_APP; }
+            if (str_eq(first, str_from("me")) == 1) { return SOURCE_FLUTTER_APP; }
+        }
+    }
+    return SOURCE_UNKNOWN;
+}
+
+# ===================================================================
+# Command execution
+# ===================================================================
+
+var cmd_buf = 0;
+
+fn cmd_run(cmd_str) {
+    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
+    var args = vec_new();
+    vec_push(args, "/bin/sh");
+    vec_push(args, "-c");
+    vec_push(args, to_cstr(cmd_str));
+    var n = exec_capture(args, cmd_buf, 65536);
+    if (n <= 0) { return 0; }
+    return str_new(cmd_buf, n);
+}
+
+fn which_exists(name) {
+    var pe = getenv("PATH");
+    if (pe == 0) { return 0; }
+    var dirs = str_split(str_from(pe), 58);
+    var i = 0;
+    while (i < vec_len(dirs)) {
+        var dir = vec_get(dirs, i);
+        if (str_len(dir) > 0) {
+            if (file_exists(to_cstr(join_path(dir, str_from(name)))) == 1) { return 1; }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# ===================================================================
+# Sorting
+# ===================================================================
+
+fn sort_resolved(v) {
+    var len = vec_len(v);
+    var i = 1;
+    while (i < len) {
+        var key = vec_get(v, i);
+        var kn = rp_name(key);
+        var j = i - 1;
+        while (j >= 0) {
+            if (str_compare(rp_name(vec_get(v, j)), kn) <= 0) { break; }
+            vec_set(v, j + 1, vec_get(v, j));
+            j = j - 1;
+        }
+        vec_set(v, j + 1, key);
+        i = i + 1;
+    }
+}
+
+fn sort_installed(v) {
+    var len = vec_len(v);
+    var i = 1;
+    while (i < len) {
+        var key = vec_get(v, i);
+        var kn = ip_name(key);
+        var j = i - 1;
+        while (j >= 0) {
+            if (str_compare(ip_name(vec_get(v, j)), kn) <= 0) { break; }
+            vec_set(v, j + 1, vec_get(v, j));
+            j = j - 1;
+        }
+        vec_set(v, j + 1, key);
+        i = i + 1;
+    }
+}
+
+fn sort_mpkg(v) {
+    var len = vec_len(v);
+    var i = 1;
+    while (i < len) {
+        var key = vec_get(v, i);
+        var kn = mpkg_name(key);
+        var j = i - 1;
+        while (j >= 0) {
+            if (str_compare(mpkg_name(vec_get(v, j)), kn) <= 0) { break; }
+            vec_set(v, j + 1, vec_get(v, j));
+            j = j - 1;
+        }
+        vec_set(v, j + 1, key);
+        i = i + 1;
+    }
+}
+
+# ===================================================================
+# LocalRegistry
+# ===================================================================
+
+fn parse_manifest_file(file_path) {
+    var buf = alloc(8192);
+    var n = file_read_all(to_cstr(file_path), buf, 8192);
+    if (n <= 0) { return 0; }
+    var content = str_new(buf, n);
+    var name = json_extract_str(content, "name");
+    var version = json_extract_str(content, "version");
+    var desc = json_extract_str(content, "description");
+    var runtime = json_extract_str(content, "runtime");
+    if (name == 0) { name = str_from(""); }
+    if (version == 0) { version = str_from(""); }
+    if (desc == 0) { desc = str_from(""); }
+    if (runtime == 0) { runtime = str_from("native"); }
+    var agent = agent_info_new(name, version, desc);
+    return manifest_new(agent, map_new(), runtime);
+}
+
+fn scan_installed(base_dir) {
+    var pkgs = vec_new();
+    var idir = join_path(base_dir, str_from("installed"));
+    var cd = to_cstr(idir);
+    if (our_is_dir(cd) == 0) { return pkgs; }
+    var entries = dir_list(idir);
+    var i = 0;
+    while (i < vec_len(entries)) {
+        var entry = vec_get(entries, i);
+        var pdir = join_path(idir, entry);
+        var mpath = join_path(pdir, str_from("manifest.json"));
+        var cm = to_cstr(mpath);
+        if (file_exists(cm) == 1) {
+            var manifest = parse_manifest_file(mpath);
+            if (manifest != 0) {
+                var sz = dir_size_recursive(pdir);
+                var mt = file_mtime(cm);
+                vec_push(pkgs, installed_mpkg_new(manifest, sz, pdir, mt));
+            }
+        }
+        i = i + 1;
+    }
+    sort_mpkg(pkgs);
+    return pkgs;
+}
+
+fn registry_new(base_dir) {
+    if (our_is_dir(to_cstr(base_dir)) == 0) {
+        return err_registry_io(base_dir, str_from("marketplace directory does not exist"));
+    }
+    return Ok(registry_make(base_dir, scan_installed(base_dir)));
+}
+
+fn registry_search(reg, query) {
+    var results = vec_new();
+    var pkgs = rg_pkgs(reg);
+    var i = 0;
+    while (i < vec_len(pkgs)) {
+        var pkg = vec_get(pkgs, i);
+        if (str_contains(mpkg_name(pkg), query) == 1 ||
+            str_contains(mpkg_desc(pkg), query) == 1) {
+            vec_push(results, pkg);
+        }
+        i = i + 1;
+    }
+    return results;
+}
+
+fn registry_get(reg, name) {
+    var pkgs = rg_pkgs(reg);
+    var i = 0;
+    while (i < vec_len(pkgs)) {
+        var pkg = vec_get(pkgs, i);
+        if (str_eq(mpkg_name(pkg), name) == 1) { return pkg; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn registry_list(reg) { return rg_pkgs(reg); }
+
+# ===================================================================
+# SystemPackageDb
+# ===================================================================
+
+fn sysdb_new() {
+    var ok = 0;
+    if (which_exists("apt-cache") == 1 && which_exists("dpkg-query") == 1) { ok = 1; }
+    return sysdb_make(ok);
+}
+
+fn sysdb_available(db) { return sd_apt(db); }
+
+fn sysdb_search(db, query) {
+    if (sd_apt(db) == 0) { return Ok(vec_new()); }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "apt-cache search --names-only ");
+    str_builder_add(sb, query);
+    var output = cmd_run(str_builder_build(sb));
+    if (output == 0) { return Ok(vec_new()); }
+    var lines = str_split(output, 10);
+    var results = vec_new();
+    var i = 0;
+    while (i < vec_len(lines)) {
+        var line = str_trim(vec_get(lines, i));
+        if (str_len(line) > 0) {
+            var sp = str_find(line, str_from(" - "));
+            if (sp >= 0) {
+                var n = str_trim(str_sub(line, 0, sp));
+                var d = str_trim(str_sub(line, sp + 3, str_len(line) - sp - 3));
+                vec_push(results, resolved_pkg_new(n, str_from(""), SOURCE_SYSTEM, d, 0, vec_new(), 1));
+            }
+        }
+        i = i + 1;
+    }
+    return Ok(results);
+}
+
+fn sysdb_is_installed(db, name) {
+    if (sd_apt(db) == 0) { return Ok(0); }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "dpkg-query -W -f '${Status}' ");
+    str_builder_add(sb, name);
+    var output = cmd_run(str_builder_build(sb));
+    if (output == 0) { return Ok(0); }
+    if (str_contains(output, str_from("install ok installed")) == 1) { return Ok(1); }
+    return Ok(0);
+}
+
+fn sysdb_get_installed(db, name) {
+    if (sd_apt(db) == 0) { return Ok(0); }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "dpkg-query -W -f '${Package}\t${Version}\t${Installed-Size}\n' ");
+    str_builder_add(sb, name);
+    var output = cmd_run(str_builder_build(sb));
+    if (output == 0) { return Ok(0); }
+    var lines = str_split(output, 10);
+    if (vec_len(lines) == 0) { return Ok(0); }
+    var fields = str_split(vec_get(lines, 0), 9);
+    if (vec_len(fields) < 3) { return Ok(0); }
+    var skb = str_to_int(str_trim(vec_get(fields, 2)));
+    return Ok(installed_pkg_new(vec_get(fields, 0), vec_get(fields, 1), SOURCE_SYSTEM, 0, skb * 1024, 0));
+}
+
+fn sysdb_list(db) {
+    if (sd_apt(db) == 0) { return Ok(vec_new()); }
+    var output = cmd_run(str_from("dpkg-query -W -f '${Package}\t${Version}\t${Installed-Size}\t${Status}\n'"));
+    if (output == 0) { return Ok(vec_new()); }
+    var lines = str_split(output, 10);
+    var pkgs = vec_new();
+    var i = 0;
+    while (i < vec_len(lines)) {
+        var line = str_trim(vec_get(lines, i));
+        if (str_len(line) > 0) {
+            var f = str_split(line, 9);
+            if (vec_len(f) >= 4 && str_contains(vec_get(f, 3), str_from("install ok installed")) == 1) {
+                var skb = str_to_int(str_trim(vec_get(f, 2)));
+                vec_push(pkgs, installed_pkg_new(vec_get(f, 0), vec_get(f, 1), SOURCE_SYSTEM, 0, skb * 1024, 0));
+            }
+        }
+        i = i + 1;
+    }
+    return Ok(pkgs);
+}
+
+fn sysdb_updates(db) {
+    if (sd_apt(db) == 0) { return Ok(vec_new()); }
+    var output = cmd_run(str_from("apt list --upgradable 2>/dev/null"));
+    if (output == 0) { return Ok(vec_new()); }
+    var lines = str_split(output, 10);
+    var upd = vec_new();
+    var i = 0;
+    while (i < vec_len(lines)) {
+        var line = vec_get(lines, i);
+        if (str_starts_with(line, "Listing") == 0 && str_contains(line, str_from("[upgradable")) == 1) {
+            var sp = str_index_of(line, 47);
+            if (sp > 0) {
+                var pn = str_sub(line, 0, sp);
+                var rest = str_split(str_sub(line, sp + 1, str_len(line) - sp - 1), 32);
+                var av = str_from("");
+                if (vec_len(rest) >= 2) { av = vec_get(rest, 1); }
+                var fp = str_find(line, str_from("from: "));
+                var iv = str_from("");
+                if (fp >= 0) {
+                    var after = str_sub(line, fp + 6, str_len(line) - fp - 6);
+                    var br = str_index_of(after, 93);
+                    if (br > 0) { iv = str_sub(after, 0, br); }
+                }
+                vec_push(upd, avail_update_new(pn, SOURCE_SYSTEM, iv, av, 0));
+            }
+        }
+        i = i + 1;
+    }
+    return Ok(upd);
+}
+
+fn sysdb_info(db, name) {
+    if (sd_apt(db) == 0) { return Ok(0); }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "apt-cache show ");
+    str_builder_add(sb, name);
+    var output = cmd_run(str_builder_build(sb));
+    if (output == 0) { return Ok(0); }
+    var version = str_from("");
+    var desc = str_from("");
+    var sz = 0;
+    var deps = vec_new();
+    var lines = str_split(output, 10);
+    var li = 0;
+    while (li < vec_len(lines)) {
+        var line = vec_get(lines, li);
+        if (str_starts_with(line, "Version: ") == 1) {
+            version = str_trim(str_sub(line, 9, str_len(line) - 9));
+        } elif (str_starts_with(line, "Description: ") == 1) {
+            desc = str_trim(str_sub(line, 13, str_len(line) - 13));
+        } elif (str_starts_with(line, "Size: ") == 1) {
+            sz = str_to_int(str_trim(str_sub(line, 6, str_len(line) - 6)));
+        } elif (str_starts_with(line, "Depends: ") == 1) {
+            var dp = str_split(str_sub(line, 9, str_len(line) - 9), 44);
+            var di = 0;
+            while (di < vec_len(dp)) {
+                var dep = str_trim(vec_get(dp, di));
+                var spc = str_index_of(dep, 32);
+                if (spc > 0) { dep = str_sub(dep, 0, spc); }
+                if (str_len(dep) > 0) { vec_push(deps, dep); }
+                di = di + 1;
+            }
+        }
+        li = li + 1;
+    }
+    if (str_len(version) == 0) { return Ok(0); }
+    return Ok(resolved_pkg_new(name, version, SOURCE_SYSTEM, desc, sz, deps, 1));
+}
+
+# ===================================================================
+# NousResolver
+# ===================================================================
+
+fn resolver_new(mkt_dir, cache_dir) {
+    var rr = registry_new(mkt_dir);
+    if (is_err_result(rr) == 1) { return rr; }
+    return Ok(resolver_make(strategy_default(), cache_dir, payload(rr), sysdb_new()));
+}
+
+fn resolver_with_strategy(r, strat) { rs_set_strat(r, strat); return r; }
+fn resolver_strategy(r) { return rs_strat(r); }
+
+fn mpkg_to_resolved(pkg, src) {
+    var dk = map_keys(mpkg_deps(pkg));
+    var ds = vec_new();
+    var i = 0;
+    while (i < vec_len(dk)) {
+        vec_push(ds, str_from(vec_get(dk, i)));
+        i = i + 1;
+    }
+    return resolved_pkg_new(mpkg_name(pkg), mpkg_version(pkg), src, mpkg_desc(pkg), mp_size(pkg), ds, 1);
+}
+
+fn resolve_mkt(r, name) {
+    var pkg = registry_get(rs_reg(r), name);
+    if (pkg == 0) { return 0; }
+    return mpkg_to_resolved(pkg, SOURCE_MARKETPLACE);
+}
+
+fn resolve_sys(r, name) { return sysdb_info(rs_sys(r), name); }
+
+fn resolve_flutter(r, name) {
+    var pkg = registry_get(rs_reg(r), name);
+    if (pkg == 0) { return 0; }
+    if (str_eq(mpkg_runtime(pkg), str_from("flutter")) == 1) {
+        return mpkg_to_resolved(pkg, SOURCE_FLUTTER_APP);
+    }
+    return 0;
+}
+
+fn resolver_resolve(r, name) {
+    var v = validate_package_name(name);
+    if (is_err_result(v) == 1) { return v; }
+    var k = st_kind(rs_strat(r));
+
+    if (k == STRAT_MARKETPLACE_FIRST) {
+        var mp = resolve_mkt(r, name);
+        if (mp != 0) { return Ok(mp); }
+        var fl = resolve_flutter(r, name);
+        if (fl != 0) { return Ok(fl); }
+        return resolve_sys(r, name);
+    }
+    if (k == STRAT_SYSTEM_FIRST) {
+        var sr = resolve_sys(r, name);
+        if (is_err_result(sr) == 1) { return sr; }
+        if (payload(sr) != 0) { return sr; }
+        var mp = resolve_mkt(r, name);
+        if (mp != 0) { return Ok(mp); }
+        return Ok(resolve_flutter(r, name));
+    }
+    if (k == STRAT_ONLY_SOURCE) {
+        var s = st_only(rs_strat(r));
+        if (s == SOURCE_SYSTEM) { return resolve_sys(r, name); }
+        if (s == SOURCE_MARKETPLACE || s == SOURCE_COMMUNITY) { return Ok(resolve_mkt(r, name)); }
+        if (s == SOURCE_FLUTTER_APP) { return Ok(resolve_flutter(r, name)); }
+        return Ok(0);
+    }
+    if (k == STRAT_SEARCH_ALL) {
+        var mp = resolve_mkt(r, name);
+        if (mp != 0) { return Ok(mp); }
+        var fl = resolve_flutter(r, name);
+        if (fl != 0) { return Ok(fl); }
+        return resolve_sys(r, name);
+    }
+    return Ok(0);
+}
+
+fn resolver_search(r, query) {
+    var results = vec_new();
+    var sources = vec_new();
+    var seen = map_new();
+    vec_push(sources, SOURCE_MARKETPLACE);
+    var mr = registry_search(rs_reg(r), query);
+    var i = 0;
+    while (i < vec_len(mr)) {
+        var mpkg = vec_get(mr, i);
+        map_set(seen, to_cstr(mpkg_name(mpkg)), 1);
+        vec_push(results, mpkg_to_resolved(mpkg, SOURCE_MARKETPLACE));
+        i = i + 1;
+    }
+    vec_push(sources, SOURCE_SYSTEM);
+    var sres = sysdb_search(rs_sys(r), query);
+    if (is_ok(sres) == 1) {
+        var sp = payload(sres);
+        var j = 0;
+        while (j < vec_len(sp)) {
+            var pkg = vec_get(sp, j);
+            if (map_has(seen, to_cstr(rp_name(pkg))) == 0) {
+                map_set(seen, to_cstr(rp_name(pkg)), 1);
+                vec_push(results, pkg);
+            }
+            j = j + 1;
+        }
+    }
+    sort_resolved(results);
+    return Ok(search_result_new(results, sources, vec_len(results)));
+}
+
+fn resolver_list(r) {
+    var pkgs = vec_new();
+    var ml = registry_list(rs_reg(r));
+    var i = 0;
+    while (i < vec_len(ml)) {
+        var mpkg = vec_get(ml, i);
+        vec_push(pkgs, installed_pkg_new(mpkg_name(mpkg), mpkg_version(mpkg),
+            SOURCE_MARKETPLACE, mp_at(mpkg), mp_size(mpkg), 0));
+        i = i + 1;
+    }
+    var sres = sysdb_list(rs_sys(r));
+    if (is_ok(sres) == 1) {
+        var sp = payload(sres);
+        var j = 0;
+        while (j < vec_len(sp)) { vec_push(pkgs, vec_get(sp, j)); j = j + 1; }
+    }
+    sort_installed(pkgs);
+    return Ok(pkgs);
+}
+
+fn resolver_updates(r) { return sysdb_updates(rs_sys(r)); }
+fn resolver_detect_source(name) { return detect_source(name); }
+fn resolver_is_mkt(r, name) { if (registry_get(rs_reg(r), name) != 0) { return 1; } return 0; }
+
+fn resolver_is_sys(r, name) {
+    var res = sysdb_is_installed(rs_sys(r), name);
+    if (is_ok(res) == 1) { return payload(res); }
+    return 0;
+}
+
+# ===================================================================
+# JSON serialization
+# ===================================================================
+
+fn source_json(src) {
+    if (src == SOURCE_SYSTEM) { return "\"system\""; }
+    if (src == SOURCE_MARKETPLACE) { return "\"marketplace\""; }
+    if (src == SOURCE_FLUTTER_APP) { return "\"flutter-app\""; }
+    if (src == SOURCE_COMMUNITY) { return "\"community\""; }
+    return "\"unknown\"";
+}
+
+fn resolved_to_json(pkg) {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"name\":\"");
+    str_builder_add(sb, rp_name(pkg));
+    str_builder_add_cstr(sb, "\",\"version\":\"");
+    str_builder_add(sb, rp_ver(pkg));
+    str_builder_add_cstr(sb, "\",\"source\":");
+    str_builder_add_cstr(sb, source_json(rp_src(pkg)));
+    str_builder_add_cstr(sb, ",\"description\":\"");
+    str_builder_add(sb, rp_desc(pkg));
+    str_builder_add_cstr(sb, "\",\"size_bytes\":");
+    str_builder_add_int(sb, rp_size(pkg));
+    str_builder_add_cstr(sb, ",\"trusted\":");
+    if (rp_trust(pkg) == 1) { str_builder_add_cstr(sb, "true"); }
+    else { str_builder_add_cstr(sb, "false"); }
+    str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}

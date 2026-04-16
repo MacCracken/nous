@@ -1,0 +1,432 @@
+# nous test suite — ported from 56 Rust unit tests
+
+include "src/nous.cyr"
+
+var tc = 0;
+
+fn mkdir_test() {
+    tc = tc + 1;
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "/tmp/nous-test-");
+    str_builder_add_int(sb, sys_getpid());
+    str_builder_add_cstr(sb, "-");
+    str_builder_add_int(sb, tc);
+    var d = str_builder_build(sb);
+    mkdir_str(d);
+    return d;
+}
+
+fn write_manifest(dir, name, runtime) {
+    var installed = join_path(dir, str_from("installed"));
+    mkdir_str(installed);
+    var pd = join_path(installed, str_from(name));
+    mkdir_str(pd);
+    var mp = join_path(pd, str_from("manifest.json"));
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"agent\":{\"name\":\"");
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, "\",\"version\":\"1.0.0\",\"description\":\"Test package ");
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, "\"},\"dependencies\":{},\"runtime\":\"");
+    str_builder_add_cstr(sb, runtime);
+    str_builder_add_cstr(sb, "\"}");
+    var json = str_builder_build(sb);
+    file_write_all(to_cstr(mp), to_cstr(json), str_len(json));
+}
+
+fn rm_rf(path) {
+    var cp = to_cstr(path);
+    if (is_dir(cp) == 1) {
+        var e = dir_list(cp);
+        var i = 0;
+        while (i < vec_len(e)) {
+            rm_rf(join_path(path, vec_get(e, i)));
+            i = i + 1;
+        }
+        sys_rmdir(cp);
+    } else { sys_unlink(cp); }
+}
+
+# ===================================================================
+
+fn test_detect_source() {
+    test_group("detect_source");
+    assert_eq(detect_source(str_from("acme/scanner")), SOURCE_MARKETPLACE, "slash");
+    assert_eq(detect_source(str_from("publisher/agent-name")), SOURCE_MARKETPLACE, "pub/agent");
+    assert_eq(detect_source(str_from("com.example.app")), SOURCE_FLUTTER_APP, "com.example");
+    assert_eq(detect_source(str_from("myapp.flutter")), SOURCE_FLUTTER_APP, ".flutter");
+    assert_eq(detect_source(str_from("org.agnos.files")), SOURCE_FLUTTER_APP, "org.agnos");
+    assert_eq(detect_source(str_from("io.flutter.demo")), SOURCE_FLUTTER_APP, "io.flutter");
+    assert_eq(detect_source(str_from("nginx")), SOURCE_UNKNOWN, "nginx");
+    assert_eq(detect_source(str_from("curl")), SOURCE_UNKNOWN, "curl");
+    assert_eq(detect_source(str_from("")), SOURCE_UNKNOWN, "empty");
+    assert_eq(detect_source(str_from("a/b/c")), SOURCE_MARKETPLACE, "multi-slash");
+    assert_eq(detect_source(str_from("foo.bar")), SOURCE_UNKNOWN, "single-dot");
+    assert_eq(detect_source(str_from("my.custom.thing")), SOURCE_UNKNOWN, "non-tld");
+}
+
+fn test_validate_name() {
+    test_group("validate_name");
+    assert(is_ok(validate_package_name(str_from("valid-pkg"))), "valid");
+    assert(is_ok(validate_package_name(str_from("publisher/agent"))), "pub/agent");
+    assert(is_ok(validate_package_name(str_from("com.example.app"))), "dotted");
+    assert(is_ok(validate_package_name(str_from("lib_foo+bar"))), "underscore+plus");
+    assert(is_err_result(validate_package_name(str_from(""))), "empty");
+    assert(is_err_result(validate_package_name(str_from(" leading"))), "leading ws");
+    assert(is_err_result(validate_package_name(str_from("pkg;rm"))), "semicolon");
+    assert(is_err_result(validate_package_name(str_from("pkg|bad"))), "pipe");
+}
+
+fn test_source_display() {
+    test_group("source_display");
+    assert(str_eq(source_to_str(SOURCE_SYSTEM), str_from("system")), "system");
+    assert(str_eq(source_to_str(SOURCE_MARKETPLACE), str_from("marketplace")), "mkt");
+    assert(str_eq(source_to_str(SOURCE_FLUTTER_APP), str_from("flutter-app")), "flutter");
+    assert(str_eq(source_to_str(SOURCE_COMMUNITY), str_from("community")), "community");
+    assert(str_eq(source_to_str(SOURCE_UNKNOWN), str_from("unknown")), "unknown");
+}
+
+fn test_strategy() {
+    test_group("strategy");
+    assert_eq(st_kind(strategy_default()), STRAT_MARKETPLACE_FIRST, "default");
+    assert_eq(st_kind(strategy_system_first()), STRAT_SYSTEM_FIRST, "sys_first");
+    var only = strategy_only(SOURCE_SYSTEM);
+    assert_eq(st_kind(only), STRAT_ONLY_SOURCE, "only kind");
+    assert_eq(st_only(only), SOURCE_SYSTEM, "only target");
+    assert(strategy_eq(strategy_default(), strategy_default()), "eq same");
+    assert(strategy_eq(strategy_default(), strategy_system_first()) == 0, "neq diff");
+    assert(strategy_eq(strategy_only(SOURCE_SYSTEM), strategy_only(SOURCE_MARKETPLACE)) == 0, "neq only");
+}
+
+fn test_registry_new() {
+    test_group("registry_new");
+    var d = mkdir_test();
+    assert(is_ok(registry_new(d)), "valid dir");
+    assert(is_err_result(registry_new(str_from("/nonexistent/path"))), "bad dir");
+    rm_rf(d);
+}
+
+fn test_registry_scan() {
+    test_group("registry_scan");
+    var d = mkdir_test();
+    write_manifest(d, "test-scanner", "native");
+    var reg = payload(registry_new(d));
+    var pkg = registry_get(reg, str_from("test-scanner"));
+    assert(pkg != 0, "found");
+    assert(str_eq(mpkg_name(pkg), str_from("test-scanner")), "name");
+    assert(str_eq(mpkg_version(pkg), str_from("1.0.0")), "version");
+    assert(registry_get(reg, str_from("nonexistent")) == 0, "miss");
+    assert(vec_len(registry_search(reg, str_from("test"))) >= 1, "search");
+    assert_eq(vec_len(registry_list(reg)), 1, "list");
+    rm_rf(d);
+}
+
+fn test_resolver_new() {
+    test_group("resolver_new");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var r = payload(resolver_new(d, c));
+    assert_eq(st_kind(rs_strat(r)), STRAT_MARKETPLACE_FIRST, "default strat");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_with_strategy() {
+    test_group("with_strategy");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_system_first());
+    assert_eq(st_kind(rs_strat(r)), STRAT_SYSTEM_FIRST, "changed");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_resolve_mkt() {
+    test_group("resolve_mkt");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "test-scanner", "native");
+    var r = payload(resolver_new(d, c));
+    var res = resolver_resolve(r, str_from("test-scanner"));
+    assert(is_ok(res), "ok");
+    var pkg = payload(res);
+    assert(pkg != 0, "found");
+    assert(str_eq(rp_name(pkg), str_from("test-scanner")), "name");
+    assert_eq(rp_src(pkg), SOURCE_MARKETPLACE, "src");
+    assert_eq(rp_trust(pkg), 1, "trusted");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_resolve_unknown() {
+    test_group("resolve_unknown");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_MARKETPLACE));
+    assert_eq(payload(resolver_resolve(r, str_from("nonexistent"))), 0, "none");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_only_sys_skips_mkt() {
+    test_group("only_sys_skips_mkt");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "mkt-only", "native");
+    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_SYSTEM));
+    assert_eq(payload(resolver_resolve(r, str_from("mkt-only"))), 0, "not in sys");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_only_mkt() {
+    test_group("only_mkt");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "market-pkg", "native");
+    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_MARKETPLACE));
+    var pkg = payload(resolver_resolve(r, str_from("market-pkg")));
+    assert(pkg != 0, "found");
+    assert_eq(rp_src(pkg), SOURCE_MARKETPLACE, "mkt");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_resolve_flutter() {
+    test_group("resolve_flutter");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "flutter-pkg", "flutter");
+    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_FLUTTER_APP));
+    var pkg = payload(resolver_resolve(r, str_from("flutter-pkg")));
+    assert(pkg != 0, "found");
+    assert_eq(rp_src(pkg), SOURCE_FLUTTER_APP, "flutter");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_non_flutter_rejected() {
+    test_group("non_flutter_rejected");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "native-pkg", "native");
+    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_FLUTTER_APP));
+    assert_eq(payload(resolver_resolve(r, str_from("native-pkg"))), 0, "rejected");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_sys_first_fallback() {
+    test_group("sys_first_fallback");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "sf-pkg", "native");
+    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_system_first());
+    var pkg = payload(resolver_resolve(r, str_from("sf-pkg")));
+    assert(pkg != 0, "found");
+    assert_eq(rp_src(pkg), SOURCE_MARKETPLACE, "fell through");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_search_all() {
+    test_group("search_all");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "sa-pkg", "native");
+    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_search_all());
+    assert(payload(resolver_resolve(r, str_from("sa-pkg"))) != 0, "found");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_only_unknown() {
+    test_group("only_unknown");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_UNKNOWN));
+    assert_eq(payload(resolver_resolve(r, str_from("x"))), 0, "none");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_search_merges() {
+    test_group("search_merges");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "test-tool", "native");
+    var r = payload(resolver_new(d, c));
+    var sr = payload(resolver_search(r, str_from("test")));
+    assert(sr_total(sr) >= 1, "results");
+    var found = 0;
+    var res = sr_results(sr);
+    var i = 0;
+    while (i < vec_len(res)) {
+        if (str_eq(rp_name(vec_get(res, i)), str_from("test-tool")) == 1) { found = 1; }
+        i = i + 1;
+    }
+    assert(found, "test-tool found");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_search_dedup() {
+    test_group("search_dedup");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "dup-pkg", "native");
+    var r = payload(resolver_new(d, c));
+    var sr = payload(resolver_search(r, str_from("dup")));
+    var cnt = 0;
+    var res = sr_results(sr);
+    var i = 0;
+    while (i < vec_len(res)) {
+        if (str_eq(rp_name(vec_get(res, i)), str_from("dup-pkg")) == 1) { cnt = cnt + 1; }
+        i = i + 1;
+    }
+    assert_eq(cnt, 1, "no dup");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_list_installed() {
+    test_group("list_installed");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "installed-agent", "native");
+    var r = payload(resolver_new(d, c));
+    var list = payload(resolver_list(r));
+    var found = 0;
+    var i = 0;
+    while (i < vec_len(list)) {
+        if (str_eq(ip_name(vec_get(list, i)), str_from("installed-agent")) == 1) { found = 1; }
+        i = i + 1;
+    }
+    assert(found, "found");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_deterministic_order() {
+    test_group("deterministic_order");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "zeta-pkg", "native");
+    write_manifest(d, "alpha-pkg", "native");
+    write_manifest(d, "mid-pkg", "native");
+    var r = payload(resolver_new(d, c));
+    var list = payload(resolver_list(r));
+    var names = vec_new();
+    var i = 0;
+    while (i < vec_len(list)) {
+        var pkg = vec_get(list, i);
+        if (ip_src(pkg) == SOURCE_MARKETPLACE) { vec_push(names, ip_name(pkg)); }
+        i = i + 1;
+    }
+    assert_eq(vec_len(names), 3, "3 pkgs");
+    assert(str_eq(vec_get(names, 0), str_from("alpha-pkg")), "alpha first");
+    assert(str_eq(vec_get(names, 1), str_from("mid-pkg")), "mid second");
+    assert(str_eq(vec_get(names, 2), str_from("zeta-pkg")), "zeta third");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_multiple() {
+    test_group("multiple_pkgs");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var i = 0;
+    while (i < 5) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "multi-pkg-");
+        str_builder_add_int(sb, i);
+        write_manifest(d, to_cstr(str_builder_build(sb)), "native");
+        i = i + 1;
+    }
+    var r = payload(resolver_new(d, c));
+    var list = payload(resolver_list(r));
+    var cnt = 0;
+    i = 0;
+    while (i < vec_len(list)) {
+        if (str_starts_with(ip_name(vec_get(list, i)), "multi-pkg-") == 1) { cnt = cnt + 1; }
+        i = i + 1;
+    }
+    assert_eq(cnt, 5, "5 pkgs");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_is_mkt() {
+    test_group("is_mkt");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "my-agent", "native");
+    var r = payload(resolver_new(d, c));
+    assert_eq(resolver_is_mkt(r, str_from("my-agent")), 1, "is mkt");
+    assert_eq(resolver_is_mkt(r, str_from("not-installed")), 0, "not mkt");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_errors() {
+    test_group("errors");
+    var cycle = vec_new();
+    vec_push(cycle, str_from("A"));
+    vec_push(cycle, str_from("B"));
+    vec_push(cycle, str_from("C"));
+    vec_push(cycle, str_from("A"));
+    assert(str_eq(format_cycle(cycle), str_from("A -> B -> C -> A")), "cycle fmt");
+    var e = nous_error_new(ERR_INVALID_PACKAGE_NAME, str_from("bad;pkg"), str_from("invalid character ';'"));
+    var msg = nous_error_msg(e);
+    assert(str_contains(msg, str_from("bad;pkg")), "has name");
+    assert(str_contains(msg, str_from("invalid character")), "has reason");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var r = payload(resolver_new(d, c));
+    assert(is_err_result(resolver_resolve(r, str_from(""))), "empty err");
+    assert(is_err_result(resolver_resolve(r, str_from(" leading"))), "ws err");
+    assert(is_err_result(resolver_resolve(r, str_from("pkg;rm -rf /"))), "inject err");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_json() {
+    test_group("json");
+    var pkg = resolved_pkg_new(str_from("test-pkg"), str_from("1.2.3"), SOURCE_SYSTEM, str_from("A test"), 4096, vec_new(), 1);
+    var json = resolved_to_json(pkg);
+    assert(str_contains(json, str_from("test-pkg")), "name");
+    assert(str_contains(json, str_from("1.2.3")), "ver");
+    assert(str_contains(json, str_from("system")), "src");
+    var nb = json_extract_str(json, "name");
+    assert(nb != 0, "extracted");
+    assert(str_eq(nb, str_from("test-pkg")), "roundtrip");
+}
+
+fn test_sysdb_unavailable() {
+    test_group("sysdb_unavailable");
+    var db = sysdb_make(0);
+    assert_eq(sysdb_available(db), 0, "unavailable");
+    assert_eq(vec_len(payload(sysdb_search(db, str_from("x")))), 0, "search empty");
+    assert_eq(payload(sysdb_is_installed(db, str_from("x"))), 0, "not installed");
+    assert_eq(payload(sysdb_get_installed(db, str_from("x"))), 0, "no get");
+    assert_eq(vec_len(payload(sysdb_list(db))), 0, "list empty");
+    assert_eq(vec_len(payload(sysdb_updates(db))), 0, "no updates");
+    assert_eq(payload(sysdb_info(db, str_from("x"))), 0, "no info");
+}
+
+fn main() {
+    alloc_init();
+    args_init();
+    test_detect_source();
+    test_validate_name();
+    test_source_display();
+    test_strategy();
+    test_registry_new();
+    test_registry_scan();
+    test_resolver_new();
+    test_with_strategy();
+    test_resolve_mkt();
+    test_resolve_unknown();
+    test_only_sys_skips_mkt();
+    test_only_mkt();
+    test_resolve_flutter();
+    test_non_flutter_rejected();
+    test_sys_first_fallback();
+    test_search_all();
+    test_only_unknown();
+    test_search_merges();
+    test_search_dedup();
+    test_list_installed();
+    test_deterministic_order();
+    test_multiple();
+    test_is_mkt();
+    test_errors();
+    test_json();
+    test_sysdb_unavailable();
+    return assert_summary();
+}
+
+var exit_code = main();
+syscall(SYS_EXIT, exit_code);

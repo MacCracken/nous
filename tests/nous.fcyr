@@ -1,0 +1,40 @@
+# nous fuzz harness
+
+include "src/nous.cyr"
+
+fn fuzz_validate(data, len) {
+    if (len == 0) { return 0; }
+    validate_package_name(str_new(data, len));
+    return 0;
+}
+
+fn fuzz_detect(data, len) {
+    if (len == 0) { return 0; }
+    detect_source(str_new(data, len));
+    return 0;
+}
+
+fn fuzz_json(data, len) {
+    if (len == 0) { return 0; }
+    var c = str_new(data, len);
+    json_extract_str(c, "name");
+    json_extract_str(c, "version");
+    return 0;
+}
+
+fn main() {
+    alloc_init();
+    fuzz_validate("valid-pkg", 9);
+    fuzz_validate("", 0);
+    fuzz_validate("bad;name", 8);
+    fuzz_detect("acme/scanner", 12);
+    fuzz_detect("com.example.app", 15);
+    fuzz_detect("nginx", 5);
+    var j = "{\"name\":\"test\",\"version\":\"1.0\"}";
+    fuzz_json(j, strlen(j));
+    println("fuzz: ok");
+    return 0;
+}
+
+var r = main();
+syscall(SYS_EXIT, r);
