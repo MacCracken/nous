@@ -91,6 +91,22 @@ fn b_strat_search_all() {
     return 0;
 }
 
+# Graph resolution benchmark
+fn b_graph_resolve() {
+    var names = vec_new();
+    vec_push(names, str_from("bench-pkg-0"));
+    resolver_resolve_all(br, names);
+    return 0;
+}
+
+# Recipe parse benchmark
+fn b_recipe_parse() {
+    if (file_exists("/home/macro/Repos/zugot/base/curl.cyml") == 1) {
+        recipe_parse_file(str_from("/home/macro/Repos/zugot/base/curl.cyml"));
+    }
+    return 0;
+}
+
 # Serde roundtrip benchmark
 fn b_serde() {
     var pkg = resolved_pkg_new(str_from("bench-pkg"), str_from("1.0.0"),
@@ -151,10 +167,20 @@ fn main() {
     bench_run(b10, &b_strat_search_all, 10000);
     vec_push(benches, b10);
 
-    # Serde roundtrip
-    var b11 = bench_new("serde_roundtrip");
-    bench_run(b11, &b_serde, 100000);
+    # Graph resolution
+    var b11 = bench_new("graph_resolve");
+    bench_run(b11, &b_graph_resolve, 10000);
     vec_push(benches, b11);
+
+    # Recipe parse
+    var b13 = bench_new("recipe_parse");
+    bench_run(b13, &b_recipe_parse, 10000);
+    vec_push(benches, b13);
+
+    # Serde roundtrip
+    var b12 = bench_new("serde_roundtrip");
+    bench_run(b12, &b_serde, 100000);
+    vec_push(benches, b12);
 
     bench_report_all(benches);
     return 0;

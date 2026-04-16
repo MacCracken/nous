@@ -2,7 +2,7 @@
 
 ## Completed
 
-### v0.1.0
+### v0.1.0 (Rust)
 
 - Single-package resolution from marketplace, system, and Flutter sources
 - Configurable resolution strategies (MarketplaceFirst, SystemFirst, OnlySource, SearchAll)
@@ -12,45 +12,56 @@
 - Heuristic source detection from package name format
 - Full serde support on all public types
 - Structured logging via tracing
-- P(-1) scaffold hardening: `#[non_exhaustive]`, `#[must_use]`, `PartialEq`/`Eq`, benchmark suite, documentation
+- P(-1) scaffold hardening: non_exhaustive, must_use, PartialEq/Eq, benchmark suite, documentation
+
+### v0.1.0-cyrius (Cyrius port)
+
+- Full port from Rust to Cyrius 5.1.7 (2143 → 2174 lines)
+- Manual struct layout with alloc/store64 constructors and load64 accessors
+- JSON serialization and deserialization for all public types
+- All 7 error variants with complete display formatting
+- Manifest dependency parsing from JSON
+- Registry reload() and install_package() stub
+- 140 tests, 11 benchmarks, 3 fuzz harnesses
+- 115KB standalone x86_64 ELF binary
 
 ## Backlog (prioritized)
 
-### P1 — Dependency Resolution (Critical)
+### P1 — Dependency Resolution (Critical) — COMPLETE
 
-- Transitive dependency resolution
-- Topological sort for install order
-- Cycle detection for circular dependencies
-- Version constraint matching (>=, ^, ~, =)
-- Conflict detection (incompatible versions)
-- Diamond dependency handling (deduplicated)
+- [x] Version constraint parsing (SemVer: >=, ^, ~, =, >, <, <=, *) — `constraint_parse`, `constraint_matches`
+- [x] Dependency graph construction (transitive resolution) — `dep_graph_new`, `dep_graph_add`, `resolver_resolve_all`
+- [x] Topological sort for install order (Kahn's algorithm) — `dep_graph_topo_sort`
+- [x] Cycle detection (DFS with 3-color marking) — `dep_graph_detect_cycle`
+- [x] Conflict detection (incompatible version constraints) — `constraints_compatible`
+- [x] Diamond dependency handling (deduplicated via hashmap) — tested in `test_diamond_deps`
 
-### P2 — Zugot Integration (High)
+### P2 — Zugot Integration (High) — COMPLETE
 
-- Recipe parsing from `.toml` files
-- Build-order awareness from `build-order.txt`
-- Source URL resolution for `github_release` shorthand
-- SHA256 verification
+- [x] Recipe parsing from `.cyml` files — `recipe_parse_file`, CYML parser with `[section]` support
+- [x] Build-order awareness from `build-order.txt` — `read_build_order`, `recipe_db_order`
+- [x] Source URL resolution for `github_release` shorthand — parsed in `recipe_parse_file`
+- [x] SHA256 field extraction — stored in Recipe, verification delegated to ark/takumi
 
 ### P3 — Caching & Performance (Medium)
 
-- Resolution cache (skip re-resolution if unchanged)
-- Index caching for marketplace/system packages
-- Incremental resolution
+- [ ] Persistent resolution cache (skip re-resolution if unchanged)
+- [ ] Index caching for marketplace/system packages
+- [ ] Incremental resolution
 
 ### P4 — Mela Integration (Medium)
 
-- Replace registry_stub with real mela marketplace API
-- Package metadata sync
-- Trust integration with sigil
+- [ ] Replace registry stub with real mela marketplace API
+- [ ] Package metadata sync
+- [ ] Trust integration with sigil
 
 ### P5 — Error Quality (Medium-Low) — partially complete
 
-- ~~Replace anyhow with dedicated error types (thiserror)~~ — done (v0.1.0 unreleased)
-- ~~Package name validation errors~~ — done (v0.1.0 unreleased)
-- Conflict explanation (which constraints conflict)
-- Suggestion engine for typos
-- Resolution trace with --verbose mode
+- [x] Dedicated error types (7 variants, full display)
+- [x] Package name validation errors
+- [ ] Conflict explanation (which constraints conflict)
+- [ ] Suggestion engine for typos
+- [ ] Resolution trace with --verbose mode
 
 ## Future
 
@@ -61,11 +72,11 @@
 
 ## v1.0 Criteria
 
-- [ ] P1 complete — full dependency graph resolution with cycle detection
-- [ ] P2 complete — zugot recipe awareness
-- [x] P5 partial — dedicated error types via thiserror, anyhow removed
+- [x] P1 complete — full dependency graph resolution with cycle detection
+- [x] P2 complete — zugot recipe awareness
+- [x] P5 partial — dedicated error types, full display for all variants
 - [ ] P5 complete — conflict explanations, suggestion engine, resolution trace
 - [ ] All public API documented with examples
 - [ ] Integration tests against real apt on CI
-- [ ] Benchmark regressions gated in CI
-- [ ] MSRV tested in CI
+- [ ] `cyrius audit` clean (fmt + lint + test)
+- [ ] Benchmark regressions gated

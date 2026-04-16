@@ -4,30 +4,43 @@
 
 ```
 src/
-  lib.rs              Main library — types, NousResolver, SystemPackageDb
-  error.rs            Typed error handling (NousError, NousErrorKind)
-  registry_stub.rs    Marketplace registry (local filesystem, placeholder for mela)
+  nous.cyr            Library — types, constructors, accessors, resolver, registry, sysdb,
+                      JSON serialization, version constraints, dependency graph
+  main.cyr            Entry point (includes nous.cyr)
+
+tests/
+  nous.tcyr           Test suite (140 assertions, 40 groups)
+  nous.bcyr           Benchmarks (11 benches)
+  nous.fcyr           Fuzz harnesses (3 harnesses)
+
+rust-old/             Original Rust source (preserved for reference)
 ```
 
 ## Data Flow
 
 ```
-                  NousResolver
-                  /     |     \
-                 /      |      \
-    SystemPackageDb  LocalRegistry  (Flutter via registry)
-         |              |
-    apt-cache       filesystem
-    dpkg-query      manifest.json
+                  Resolver
+                 /    |    \
+                /     |     \
+          SysDb   Registry   (Flutter via registry)
+            |         |
+       apt-cache   filesystem
+       dpkg-query  manifest.json
 ```
 
-1. Consumer (ark) calls `NousResolver::resolve(name)` or `search(query)`
-2. NousResolver applies the configured `ResolutionStrategy` to determine source order
+1. Consumer (ark) calls `resolver_resolve(r, name)` or `resolver_search(r, query)`
+2. Resolver applies the configured Strategy to determine source order
 3. Each source is queried in order:
-   - **System**: shells out to `apt-cache` / `dpkg-query`
+   - **System**: shells out to `apt-cache` / `dpkg-query` via `exec_capture`
    - **Marketplace**: reads `installed/<pkg>/manifest.json` from the registry directory
    - **Flutter**: checks marketplace packages with `runtime: "flutter"`
-4. First match (or all matches for `SearchAll`) is returned as `ResolvedPackage`
+4. First match (or all matches for `SearchAll`) is returned as a ResolvedPkg
+
+## Struct Layout
+
+All structs use manual `alloc` + `store64` construction with `load64` accessors.
+Fields are at `field_index * 8` byte offsets. See `src/nous.cyr` header comments for
+the complete layout of all 12 struct types.
 
 ## Consumers
 
@@ -37,18 +50,22 @@ src/
 
 - **No network access**: all resolution is local. Remote registry sync is a consumer responsibility.
 - **Strategy pattern**: resolution order is configurable per-call, not hardcoded.
-- **Source-agnostic types**: `ResolvedPackage` / `InstalledPackage` are the same regardless of source.
-- **Stub registry**: `LocalRegistry` is intentionally minimal — it will be replaced by the real mela marketplace client.
+- **Source-agnostic types**: ResolvedPkg / InstalledPkg are the same regardless of source.
+- **Stub registry**: LocalRegistry is intentionally minimal — it will be replaced by the real mela marketplace client.
+- **Manual struct layout**: Cyrius struct constructors only work in `main()`, so all types use `alloc`+`store64` constructors with `load64` accessor functions.
+- **Custom `our_is_dir()`**: The stdlib `is_dir()` from fs.cyr is broken; nous uses a direct stat syscall.
+- **`dir_list()` takes Str**: fs.cyr's `dir_list` expects Str type arguments, not C strings.
 
 ## Future Modules (planned)
 
-See [gaps.md](../development/gaps.md) for prioritized backlog.
+See [roadmap.md](../development/roadmap.md) for prioritized backlog.
 
 | Module | Purpose |
 |---|---|
-| `graph.rs` | Dependency graph, topological sort, cycle detection |
-| `strategy.rs` | Extracted resolution strategy logic |
-| `system.rs` | Extracted SystemPackageDb |
-| `recipe.rs` | Zugot build recipe parsing |
-| `cache.rs` | Resolution cache |
-| `registry.rs` | Mela marketplace client (replaces registry_stub) |
+| Version constraints | SemVer parsing, constraint matching (>=, ^, ~, =) |
+| Dependency graph | Graph construction, transitive resolution |
+| Topological sort | Install-order computation via Kahn's algorithm |
+| Cycle/conflict detection | DFS coloring for cycles, constraint intersection for conflicts |
+| Zugot integration | Recipe parsing, build-order awareness |
+| Resolution cache | Persistent cache for resolved dependency graphs |
+| Mela client | Real marketplace API (replaces registry stub) |

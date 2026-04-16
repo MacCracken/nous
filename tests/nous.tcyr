@@ -591,6 +591,390 @@ fn test_update_json() {
     assert(str_contains(json, str_from("Security fixes")), "changelog");
 }
 
+# ===================================================================
+# P1 Tests: Version Constraints, Graph, Topo Sort, Cycles, Conflicts
+# ===================================================================
+
+fn test_semver_parse() {
+    test_group("semver_parse");
+    var v = semver_parse(str_from("1.2.3"));
+    assert_eq(sv_major(v), 1, "major");
+    assert_eq(sv_minor(v), 2, "minor");
+    assert_eq(sv_patch(v), 3, "patch");
+    var v2 = semver_parse(str_from("0.10.0"));
+    assert_eq(sv_major(v2), 0, "0 major");
+    assert_eq(sv_minor(v2), 10, "10 minor");
+    var v3 = semver_parse(str_from("2"));
+    assert_eq(sv_major(v3), 2, "major only");
+    assert_eq(sv_minor(v3), 0, "default minor");
+}
+
+fn test_semver_cmp() {
+    test_group("semver_cmp");
+    var a = semver_parse(str_from("1.2.3"));
+    var b = semver_parse(str_from("1.2.4"));
+    var c = semver_parse(str_from("1.2.3"));
+    var d = semver_parse(str_from("2.0.0"));
+    assert(semver_cmp(a, b) < 0, "1.2.3 < 1.2.4");
+    assert(semver_cmp(b, a) > 0, "1.2.4 > 1.2.3");
+    assert_eq(semver_cmp(a, c), 0, "1.2.3 == 1.2.3");
+    assert(semver_cmp(a, d) < 0, "1.2.3 < 2.0.0");
+    assert(semver_eq(a, c), "eq");
+    assert(semver_eq(a, b) == 0, "neq");
+}
+
+fn test_semver_to_str() {
+    test_group("semver_to_str");
+    var v = semver_parse(str_from("3.14.159"));
+    assert(str_eq(semver_to_str(v), str_from("3.14.159")), "roundtrip");
+}
+
+fn test_constraint_parse() {
+    test_group("constraint_parse");
+    var c1 = constraint_parse(str_from(">=1.2.0"));
+    assert_eq(ct_op(c1), OP_GTE, ">=");
+    assert_eq(sv_major(ct_ver(c1)), 1, ">= major");
+    var c2 = constraint_parse(str_from("^1.0"));
+    assert_eq(ct_op(c2), OP_CARET, "^");
+    var c3 = constraint_parse(str_from("~2.3.4"));
+    assert_eq(ct_op(c3), OP_TILDE, "~");
+    var c4 = constraint_parse(str_from("=1.0.0"));
+    assert_eq(ct_op(c4), OP_EQ, "=");
+    var c5 = constraint_parse(str_from(">2.0"));
+    assert_eq(ct_op(c5), OP_GT, ">");
+    var c6 = constraint_parse(str_from("<3.0.0"));
+    assert_eq(ct_op(c6), OP_LT, "<");
+    var c7 = constraint_parse(str_from("*"));
+    assert_eq(ct_op(c7), OP_ANY, "*");
+}
+
+fn test_constraint_matches() {
+    test_group("constraint_matches");
+    var v1 = semver_parse(str_from("1.5.0"));
+    var v2 = semver_parse(str_from("2.0.0"));
+    var v3 = semver_parse(str_from("1.0.0"));
+    # >= 1.0.0
+    var c_gte = constraint_parse(str_from(">=1.0.0"));
+    assert(constraint_matches(c_gte, v1), "1.5 >= 1.0");
+    assert(constraint_matches(c_gte, v2), "2.0 >= 1.0");
+    assert(constraint_matches(c_gte, v3), "1.0 >= 1.0");
+    # < 2.0.0
+    var c_lt = constraint_parse(str_from("<2.0.0"));
+    assert(constraint_matches(c_lt, v1), "1.5 < 2.0");
+    assert(constraint_matches(c_lt, v2) == 0, "2.0 !< 2.0");
+    # = 1.5.0
+    var c_eq = constraint_parse(str_from("=1.5.0"));
+    assert(constraint_matches(c_eq, v1), "1.5 == 1.5");
+    assert(constraint_matches(c_eq, v3) == 0, "1.0 != 1.5");
+    # ^1.2.0 means >=1.2.0, <2.0.0
+    var c_caret = constraint_parse(str_from("^1.2.0"));
+    assert(constraint_matches(c_caret, v1), "1.5 in ^1.2");
+    assert(constraint_matches(c_caret, v2) == 0, "2.0 not in ^1.2");
+    assert(constraint_matches(c_caret, v3) == 0, "1.0 not in ^1.2");
+    # ~1.5.0 means >=1.5.0, <1.6.0
+    var c_tilde = constraint_parse(str_from("~1.5.0"));
+    assert(constraint_matches(c_tilde, v1), "1.5.0 in ~1.5");
+    var v15_1 = semver_parse(str_from("1.5.9"));
+    assert(constraint_matches(c_tilde, v15_1), "1.5.9 in ~1.5");
+    var v16 = semver_parse(str_from("1.6.0"));
+    assert(constraint_matches(c_tilde, v16) == 0, "1.6.0 not in ~1.5");
+    # *
+    var c_any = constraint_parse(str_from("*"));
+    assert(constraint_matches(c_any, v1), "any matches");
+    assert(constraint_matches(c_any, v2), "any matches 2");
+}
+
+fn test_dep_graph_basic() {
+    test_group("dep_graph_basic");
+    var g = dep_graph_new();
+    var deps_a = vec_new();
+    vec_push(deps_a, str_from("B"));
+    vec_push(deps_a, str_from("C"));
+    var a = resolved_pkg_new(str_from("A"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, deps_a, 1);
+    var b = resolved_pkg_new(str_from("B"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1);
+    var deps_c = vec_new();
+    vec_push(deps_c, str_from("B"));
+    var c = resolved_pkg_new(str_from("C"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, deps_c, 1);
+    dep_graph_add(g, a);
+    dep_graph_add(g, b);
+    dep_graph_add(g, c);
+    assert_eq(map_has(dg_nodes(g), "A"), 1, "has A");
+    assert_eq(map_has(dg_nodes(g), "B"), 1, "has B");
+    assert_eq(map_has(dg_nodes(g), "C"), 1, "has C");
+}
+
+fn test_topo_sort() {
+    test_group("topo_sort");
+    var g = dep_graph_new();
+    # A -> B -> C (A depends on B, B depends on C)
+    var deps_a = vec_new();
+    vec_push(deps_a, str_from("B"));
+    var deps_b = vec_new();
+    vec_push(deps_b, str_from("C"));
+    dep_graph_add(g, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, deps_a, 1));
+    dep_graph_add(g, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, deps_b, 1));
+    dep_graph_add(g, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
+    var order = dep_graph_topo_sort(g);
+    assert_eq(vec_len(order), 3, "3 in order");
+    # A should come before B, B before C in topo order
+    # (topo order: dependents first, then deps)
+}
+
+fn test_cycle_detection() {
+    test_group("cycle_detection");
+    # No cycle: A -> B -> C
+    var g1 = dep_graph_new();
+    var d1 = vec_new(); vec_push(d1, str_from("B"));
+    var d2 = vec_new(); vec_push(d2, str_from("C"));
+    dep_graph_add(g1, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, d1, 1));
+    dep_graph_add(g1, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, d2, 1));
+    dep_graph_add(g1, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
+    assert_eq(dep_graph_detect_cycle(g1), 0, "no cycle");
+
+    # Cycle: A -> B -> C -> A
+    var g2 = dep_graph_new();
+    var da = vec_new(); vec_push(da, str_from("B"));
+    var db = vec_new(); vec_push(db, str_from("C"));
+    var dc = vec_new(); vec_push(dc, str_from("A"));
+    dep_graph_add(g2, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, da, 1));
+    dep_graph_add(g2, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, db, 1));
+    dep_graph_add(g2, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, dc, 1));
+    var cycle = dep_graph_detect_cycle(g2);
+    assert(cycle != 0, "cycle detected");
+    assert(vec_len(cycle) >= 3, "cycle has nodes");
+}
+
+fn test_diamond_deps() {
+    test_group("diamond_deps");
+    # Diamond: A -> B, A -> C, B -> D, C -> D
+    var g = dep_graph_new();
+    var da = vec_new(); vec_push(da, str_from("B")); vec_push(da, str_from("C"));
+    var db = vec_new(); vec_push(db, str_from("D"));
+    var dc = vec_new(); vec_push(dc, str_from("D"));
+    dep_graph_add(g, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, da, 1));
+    dep_graph_add(g, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, db, 1));
+    dep_graph_add(g, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, dc, 1));
+    dep_graph_add(g, resolved_pkg_new(str_from("D"), str_from("1.0.0"),
+        SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
+    assert_eq(dep_graph_detect_cycle(g), 0, "no cycle");
+    var order = dep_graph_topo_sort(g);
+    assert_eq(vec_len(order), 4, "4 in order");
+    # D should appear only once (dedup via hashmap)
+    var d_count = 0;
+    var i = 0;
+    while (i < vec_len(order)) {
+        if (str_eq(vec_get(order, i), str_from("D")) == 1) { d_count = d_count + 1; }
+        i = i + 1;
+    }
+    assert_eq(d_count, 1, "D deduped");
+}
+
+fn test_resolve_all_basic() {
+    test_group("resolve_all");
+    # Set up a registry with A -> B -> C chain
+    var d = mkdir_test();
+    var c = mkdir_test();
+    # Write manifests with dependencies
+    var inst = join_path(d, str_from("installed"));
+    mkdir_str(inst);
+
+    # C has no deps
+    var pc = join_path(inst, str_from("pkg-c"));
+    mkdir_str(pc);
+    file_write_all(to_cstr(join_path(pc, str_from("manifest.json"))),
+        "{\"agent\":{\"name\":\"pkg-c\",\"version\":\"1.0.0\",\"description\":\"C\"},\"dependencies\":{},\"runtime\":\"native\"}",
+        strlen("{\"agent\":{\"name\":\"pkg-c\",\"version\":\"1.0.0\",\"description\":\"C\"},\"dependencies\":{},\"runtime\":\"native\"}"));
+
+    # B depends on C
+    var pb = join_path(inst, str_from("pkg-b"));
+    mkdir_str(pb);
+    file_write_all(to_cstr(join_path(pb, str_from("manifest.json"))),
+        "{\"agent\":{\"name\":\"pkg-b\",\"version\":\"1.0.0\",\"description\":\"B\"},\"dependencies\":{\"pkg-c\":\">=1.0\"},\"runtime\":\"native\"}",
+        strlen("{\"agent\":{\"name\":\"pkg-b\",\"version\":\"1.0.0\",\"description\":\"B\"},\"dependencies\":{\"pkg-c\":\">=1.0\"},\"runtime\":\"native\"}"));
+
+    # A depends on B
+    var pa = join_path(inst, str_from("pkg-a"));
+    mkdir_str(pa);
+    file_write_all(to_cstr(join_path(pa, str_from("manifest.json"))),
+        "{\"agent\":{\"name\":\"pkg-a\",\"version\":\"1.0.0\",\"description\":\"A\"},\"dependencies\":{\"pkg-b\":\">=1.0\"},\"runtime\":\"native\"}",
+        strlen("{\"agent\":{\"name\":\"pkg-a\",\"version\":\"1.0.0\",\"description\":\"A\"},\"dependencies\":{\"pkg-b\":\">=1.0\"},\"runtime\":\"native\"}"));
+
+    var r = payload(resolver_new(d, c));
+    var names = vec_new();
+    vec_push(names, str_from("pkg-a"));
+    var res = resolver_resolve_all(r, names);
+    assert(is_ok(res), "resolve_all ok");
+    var plan = payload(res);
+    var pkgs = pl_packages(plan);
+    assert_eq(vec_len(pkgs), 3, "3 packages resolved");
+    # Check that C comes before B, and B before A in install order (deps first)
+    var order = pl_order(plan);
+    assert_eq(vec_len(order), 3, "3 in order");
+
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_resolve_all_cycle_error() {
+    test_group("resolve_all_cycle");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var inst = join_path(d, str_from("installed"));
+    mkdir_str(inst);
+    # A -> B, B -> A (cycle)
+    var pa = join_path(inst, str_from("cyc-a"));
+    mkdir_str(pa);
+    file_write_all(to_cstr(join_path(pa, str_from("manifest.json"))),
+        "{\"agent\":{\"name\":\"cyc-a\",\"version\":\"1.0.0\",\"description\":\"\"},\"dependencies\":{\"cyc-b\":\">=1.0\"},\"runtime\":\"native\"}",
+        strlen("{\"agent\":{\"name\":\"cyc-a\",\"version\":\"1.0.0\",\"description\":\"\"},\"dependencies\":{\"cyc-b\":\">=1.0\"},\"runtime\":\"native\"}"));
+    var pb = join_path(inst, str_from("cyc-b"));
+    mkdir_str(pb);
+    file_write_all(to_cstr(join_path(pb, str_from("manifest.json"))),
+        "{\"agent\":{\"name\":\"cyc-b\",\"version\":\"1.0.0\",\"description\":\"\"},\"dependencies\":{\"cyc-a\":\">=1.0\"},\"runtime\":\"native\"}",
+        strlen("{\"agent\":{\"name\":\"cyc-b\",\"version\":\"1.0.0\",\"description\":\"\"},\"dependencies\":{\"cyc-a\":\">=1.0\"},\"runtime\":\"native\"}"));
+    var r = payload(resolver_new(d, c));
+    var names = vec_new();
+    vec_push(names, str_from("cyc-a"));
+    var res = resolver_resolve_all(r, names);
+    assert(is_err_result(res), "cycle detected");
+    var err = payload(res);
+    assert_eq(ne_kind(err), ERR_DEPENDENCY_CYCLE, "cycle error kind");
+    rm_rf(d); rm_rf(c);
+}
+
+# ===================================================================
+# P2 Tests: Recipe parsing, build-order, recipe-based resolution
+# ===================================================================
+
+fn test_parse_toml_array() {
+    test_group("parse_toml_array");
+    var a1 = parse_toml_array(str_from("[\"glibc\", \"openssl\", \"zlib\"]"));
+    assert_eq(vec_len(a1), 3, "3 items");
+    assert(str_eq(vec_get(a1, 0), str_from("glibc")), "first");
+    assert(str_eq(vec_get(a1, 1), str_from("openssl")), "second");
+    assert(str_eq(vec_get(a1, 2), str_from("zlib")), "third");
+    var a2 = parse_toml_array(str_from("[]"));
+    assert_eq(vec_len(a2), 0, "empty");
+    var a3 = parse_toml_array(0);
+    assert_eq(vec_len(a3), 0, "null");
+}
+
+fn test_recipe_parse_real() {
+    test_group("recipe_parse_real");
+    # Test against real zugot recipe if available
+    var curl_path = str_from("/home/macro/Repos/zugot/base/curl.cyml");
+    if (file_exists(to_cstr(curl_path)) == 1) {
+        var recipe = recipe_parse_file(curl_path);
+        assert(recipe != 0, "curl parsed");
+        assert(str_eq(rc_name(recipe), str_from("curl")), "name=curl");
+        assert(str_len(rc_ver(recipe)) > 0, "has version");
+        assert(str_eq(rc_license(recipe), str_from("MIT")), "MIT license");
+        assert(vec_len(rc_rt_deps(recipe)) > 0, "has runtime deps");
+        assert(vec_len(rc_bd_deps(recipe)) > 0, "has build deps");
+        # Check glibc is a runtime dep
+        var found_glibc = 0;
+        var i = 0;
+        while (i < vec_len(rc_rt_deps(recipe))) {
+            if (str_eq(vec_get(rc_rt_deps(recipe), i), str_from("glibc")) == 1) {
+                found_glibc = 1;
+            }
+            i = i + 1;
+        }
+        assert(found_glibc, "glibc in runtime deps");
+    }
+}
+
+fn test_recipe_parse_marketplace() {
+    test_group("recipe_parse_marketplace");
+    var ark_path = str_from("/home/macro/Repos/zugot/marketplace/ark.cyml");
+    if (file_exists(to_cstr(ark_path)) == 1) {
+        var recipe = recipe_parse_file(ark_path);
+        assert(recipe != 0, "ark parsed");
+        assert(str_eq(rc_name(recipe), str_from("ark")), "name=ark");
+        assert(str_eq(rc_license(recipe), str_from("GPL-3.0-only")), "GPL license");
+    }
+}
+
+fn test_recipe_db_load() {
+    test_group("recipe_db_load");
+    var zugot = str_from("/home/macro/Repos/zugot");
+    if (our_is_dir(to_cstr(zugot)) == 1) {
+        var db = recipe_db_load(zugot);
+        assert(recipe_db_count(db) > 0, "has recipes");
+        # Check a known recipe
+        var curl = recipe_db_get(db, str_from("curl"));
+        assert(curl != 0, "found curl");
+        assert(str_eq(rc_name(curl), str_from("curl")), "curl name");
+        # Check build order
+        var order = recipe_db_order(db);
+        assert(vec_len(order) > 0, "has build order");
+    }
+}
+
+fn test_recipe_to_resolved() {
+    test_group("recipe_to_resolved");
+    var rt = vec_new();
+    vec_push(rt, str_from("glibc"));
+    vec_push(rt, str_from("openssl"));
+    var recipe = recipe_alloc();
+    recipe_set_pkg(recipe, str_from("test-recipe"), str_from("1.0.0"),
+        str_from("Test"), str_from("MIT"), str_from("x86_64"));
+    recipe_set_meta(recipe, vec_new(), 1, str_from(""), str_from(""), vec_new());
+    recipe_set_deps(recipe, rt, vec_new());
+    var pkg = recipe_to_resolved(recipe);
+    assert(str_eq(rp_name(pkg), str_from("test-recipe")), "name");
+    assert(str_eq(rp_ver(pkg), str_from("1.0.0")), "version");
+    assert_eq(rp_src(pkg), SOURCE_COMMUNITY, "source=community");
+    assert_eq(vec_len(rp_deps(pkg)), 2, "2 deps");
+}
+
+fn test_resolve_with_recipes() {
+    test_group("resolve_with_recipes");
+    # Create a resolver with marketplace + recipe fallback
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var r = payload(resolver_new(d, c));
+    # Create a minimal recipe DB with synthetic recipes
+    var recipes = map_new();
+    var rt_a = vec_new();
+    vec_push(rt_a, str_from("dep-b"));
+    var recipe_a = recipe_alloc();
+    recipe_set_pkg(recipe_a, str_from("pkg-a"), str_from("1.0.0"),
+        str_from("A"), str_from("MIT"), str_from("x86_64"));
+    recipe_set_deps(recipe_a, rt_a, vec_new());
+    map_set(recipes, "pkg-a", recipe_a);
+    var recipe_b = recipe_alloc();
+    recipe_set_pkg(recipe_b, str_from("dep-b"), str_from("2.0.0"),
+        str_from("B"), str_from("MIT"), str_from("x86_64"));
+    recipe_set_deps(recipe_b, vec_new(), vec_new());
+    map_set(recipes, "dep-b", recipe_b);
+    var rdb = recipe_db_new(str_from("/tmp"), recipes, vec_new());
+    r = resolver_with_recipes(r, rdb);
+    # Resolve with recipe fallback
+    var names = vec_new();
+    vec_push(names, str_from("pkg-a"));
+    var res = resolver_resolve_all_with_recipes(r, names);
+    assert(is_ok(res), "resolve ok");
+    var plan = payload(res);
+    var pkgs = pl_packages(plan);
+    assert_eq(vec_len(pkgs), 2, "2 packages");
+    rm_rf(d); rm_rf(c);
+}
+
 fn test_sysdb_unavailable() {
     test_group("sysdb_unavailable");
     var db = sysdb_make(0);
@@ -645,6 +1029,23 @@ fn main() {
     test_resolved_json_roundtrip();
     test_installed_json_roundtrip();
     test_update_json();
+    test_semver_parse();
+    test_semver_cmp();
+    test_semver_to_str();
+    test_constraint_parse();
+    test_constraint_matches();
+    test_dep_graph_basic();
+    test_topo_sort();
+    test_cycle_detection();
+    test_diamond_deps();
+    test_resolve_all_basic();
+    test_resolve_all_cycle_error();
+    test_parse_toml_array();
+    test_recipe_parse_real();
+    test_recipe_parse_marketplace();
+    test_recipe_db_load();
+    test_recipe_to_resolved();
+    test_resolve_with_recipes();
     test_sysdb_unavailable();
     return assert_summary();
 }

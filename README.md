@@ -10,11 +10,11 @@ Nous is the intelligence layer between ark (the CLI) and the package sources. Wh
 
 ```
 ark install foo
-    └── nous.resolve("foo")
+    └── resolver_resolve(r, "foo")
             ├── check marketplace (mela) → found? return it
             ├── check system packages    → found? return it
-            ├── check community (bazaar) → found? return it
-            └── not found → PackageSource::Unknown
+            ├── check flutter apps       → found? return it
+            └── not found → SOURCE_UNKNOWN
 ```
 
 ## Resolution Strategy
@@ -23,66 +23,84 @@ Nous supports configurable resolution order:
 
 | Strategy | Order | Use Case |
 |----------|-------|----------|
-| **MarketplaceFirst** (default) | Marketplace → System → Community | Prefer AGNOS-native packages |
-| **SystemFirst** | System → Marketplace → Community | Prefer OS-level packages |
-| **MarketplaceOnly** | Marketplace only | Strict AGNOS ecosystem |
-| **SystemOnly** | System only | Traditional package management |
+| **MarketplaceFirst** (default) | Marketplace → Flutter → System | Prefer AGNOS-native packages |
+| **SystemFirst** | System → Marketplace → Flutter | Prefer OS-level packages |
+| **OnlySource** | Single source only | Strict source targeting |
+| **SearchAll** | All sources, first match | Broadest resolution |
 
 ## Core Types
 
 | Type | Description |
 |------|-------------|
-| `NousResolver` | Main resolver engine — wraps system DB + marketplace registry |
-| `ResolvedPackage` | Resolution result (name, version, source, deps, trust status, size) |
-| `PackageSource` | Where a package comes from (System, Marketplace, FlutterApp, Community, Unknown) |
-| `ResolutionStrategy` | Resolution order preference |
-| `UnifiedSearchResult` | Cross-source search results |
-| `InstalledPackage` | Currently installed package metadata |
-| `AvailableUpdate` | Package with a newer version available |
-| `SystemPackageDb` | Interface to system-level package database |
+| Resolver | Main resolver engine — wraps system DB + marketplace registry |
+| ResolvedPkg | Resolution result (name, version, source, deps, trust status, size) |
+| PackageSource | Where a package comes from (System, Marketplace, FlutterApp, Community, Unknown) |
+| Strategy | Resolution order preference |
+| SearchResult | Cross-source search results |
+| InstalledPkg | Currently installed package metadata |
+| AvailUpdate | Package with a newer version available |
+| SysDb | Interface to system-level package database (apt/dpkg) |
 
 ## API
 
-```rust
-use nous::{NousResolver, ResolutionStrategy};
+```cyrius
+include "src/nous.cyr"
 
-let resolver = NousResolver::new(&marketplace_dir, &cache_dir)
-    .with_strategy(ResolutionStrategy::MarketplaceFirst);
+fn main() {
+    alloc_init();
 
-// Resolve a single package
-let package = resolver.resolve("hoosh")?;
+    # Create resolver
+    var r = payload(resolver_new(str_from("/var/lib/mela"), str_from("/var/cache/nous")));
 
-// Search across all sources
-let results = resolver.search("audio")?;
+    # Set strategy
+    r = resolver_with_strategy(r, strategy_system_first());
 
-// List installed packages
-let installed = resolver.list_installed()?;
+    # Resolve a single package
+    var res = resolver_resolve(r, str_from("hoosh"));
+    if (is_ok(res) == 1) {
+        var pkg = payload(res);
+        if (pkg != 0) {
+            str_println(rp_name(pkg));    # "hoosh"
+            str_println(rp_ver(pkg));     # "1.0.0"
+            fmt_int(rp_src(pkg));         # SOURCE_MARKETPLACE
+        }
+    }
 
-// Check for updates
-let updates = resolver.check_updates()?;
+    # Search across all sources
+    var sr = payload(resolver_search(r, str_from("audio")));
 
-// Detect source heuristically
-let source = NousResolver::detect_source("firefox-esr"); // → System
-let source = NousResolver::detect_source("hoosh");        // → Marketplace
+    # List installed packages
+    var list = payload(resolver_list(r));
+
+    # Check for updates
+    var upd = payload(resolver_updates(r));
+
+    # Detect source heuristically
+    detect_source(str_from("acme/scanner"));   # SOURCE_MARKETPLACE
+    detect_source(str_from("com.example.app")); # SOURCE_FLUTTER_APP
+    detect_source(str_from("nginx"));           # SOURCE_UNKNOWN
+
+    return 0;
+}
 ```
 
 ## Package Source Detection
 
 Nous uses heuristics to detect package source when no explicit source is provided:
 
-- Names matching known AGNOS crates/apps → **Marketplace**
-- Names matching common system packages (lib*, *-dev, *-bin) → **System**
-- Names matching Flutter/app patterns → **FlutterApp**
-- Community/bazaar prefix → **Community**
+- Contains `/` (publisher/name format) → **Marketplace**
+- Ends with `.flutter` or reverse-domain notation (com.example.app) → **FlutterApp**
+- Otherwise → **Unknown** (resolved by strategy)
 
-## Dependencies
+## Build
 
-| Crate | Purpose |
-|-------|---------|
-| thiserror | Typed error handling |
-| serde / serde_json | Serialization |
-| tracing | Structured logging |
-| chrono | Timestamps |
+```bash
+cyrius build src/main.cyr build/nous    # compile
+cyrius test tests/nous.tcyr             # 140 tests
+cyrius bench tests/nous.bcyr            # 11 benchmarks
+```
+
+Requires Cyrius 5.1.7. Binary: ~115KB x86_64 ELF.
 
 ## Related
 

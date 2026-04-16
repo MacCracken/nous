@@ -1,23 +1,28 @@
 # Nous — Known Gaps & Hardening Targets
 
-> **Status**: Active | **Last Updated**: 2026-04-05
+> **Status**: Active | **Last Updated**: 2026-04-16
 >
-> Nous is currently a minimal resolver. This document tracks the gaps between
-> what exists and what a production resolver needs. Use this as the hardening roadmap.
+> Nous is currently a single-package resolver ported to Cyrius 5.1.7.
+> This document tracks the gaps between what exists and what a production resolver needs.
 
 ---
 
 ## Current State
 
-Three source files: `lib.rs` (types + resolver), `error.rs` (typed errors), and `registry_stub.rs` (placeholder for mela).
+Single library file `src/nous.cyr` (1,276 lines) with manual struct layout.
 
 **What works:**
 - Single-package resolution across 4 sources (System, Marketplace, FlutterApp, Community)
-- Configurable resolution strategy (MarketplaceFirst, SystemFirst, etc.)
-- Flat search across sources
-- Installed package listing
+- Configurable resolution strategy (MarketplaceFirst, SystemFirst, OnlySource, SearchAll)
+- Cross-source search with marketplace-priority dedup
+- Installed package listing with deterministic ordering
 - Available update checking
 - Heuristic source detection
+- Manifest dependency parsing from JSON
+- Registry reload for cache refresh
+- JSON serialization/deserialization for all public types
+- Error types with full display for all 7 variants
+- Package name validation
 
 **What's missing for production use:**
 
@@ -29,14 +34,12 @@ The resolver currently resolves packages **individually**. It does not resolve d
 
 | Gap | Description | Priority |
 |-----|-------------|----------|
-| **Transitive dependency resolution** | `ark install A` where A depends on B which depends on C — nous must resolve the full graph | Critical |
-| **Topological sort** | Install order must respect dependency ordering | Critical |
-| **Cycle detection** | Detect and report circular dependencies | Critical |
-| **Version constraint matching** | Support `>=`, `^`, `~`, `=` version constraints from recipes | Critical |
+| **Version constraint parsing** | Parse SemVer versions and constraint operators (>=, ^, ~, =, >) | Critical |
+| **Transitive dependency resolution** | `ark install A` where A depends on B which depends on C — resolve the full graph | Critical |
+| **Topological sort** | Install order must respect dependency ordering (Kahn's algorithm) | Critical |
+| **Cycle detection** | Detect and report circular dependencies (DFS with coloring) | Critical |
 | **Conflict detection** | A needs foo>=2.0 but B needs foo<2.0 — report clearly | Critical |
 | **Diamond dependency handling** | A→C and B→C with compatible constraints — deduplicate | Critical |
-
-**Suggested module**: `src/graph.rs` — dependency graph construction, topological sort, cycle detection, conflict resolution.
 
 ---
 
@@ -51,29 +54,25 @@ Nous currently doesn't read zugot recipes directly. It should.
 | **Source URL resolution** | Map `github_release` shorthand to actual download URLs | High |
 | **SHA256 verification** | Validate downloaded artifacts against recipe SHA256 | High |
 
-**Suggested module**: `src/recipe.rs` — zugot recipe reader, integrates with `TakumiBuildSystem::load_recipe`.
-
 ---
 
 ## P3 — Caching & Performance
 
 | Gap | Description | Priority |
 |-----|-------------|----------|
-| **Resolution cache** | Don't re-resolve packages whose recipes/versions haven't changed | Medium |
+| **Persistent resolution cache** | Don't re-resolve packages whose recipes/versions haven't changed | Medium |
 | **Index caching** | Cache marketplace and system package indices locally | Medium |
 | **Incremental resolution** | Only re-resolve the subgraph affected by a change | Medium |
-
-**Suggested module**: `src/cache.rs` — resolution cache backed by serde_json or SQLite.
 
 ---
 
 ## P4 — Mela Integration
 
-`registry_stub.rs` is a placeholder. Needs real mela integration.
+Registry stub is a placeholder. Needs real mela integration.
 
 | Gap | Description | Priority |
 |-----|-------------|----------|
-| **Replace registry_stub** | Connect to actual mela marketplace API | Medium |
+| **Replace registry stub** | Connect to actual mela marketplace API | Medium |
 | **Package metadata sync** | Pull package metadata from mela registry | Medium |
 | **Trust integration** | Verify package signatures via sigil during resolution | Medium |
 
@@ -89,22 +88,13 @@ Nous currently doesn't read zugot recipes directly. It should.
 
 ---
 
-## Structural Recommendations
+## Cyrius-Specific Notes
 
-Current structure should split further as the crate grows:
-
-```
-src/
-├── lib.rs              — re-exports, NousResolver
-├── error.rs            — dedicated error types (done)
-├── types.rs            — PackageSource, ResolvedPackage, etc.
-├── graph.rs            — dependency graph, topological sort, cycle detection
-├── strategy.rs         — ResolutionStrategy logic
-├── system.rs           — SystemPackageDb (extracted from lib.rs)
-├── recipe.rs           — zugot recipe parsing
-├── cache.rs            — resolution cache
-└── registry.rs         — mela marketplace client (replaces registry_stub.rs)
-```
+- Struct constructors (`StructName { ... }`) only work in `main()`. All library code uses `alloc`+`store64` manual constructors.
+- `is_dir()` from fs.cyr is broken. Nous uses `our_is_dir()` via direct stat syscall.
+- `dir_list()` from fs.cyr requires Str arguments, not C strings.
+- `file_read_all()` and `file_exists()` from io.cyr require C strings.
+- All struct field access uses `load64(ptr + offset)` accessor functions.
 
 ---
 

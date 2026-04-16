@@ -11,4 +11,4 @@ entry = "src/main.cyr"
 output = "nous"
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "json", "fs", "tagged", "process", "bench", "fnptr"]
+stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "json", "fs", "tagged", "process", "bench", "fnptr", "toml"]
