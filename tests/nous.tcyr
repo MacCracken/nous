@@ -1048,6 +1048,181 @@ fn test_suggestion_engine() {
     rm_rf(d); rm_rf(c);
 }
 
+# ===================================================================
+# Remaining coverage: edge cases, stubs, integration
+# ===================================================================
+
+fn test_registry_install_stub() {
+    test_group("registry_install_stub");
+    var d = mkdir_test();
+    var reg = payload(registry_new(d));
+    var r = registry_install_package(reg, str_from("/tmp/fake.tar"), 0);
+    assert(is_ok(r), "stub returns ok");
+    rm_rf(d);
+}
+
+fn test_constraints_compatible() {
+    test_group("constraints_compatible");
+    # Compatible: >=1.0 and <2.0
+    var c1 = constraint_parse(str_from(">=1.0.0"));
+    var c2 = constraint_parse(str_from("<2.0.0"));
+    assert_eq(constraints_compatible(c1, c2), 1, "gte+lt compat");
+    # Compatible: ^1.2 and >=1.3
+    var c3 = constraint_parse(str_from("^1.2.0"));
+    var c4 = constraint_parse(str_from(">=1.3.0"));
+    assert_eq(constraints_compatible(c3, c4), 1, "caret+gte compat");
+    # Incompatible: =1.0.0 and =2.0.0
+    var c5 = constraint_parse(str_from("=1.0.0"));
+    var c6 = constraint_parse(str_from("=2.0.0"));
+    assert_eq(constraints_compatible(c5, c6), 0, "eq+eq incompat");
+    # Compatible: * and anything
+    var c7 = constraint_parse(str_from("*"));
+    assert_eq(constraints_compatible(c7, c1), 1, "any compat");
+}
+
+fn test_nous_error_to_kind() {
+    test_group("error_to_kind");
+    var e = nous_error_new(ERR_COMMAND_EXEC,
+        str_from("apt-cache"), str_from("not found"));
+    var k = nous_error_to_kind(e);
+    assert_eq(ne_kind(k), ERR_COMMAND_EXEC, "kind preserved");
+    assert(str_eq(ne_msg(k), str_from("apt-cache")), "msg preserved");
+    assert(str_eq(ne_detail(k), str_from("not found")),
+        "detail preserved");
+}
+
+fn test_semver_eq() {
+    test_group("semver_eq");
+    var a = semver_parse(str_from("1.2.3"));
+    var b = semver_parse(str_from("1.2.3"));
+    var c = semver_parse(str_from("1.2.4"));
+    assert(semver_eq(a, b), "equal");
+    assert(semver_eq(a, c) == 0, "not equal");
+}
+
+fn test_caret_zero() {
+    test_group("caret_zero");
+    # ^0.2.3 means >=0.2.3, <0.3.0
+    var c = constraint_parse(str_from("^0.2.3"));
+    assert(constraint_matches(c, semver_parse(str_from("0.2.3"))),
+        "0.2.3 in ^0.2.3");
+    assert(constraint_matches(c, semver_parse(str_from("0.2.9"))),
+        "0.2.9 in ^0.2.3");
+    assert(constraint_matches(c,
+        semver_parse(str_from("0.3.0"))) == 0,
+        "0.3.0 not in ^0.2.3");
+    assert(constraint_matches(c,
+        semver_parse(str_from("1.0.0"))) == 0,
+        "1.0.0 not in ^0.2.3");
+    # ^0.0.3 means >=0.0.3, <0.0.4
+    var c2 = constraint_parse(str_from("^0.0.3"));
+    assert(constraint_matches(c2, semver_parse(str_from("0.0.3"))),
+        "0.0.3 in ^0.0.3");
+    assert(constraint_matches(c2,
+        semver_parse(str_from("0.0.4"))) == 0,
+        "0.0.4 not in ^0.0.3");
+}
+
+fn test_tilde_zero() {
+    test_group("tilde_zero");
+    # ~0.2.0 means >=0.2.0, <0.3.0 — same major.minor
+    var c = constraint_parse(str_from("~0.2.0"));
+    assert(constraint_matches(c, semver_parse(str_from("0.2.0"))),
+        "0.2.0 in ~0.2");
+    assert(constraint_matches(c, semver_parse(str_from("0.2.9"))),
+        "0.2.9 in ~0.2");
+    assert(constraint_matches(c,
+        semver_parse(str_from("0.3.0"))) == 0,
+        "0.3.0 not in ~0.2");
+}
+
+fn test_empty_graph() {
+    test_group("empty_graph");
+    var g = dep_graph_new();
+    assert_eq(dep_graph_detect_cycle(g), 0, "no cycle in empty");
+    var order = dep_graph_topo_sort(g);
+    assert_eq(vec_len(order), 0, "empty order");
+}
+
+fn test_single_node_graph() {
+    test_group("single_node_graph");
+    var g = dep_graph_new();
+    dep_graph_add(g, resolved_pkg_new(str_from("solo"),
+        str_from("1.0"), SOURCE_MARKETPLACE, str_from(""),
+        0, vec_new(), 1));
+    assert_eq(dep_graph_detect_cycle(g), 0, "no cycle");
+    var order = dep_graph_topo_sort(g);
+    assert_eq(vec_len(order), 1, "one node");
+    assert(str_eq(vec_get(order, 0), str_from("solo")), "solo");
+}
+
+fn test_semver_overflow() {
+    test_group("semver_overflow");
+    # Crafted version with huge numbers should not crash
+    var v = semver_parse(
+        str_from("99999999999999999999999.0.0"));
+    assert_eq(v, 0, "overflow returns 0");
+    # Normal large version should work
+    var v2 = semver_parse(str_from("999.999.999"));
+    assert(v2 != 0, "large but valid");
+    assert_eq(sv_major(v2), 999, "999 major");
+}
+
+fn test_json_str_vec() {
+    test_group("json_str_vec");
+    var v = vec_new();
+    vec_push(v, str_from("a"));
+    vec_push(v, str_from("b"));
+    vec_push(v, str_from("c"));
+    var json = json_str_vec(v);
+    assert(str_contains(json, str_from("\"a\"")), "has a");
+    assert(str_contains(json, str_from("\"b\"")), "has b");
+    assert(str_contains(json, str_from("\"c\"")), "has c");
+    # Empty vec
+    var empty = json_str_vec(vec_new());
+    assert(str_eq(empty, str_from("[]")), "empty array");
+}
+
+fn test_integration_apt() {
+    test_group("integration_apt");
+    var db = sysdb_new();
+    if (sysdb_available(db) == 1) {
+        # Test with a package that exists on all Debian/Ubuntu
+        var info = payload(sysdb_info(db, str_from("coreutils")));
+        if (info != 0) {
+            assert(str_len(rp_name(info)) > 0, "has name");
+            assert(str_len(rp_ver(info)) > 0, "has version");
+            assert_eq(rp_src(info), SOURCE_SYSTEM, "system source");
+            assert_eq(rp_trust(info), 1, "trusted");
+        }
+        # Search
+        var sr = payload(sysdb_search(db, str_from("coreutils")));
+        assert(vec_len(sr) > 0, "search found results");
+        # is_installed
+        var inst = payload(sysdb_is_installed(db,
+            str_from("coreutils")));
+        assert_eq(inst, 1, "coreutils installed");
+    }
+}
+
+fn test_cyml_parse_sections() {
+    test_group("cyml_parse_sections");
+    var src = str_from("[package]\nname = \"test\"\nversion = \"1.0\"\n\n[depends]\nruntime = [\"glibc\"]\n");
+    var sections = cyml_parse(src);
+    assert(vec_len(sections) >= 2, "2+ sections");
+    var pkg = cyml_section_by_name(sections, "package");
+    assert(pkg != 0, "has package");
+    var name = cyml_get(pkg, "name");
+    assert(str_eq(name, str_from("test")), "name=test");
+    var deps = cyml_section_by_name(sections, "depends");
+    assert(deps != 0, "has depends");
+    var rt = cyml_get(deps, "runtime");
+    assert(rt != 0, "has runtime");
+    var parsed = parse_toml_array(rt);
+    assert_eq(vec_len(parsed), 1, "1 dep");
+    assert(str_eq(vec_get(parsed, 0), str_from("glibc")), "glibc");
+}
+
 fn test_sysdb_unavailable() {
     test_group("sysdb_unavailable");
     var db = sysdb_make(0);
@@ -1122,6 +1297,18 @@ fn main() {
     test_resolution_trace();
     test_levenshtein();
     test_suggestion_engine();
+    test_registry_install_stub();
+    test_constraints_compatible();
+    test_nous_error_to_kind();
+    test_semver_eq();
+    test_caret_zero();
+    test_tilde_zero();
+    test_empty_graph();
+    test_single_node_graph();
+    test_semver_overflow();
+    test_json_str_vec();
+    test_integration_apt();
+    test_cyml_parse_sections();
     test_sysdb_unavailable();
     return assert_summary();
 }

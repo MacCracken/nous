@@ -107,6 +107,68 @@ fn b_recipe_parse() {
     return 0;
 }
 
+# Levenshtein benchmark
+fn b_levenshtein() {
+    levenshtein(str_from("package-manager"), str_from("packge-managar"));
+    levenshtein(str_from("nginx"), str_from("ngins"));
+    levenshtein(str_from("openssl"), str_from("openssh"));
+    return 0;
+}
+
+# Constraint parse + match benchmark
+fn b_constraint() {
+    var c = constraint_parse(str_from(">=1.2.3"));
+    constraint_matches(c, semver_parse(str_from("1.5.0")));
+    constraint_matches(c, semver_parse(str_from("0.9.0")));
+    var c2 = constraint_parse(str_from("^2.0.0"));
+    constraint_matches(c2, semver_parse(str_from("2.5.1")));
+    constraint_matches(c2, semver_parse(str_from("3.0.0")));
+    return 0;
+}
+
+# Cycle detection benchmark (build a 20-node chain, check for cycles)
+var cycle_graph = 0;
+
+fn setup_cycle_bench() {
+    cycle_graph = dep_graph_new();
+    var i = 0;
+    while (i < 20) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "node-");
+        str_builder_add_int(sb, i);
+        var name = str_builder_build(sb);
+        var deps = vec_new();
+        if (i + 1 < 20) {
+            var dsb = str_builder_new();
+            str_builder_add_cstr(dsb, "node-");
+            str_builder_add_int(dsb, i + 1);
+            vec_push(deps, str_builder_build(dsb));
+        }
+        dep_graph_add(cycle_graph, resolved_pkg_new(name,
+            str_from("1.0"), SOURCE_MARKETPLACE,
+            str_from(""), 0, deps, 1));
+        i = i + 1;
+    }
+}
+
+fn b_cycle_detect() {
+    dep_graph_detect_cycle(cycle_graph);
+    return 0;
+}
+
+fn b_topo_sort() {
+    dep_graph_topo_sort(cycle_graph);
+    return 0;
+}
+
+# Recipe DB load benchmark
+fn b_recipe_db() {
+    if (our_is_dir("/home/macro/Repos/zugot") == 1) {
+        recipe_db_load(str_from("/home/macro/Repos/zugot"));
+    }
+    return 0;
+}
+
 # Serde roundtrip benchmark
 fn b_serde() {
     var pkg = resolved_pkg_new(str_from("bench-pkg"), str_from("1.0.0"),
@@ -176,6 +238,32 @@ fn main() {
     var b13 = bench_new("recipe_parse");
     bench_run(b13, &b_recipe_parse, 10000);
     vec_push(benches, b13);
+
+    # Levenshtein
+    var b14 = bench_new("levenshtein");
+    bench_run(b14, &b_levenshtein, 100000);
+    vec_push(benches, b14);
+
+    # Constraint parse + match
+    var b15 = bench_new("constraint");
+    bench_run(b15, &b_constraint, 100000);
+    vec_push(benches, b15);
+
+    # Cycle detection (20-node chain)
+    setup_cycle_bench();
+    var b16 = bench_new("cycle_detect_20");
+    bench_run(b16, &b_cycle_detect, 10000);
+    vec_push(benches, b16);
+
+    # Topo sort (20-node chain)
+    var b17 = bench_new("topo_sort_20");
+    bench_run(b17, &b_topo_sort, 10000);
+    vec_push(benches, b17);
+
+    # Recipe DB load (full zugot scan)
+    var b18 = bench_new("recipe_db_load");
+    bench_run(b18, &b_recipe_db, 10);
+    vec_push(benches, b18);
 
     # Serde roundtrip
     var b12 = bench_new("serde_roundtrip");

@@ -77,7 +77,7 @@
 - [x] P5 complete — conflict explanations, suggestion engine, resolution trace
 - [x] Security audit — internal (P0-P2 fixed) + external (8 attack categories)
 - [x] `cyrius lint` clean on all source (0 warnings)
-- [x] 233 tests, 13 benchmarks, 3 fuzz harnesses — all pass
-- [ ] All public API documented with examples
+- [x] 271 tests, 18 benchmarks, 3 fuzz harnesses — all pass
+- [x] All public API documented with examples (`docs/api.md`)
 - [ ] Integration tests against real apt on CI
 - [ ] Benchmark regressions gated in CI

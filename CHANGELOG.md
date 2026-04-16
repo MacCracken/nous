@@ -31,7 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - All sysdb_* functions now use array-based `exec_capture()` instead of shell string concatenation
 - `finalize_graph()` extracts shared logic from both resolve_all variants
-- 233 tests total, 13 benchmarks, 3 fuzz harnesses
+- 271 tests (75 test groups), 18 benchmarks, 3 fuzz harnesses
+  - New tests: registry_install_stub, constraints_compatible, error_to_kind, semver_eq, caret_zero, tilde_zero, empty_graph, single_node_graph, semver_overflow, json_str_vec, integration_apt, cyml_parse_sections
+  - New benchmarks: levenshtein, constraint, cycle_detect_20, topo_sort_20, recipe_db_load
+  - `docs/api.md` — complete API reference with Cyrius code examples for all consumer functions
 
 ## [0.3.0] - 2026-04-16
 
