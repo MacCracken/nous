@@ -49,7 +49,7 @@ enum ErrKind {
 # SysDb:        sd_apt(0)                                   = 8 bytes
 # Registry:     rg_dir(0) rg_pkgs(8)                       = 16 bytes
 # Strategy:     st_kind(0) st_only(8)                      = 16 bytes
-# Resolver:     rs_strat(0) rs_cache(8) rs_reg(16) rs_sys(24) rs_rdb(32) = 40 bytes
+# Resolver:     rs_strat(0) rs_cache(8) rs_reg(16) rs_sys(24) rs_rdb(32) rs_trace(40) rs_trace_on(48) = 56 bytes
 # SemVer:       sv_major(0) sv_minor(8) sv_patch(16)         = 24 bytes
 # Constraint:   ct_op(0) ct_ver(8)                           = 16 bytes
 # DepGraph:     dg_nodes(0) dg_edges(8) dg_versions(16)      = 24 bytes
@@ -135,10 +135,11 @@ fn strategy_new(kind, only_source) {
 }
 
 fn resolver_make(strat, cache, reg, sysdb) {
-    var p = alloc(40);
+    var p = alloc(56);
     store64(p, strat); store64(p + 8, cache);
     store64(p + 16, reg); store64(p + 24, sysdb);
-    store64(p + 32, 0);
+    store64(p + 32, 0); store64(p + 40, vec_new());
+    store64(p + 48, 0);
     return p;
 }
 
@@ -197,11 +198,43 @@ fn rs_sys(p) { return load64(p + 24); }
 fn rs_set_strat(p, v) { store64(p, v); }
 
 # Shorthand for deep access: InstalledMPkg -> name/version/desc/runtime/deps
-fn mpkg_name(p) { return ai_name(mf_agent(mp_manifest(p))); }
-fn mpkg_version(p) { return ai_version(mf_agent(mp_manifest(p))); }
-fn mpkg_desc(p) { return ai_desc(mf_agent(mp_manifest(p))); }
-fn mpkg_runtime(p) { return mf_runtime(mp_manifest(p)); }
-fn mpkg_deps(p) { return mf_deps(mp_manifest(p)); }
+# NULL-safe: returns 0 if any pointer in the chain is NULL
+fn mpkg_name(p) {
+    if (p == 0) { return 0; }
+    var m = mp_manifest(p);
+    if (m == 0) { return 0; }
+    var a = mf_agent(m);
+    if (a == 0) { return 0; }
+    return ai_name(a);
+}
+fn mpkg_version(p) {
+    if (p == 0) { return 0; }
+    var m = mp_manifest(p);
+    if (m == 0) { return 0; }
+    var a = mf_agent(m);
+    if (a == 0) { return 0; }
+    return ai_version(a);
+}
+fn mpkg_desc(p) {
+    if (p == 0) { return 0; }
+    var m = mp_manifest(p);
+    if (m == 0) { return 0; }
+    var a = mf_agent(m);
+    if (a == 0) { return 0; }
+    return ai_desc(a);
+}
+fn mpkg_runtime(p) {
+    if (p == 0) { return 0; }
+    var m = mp_manifest(p);
+    if (m == 0) { return str_from(""); }
+    return mf_runtime(m);
+}
+fn mpkg_deps(p) {
+    if (p == 0) { return map_new(); }
+    var m = mp_manifest(p);
+    if (m == 0) { return map_new(); }
+    return mf_deps(m);
+}
 
 # ===================================================================
 # Filesystem helpers (is_dir from fs.cyr is broken, use stat directly)
@@ -502,6 +535,99 @@ fn detect_source(name) {
 }
 
 # ===================================================================
+# Typo suggestion engine (Levenshtein distance)
+# ===================================================================
+
+fn levenshtein(a, b) {
+    var al = str_len(a);
+    var bl = str_len(b);
+    var ad = str_data(a);
+    var bd = str_data(b);
+    if (al == 0) { return bl; }
+    if (bl == 0) { return al; }
+    # Two-row approach: prev_row and curr_row, each (bl+1) entries
+    var prev = alloc((bl + 1) * 8);
+    var curr = alloc((bl + 1) * 8);
+    var j = 0;
+    while (j <= bl) { store64(prev + j * 8, j); j = j + 1; }
+    var i = 0;
+    while (i < al) {
+        store64(curr, i + 1);
+        j = 0;
+        while (j < bl) {
+            var cost = 1;
+            if (load8(ad + i) == load8(bd + j)) { cost = 0; }
+            var del = load64(prev + (j + 1) * 8) + 1;
+            var ins = load64(curr + j * 8) + 1;
+            var sub = load64(prev + j * 8) + cost;
+            var best = del;
+            if (ins < best) { best = ins; }
+            if (sub < best) { best = sub; }
+            store64(curr + (j + 1) * 8, best);
+            j = j + 1;
+        }
+        # Swap prev and curr
+        var tmp = prev;
+        prev = curr;
+        curr = tmp;
+        i = i + 1;
+    }
+    return load64(prev + bl * 8);
+}
+
+# Find the closest matching package name from a list.
+# Returns the best match Str, or 0 if nothing is close enough (distance > 3).
+fn suggest_package(name, known_names) {
+    var best = 0;
+    var best_dist = 4;
+    var i = 0;
+    while (i < vec_len(known_names)) {
+        var candidate = vec_get(known_names, i);
+        var dist = levenshtein(name, candidate);
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = candidate;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+# Build suggestion message: "Package 'ngins' not found. Did you mean 'nginx'?"
+fn build_suggestion(name, suggestion) {
+    if (suggestion == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "package '");
+    str_builder_add(sb, name);
+    str_builder_add_cstr(sb, "' not found. Did you mean '");
+    str_builder_add(sb, suggestion);
+    str_builder_add_cstr(sb, "'?");
+    return str_builder_build(sb);
+}
+
+# Collect all known package names from resolver sources.
+fn collect_known_names(r) {
+    var names = vec_new();
+    # From marketplace registry
+    var pkgs = rg_pkgs(rs_reg(r));
+    var i = 0;
+    while (i < vec_len(pkgs)) {
+        vec_push(names, mpkg_name(vec_get(pkgs, i)));
+        i = i + 1;
+    }
+    # From recipe DB if attached
+    if (rs_rdb(r) != 0) {
+        var rkeys = map_keys(rdb_recipes(rs_rdb(r)));
+        i = 0;
+        while (i < vec_len(rkeys)) {
+            vec_push(names, str_from(vec_get(rkeys, i)));
+            i = i + 1;
+        }
+    }
+    return names;
+}
+
+# ===================================================================
 # Command execution
 # ===================================================================
 
@@ -677,16 +803,21 @@ fn scan_installed(base_dir) {
     var i = 0;
     while (i < vec_len(entries)) {
         var entry = vec_get(entries, i);
+        # Reject path traversal: no ".." or "/" in entry names
+        if (str_contains(entry, str_from("..")) == 1 ||
+            str_index_of(entry, 47) >= 0) {
+            i = i + 1;
+            continue;
+        }
         var pdir = join_path(idir, entry);
         var mpath = join_path(pdir, str_from("manifest.json"));
         var cm = to_cstr(mpath);
-        if (file_exists(cm) == 1) {
-            var manifest = parse_manifest_file(mpath);
-            if (manifest != 0) {
-                var sz = dir_size_recursive(pdir);
-                var mt = file_mtime(cm);
-                vec_push(pkgs, installed_mpkg_new(manifest, sz, pdir, mt));
-            }
+        # Read directly — no TOCTOU gap from file_exists+read
+        var manifest = parse_manifest_file(mpath);
+        if (manifest != 0) {
+            var sz = dir_size_recursive(pdir);
+            var mt = file_mtime(cm);
+            vec_push(pkgs, installed_mpkg_new(manifest, sz, pdir, mt));
         }
         i = i + 1;
     }
@@ -754,10 +885,18 @@ fn sysdb_available(db) { return sd_apt(db); }
 
 fn sysdb_search(db, query) {
     if (sd_apt(db) == 0) { return Ok(vec_new()); }
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "apt-cache search --names-only ");
-    str_builder_add(sb, query);
-    var output = cmd_run(str_builder_build(sb));
+    # Validate query to prevent command injection
+    var vr = validate_package_name(query);
+    if (is_err_result(vr) == 1) { return Ok(vec_new()); }
+    var args = vec_new();
+    vec_push(args, "apt-cache");
+    vec_push(args, "search");
+    vec_push(args, "--names-only");
+    vec_push(args, to_cstr(query));
+    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
+    var n = exec_capture(args, cmd_buf, 65536);
+    var output = 0;
+    if (n > 0) { output = str_new(cmd_buf, n); }
     if (output == 0) { return Ok(vec_new()); }
     var lines = str_split(output, 10);
     var results = vec_new();
@@ -779,10 +918,18 @@ fn sysdb_search(db, query) {
 
 fn sysdb_is_installed(db, name) {
     if (sd_apt(db) == 0) { return Ok(0); }
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "dpkg-query -W -f '${Status}' ");
-    str_builder_add(sb, name);
-    var output = cmd_run(str_builder_build(sb));
+    var vr = validate_package_name(name);
+    if (is_err_result(vr) == 1) { return Ok(0); }
+    var args = vec_new();
+    vec_push(args, "dpkg-query");
+    vec_push(args, "-W");
+    vec_push(args, "-f");
+    vec_push(args, "${Status}");
+    vec_push(args, to_cstr(name));
+    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
+    var n = exec_capture(args, cmd_buf, 65536);
+    var output = 0;
+    if (n > 0) { output = str_new(cmd_buf, n); }
     if (output == 0) { return Ok(0); }
     if (str_contains(output, str_from("install ok installed")) == 1) { return Ok(1); }
     return Ok(0);
@@ -790,10 +937,18 @@ fn sysdb_is_installed(db, name) {
 
 fn sysdb_get_installed(db, name) {
     if (sd_apt(db) == 0) { return Ok(0); }
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "dpkg-query -W -f '${Package}\t${Version}\t${Installed-Size}\n' ");
-    str_builder_add(sb, name);
-    var output = cmd_run(str_builder_build(sb));
+    var vr = validate_package_name(name);
+    if (is_err_result(vr) == 1) { return Ok(0); }
+    var args = vec_new();
+    vec_push(args, "dpkg-query");
+    vec_push(args, "-W");
+    vec_push(args, "-f");
+    vec_push(args, "${Package}\t${Version}\t${Installed-Size}\n");
+    vec_push(args, to_cstr(name));
+    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
+    var n = exec_capture(args, cmd_buf, 65536);
+    var output = 0;
+    if (n > 0) { output = str_new(cmd_buf, n); }
     if (output == 0) { return Ok(0); }
     var lines = str_split(output, 10);
     if (vec_len(lines) == 0) { return Ok(0); }
@@ -857,10 +1012,16 @@ fn sysdb_updates(db) {
 
 fn sysdb_info(db, name) {
     if (sd_apt(db) == 0) { return Ok(0); }
-    var sb = str_builder_new();
-    str_builder_add_cstr(sb, "apt-cache show ");
-    str_builder_add(sb, name);
-    var output = cmd_run(str_builder_build(sb));
+    var vr = validate_package_name(name);
+    if (is_err_result(vr) == 1) { return Ok(0); }
+    var args = vec_new();
+    vec_push(args, "apt-cache");
+    vec_push(args, "show");
+    vec_push(args, to_cstr(name));
+    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
+    var n = exec_capture(args, cmd_buf, 65536);
+    var output = 0;
+    if (n > 0) { output = str_new(cmd_buf, n); }
     if (output == 0) { return Ok(0); }
     var version = str_from("");
     var desc = str_from("");
@@ -919,18 +1080,35 @@ fn mpkg_to_resolved(pkg, src) {
 
 fn resolve_mkt(r, name) {
     var pkg = registry_get(rs_reg(r), name);
-    if (pkg == 0) { return 0; }
+    if (pkg == 0) {
+        trace_msg(r, "marketplace: ", name, "miss");
+        return 0;
+    }
+    trace_msg(r, "marketplace: ", name, "hit");
     return mpkg_to_resolved(pkg, SOURCE_MARKETPLACE);
 }
 
-fn resolve_sys(r, name) { return sysdb_info(rs_sys(r), name); }
+fn resolve_sys(r, name) {
+    var result = sysdb_info(rs_sys(r), name);
+    if (is_ok(result) == 1 && payload(result) != 0) {
+        trace_msg(r, "system: ", name, "hit");
+    } else {
+        trace_msg(r, "system: ", name, "miss");
+    }
+    return result;
+}
 
 fn resolve_flutter(r, name) {
     var pkg = registry_get(rs_reg(r), name);
-    if (pkg == 0) { return 0; }
+    if (pkg == 0) {
+        trace_msg(r, "flutter: ", name, "miss");
+        return 0;
+    }
     if (str_eq(mpkg_runtime(pkg), str_from("flutter")) == 1) {
+        trace_msg(r, "flutter: ", name, "hit");
         return mpkg_to_resolved(pkg, SOURCE_FLUTTER_APP);
     }
+    trace_msg(r, "flutter: ", name, "miss (not flutter runtime)");
     return 0;
 }
 
@@ -1324,9 +1502,12 @@ fn semver_parse(s) {
     var d = str_data(s);
     var len = str_len(s);
     var pos = 0;
+    # Max safe value for overflow check: 922337203685477580 (INT64_MAX / 10)
+    var MAX_SAFE = 922337203685477580;
     # Parse major
     var major = 0;
     while (pos < len && load8(d + pos) >= 48 && load8(d + pos) <= 57) {
+        if (major > MAX_SAFE) { return 0; }
         major = major * 10 + load8(d + pos) - 48;
         pos = pos + 1;
     }
@@ -1337,6 +1518,7 @@ fn semver_parse(s) {
     # Parse minor
     var minor = 0;
     while (pos < len && load8(d + pos) >= 48 && load8(d + pos) <= 57) {
+        if (minor > MAX_SAFE) { return 0; }
         minor = minor * 10 + load8(d + pos) - 48;
         pos = pos + 1;
     }
@@ -1347,6 +1529,7 @@ fn semver_parse(s) {
     # Parse patch
     var patch = 0;
     while (pos < len && load8(d + pos) >= 48 && load8(d + pos) <= 57) {
+        if (patch > MAX_SAFE) { return 0; }
         patch = patch * 10 + load8(d + pos) - 48;
         pos = pos + 1;
     }
@@ -1714,67 +1897,7 @@ fn resolver_resolve_all(r, names) {
         }
     }
 
-    # Check for cycles
-    var cycle = dep_graph_detect_cycle(graph);
-    if (cycle != 0) {
-        return nous_err(ERR_DEPENDENCY_CYCLE, format_cycle(cycle), 0);
-    }
-
-    # Check for version conflicts (multiple constraints on same dep)
-    var constraint_map = map_new();
-    var all_nodes = map_keys(dg_nodes(graph));
-    i = 0;
-    while (i < vec_len(all_nodes)) {
-        var cname = vec_get(all_nodes, i);
-        var pkg = map_get(dg_nodes(graph), cname);
-        var deps = rp_deps(pkg);
-        # For each dep, record the constraint this package imposes
-        # (from the manifest's dependency version string)
-        var manifest_deps = map_new();
-        # Look up the source package's manifest deps if available
-        var mp = registry_get(rs_reg(r), rp_name(pkg));
-        if (mp != 0) {
-            manifest_deps = mpkg_deps(mp);
-        }
-        var j = 0;
-        while (j < vec_len(deps)) {
-            var dep = vec_get(deps, j);
-            var cdep = to_cstr(dep);
-            var constraint_str = map_get(manifest_deps, cdep);
-            if (constraint_str != 0) {
-                var ct = constraint_parse(constraint_str);
-                if (map_has(constraint_map, cdep) == 1) {
-                    var existing = map_get(constraint_map, cdep);
-                    if (constraints_compatible(existing, ct) == 0) {
-                        var sb = str_builder_new();
-                        str_builder_add_cstr(sb, "incompatible constraints from dependents");
-                        return nous_err(ERR_VERSION_CONFLICT, dep, str_builder_build(sb));
-                    }
-                } else {
-                    map_set(constraint_map, cdep, ct);
-                }
-            }
-            j = j + 1;
-        }
-        i = i + 1;
-    }
-
-    # Topological sort for install order
-    var order = dep_graph_topo_sort(graph);
-
-    # Build package list in install order (deps first)
-    # Reverse: topo gives dependents first, we want deps first
-    var ordered_pkgs = vec_new();
-    var oi = vec_len(order) - 1;
-    while (oi >= 0) {
-        var oname = to_cstr(vec_get(order, oi));
-        if (map_has(dg_nodes(graph), oname) == 1) {
-            vec_push(ordered_pkgs, map_get(dg_nodes(graph), oname));
-        }
-        oi = oi - 1;
-    }
-
-    return Ok(res_plan_new(ordered_pkgs, order));
+    return finalize_graph(r, graph);
 }
 
 # ===================================================================
@@ -1931,7 +2054,11 @@ fn cyml_parse(src) {
                         var ustart = pos;
                         while (pos < len && load8(d + pos) != 10) { pos = pos + 1; }
                         var uend = pos;
-                        while (uend > ustart && (load8(d + uend - 1) == 32 || load8(d + uend - 1) == 13)) { uend = uend - 1; }
+                        while (uend > ustart) {
+                            var tc = load8(d + uend - 1);
+                            if (tc != 32 && tc != 13) { break; }
+                            uend = uend - 1;
+                        }
                         value = str_new(d + ustart, uend - ustart);
                     }
                 }
@@ -2147,14 +2274,39 @@ fn recipe_to_resolved(recipe) {
 # Resolver: rs_strat(0) rs_cache(8) rs_reg(16) rs_sys(24) rs_rdb(32)
 # Extended resolver with recipe DB (add 5th field at offset 32)
 fn resolver_make_with_recipes(strat, cache, reg, sysdb, rdb) {
-    var p = alloc(40);
+    var p = alloc(56);
     store64(p, strat); store64(p + 8, cache);
     store64(p + 16, reg); store64(p + 24, sysdb);
-    store64(p + 32, rdb);
+    store64(p + 32, rdb); store64(p + 40, vec_new());
+    store64(p + 48, 0);
     return p;
 }
 fn rs_rdb(r) { return load64(r + 32); }
 fn rs_set_rdb(r, rdb) { store64(r + 32, rdb); }
+fn rs_trace(r) { return load64(r + 40); }
+fn rs_trace_on(r) { return load64(r + 48); }
+
+fn resolver_with_trace(r) { store64(r + 48, 1); return r; }
+
+fn trace_add(r, msg) {
+    if (rs_trace_on(r) == 1) {
+        vec_push(rs_trace(r), msg);
+    }
+}
+
+fn trace_msg(r, prefix, name, result) {
+    if (rs_trace_on(r) == 0) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, prefix);
+    str_builder_add(sb, name);
+    str_builder_add_cstr(sb, " ... ");
+    str_builder_add_cstr(sb, result);
+    vec_push(rs_trace(r), str_builder_build(sb));
+    return 0;
+}
+
+fn resolver_get_trace(r) { return rs_trace(r); }
+fn resolver_clear_trace(r) { store64(r + 40, vec_new()); }
 
 # Attach a recipe database to a resolver.
 fn resolver_with_recipes(r, rdb) {
@@ -2213,9 +2365,68 @@ fn resolver_resolve_all_with_recipes(r, names) {
         }
     }
 
+    return finalize_graph(r, graph);
+}
+
+# Shared finalization: cycle check, conflict check, topo sort, build plan.
+fn finalize_graph(r, graph) {
     var cycle = dep_graph_detect_cycle(graph);
     if (cycle != 0) {
         return nous_err(ERR_DEPENDENCY_CYCLE, format_cycle(cycle), 0);
+    }
+
+    # Conflict detection with detailed explanation
+    var constraint_map = map_new();
+    var source_map = map_new();
+    var all_nodes = map_keys(dg_nodes(graph));
+    var i = 0;
+    while (i < vec_len(all_nodes)) {
+        var cname = vec_get(all_nodes, i);
+        var pkg = map_get(dg_nodes(graph), cname);
+        var deps = rp_deps(pkg);
+        var manifest_deps = map_new();
+        var mp = registry_get(rs_reg(r), rp_name(pkg));
+        if (mp != 0) { manifest_deps = mpkg_deps(mp); }
+        # Also check recipe DB if attached
+        if (rs_rdb(r) != 0) {
+            var rc = recipe_db_get(rs_rdb(r), rp_name(pkg));
+            if (rc != 0) {
+                # Recipe deps don't have version constraints in the dep list,
+                # but the recipe's own version is fixed
+            }
+        }
+        var j = 0;
+        while (j < vec_len(deps)) {
+            var dep = vec_get(deps, j);
+            var cdep = to_cstr(dep);
+            var constraint_str = map_get(manifest_deps, cdep);
+            if (constraint_str != 0) {
+                var ct = constraint_parse(constraint_str);
+                if (map_has(constraint_map, cdep) == 1) {
+                    var existing = map_get(constraint_map, cdep);
+                    if (constraints_compatible(existing, ct) == 0) {
+                        var prev_src = map_get(source_map, cdep);
+                        var sb = str_builder_new();
+                        if (prev_src != 0) { str_builder_add(sb, prev_src); }
+                        str_builder_add_cstr(sb, " conflicts with ");
+                        str_builder_add(sb, rp_name(pkg));
+                        str_builder_add_cstr(sb, " requires ");
+                        str_builder_add(sb, constraint_str);
+                        return nous_err(ERR_VERSION_CONFLICT, dep,
+                            str_builder_build(sb));
+                    }
+                } else {
+                    map_set(constraint_map, cdep, ct);
+                    var ssb = str_builder_new();
+                    str_builder_add(ssb, rp_name(pkg));
+                    str_builder_add_cstr(ssb, " requires ");
+                    str_builder_add(ssb, constraint_str);
+                    map_set(source_map, cdep, str_builder_build(ssb));
+                }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
     }
 
     var order = dep_graph_topo_sort(graph);

@@ -34,6 +34,27 @@ fn write_manifest(dir, name, runtime) {
     file_write_all(to_cstr(mp), to_cstr(json), str_len(json));
 }
 
+fn write_manifest_deps(dir, name, runtime, deps_json) {
+    var installed = join_path(dir, str_from("installed"));
+    mkdir_str(installed);
+    var pd = join_path(installed, str_from(name));
+    mkdir_str(pd);
+    var mp = join_path(pd, str_from("manifest.json"));
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"agent\":{\"name\":\"");
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, "\",\"version\":\"1.0.0\",");
+    str_builder_add_cstr(sb, "\"description\":\"");
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, "\"},\"dependencies\":{");
+    str_builder_add_cstr(sb, deps_json);
+    str_builder_add_cstr(sb, "},\"runtime\":\"");
+    str_builder_add_cstr(sb, runtime);
+    str_builder_add_cstr(sb, "\"}");
+    var json = str_builder_build(sb);
+    file_write_all(to_cstr(mp), to_cstr(json), str_len(json));
+}
+
 fn rm_rf(path) {
     var cp = to_cstr(path);
     if (is_dir(cp) == 1) {
@@ -374,7 +395,8 @@ fn test_errors() {
 
 fn test_json() {
     test_group("json");
-    var pkg = resolved_pkg_new(str_from("test-pkg"), str_from("1.2.3"), SOURCE_SYSTEM, str_from("A test"), 4096, vec_new(), 1);
+    var pkg = resolved_pkg_new(str_from("test-pkg"), str_from("1.2.3"),
+        SOURCE_SYSTEM, str_from("A test"), 4096, vec_new(), 1);
     var json = resolved_to_json(pkg);
     assert(str_contains(json, str_from("test-pkg")), "name");
     assert(str_contains(json, str_from("1.2.3")), "ver");
@@ -539,7 +561,12 @@ fn test_deps_parsing() {
     var pd = join_path(inst, str_from("dep-test"));
     mkdir_str(pd);
     var mp = join_path(pd, str_from("manifest.json"));
-    var json = "{\"agent\":{\"name\":\"dep-test\",\"version\":\"1.0.0\",\"description\":\"test\"},\"dependencies\":{\"libfoo\":\">=1.0\",\"libbar\":\">=2.0\"},\"runtime\":\"native\"}";
+    var jsb = str_builder_new();
+    str_builder_add_cstr(jsb, "{\"agent\":{\"name\":\"dep-test\",");
+    str_builder_add_cstr(jsb, "\"version\":\"1.0.0\",\"description\":\"test\"},");
+    str_builder_add_cstr(jsb, "\"dependencies\":{\"libfoo\":\">=1.0\",");
+    str_builder_add_cstr(jsb, "\"libbar\":\">=2.0\"},\"runtime\":\"native\"}");
+    var json = to_cstr(str_builder_build(jsb));
     file_write_all(to_cstr(mp), json, strlen(json));
     var reg = payload(registry_new(d));
     var pkg = registry_get(reg, str_from("dep-test"));
@@ -794,25 +821,13 @@ fn test_resolve_all_basic() {
     mkdir_str(inst);
 
     # C has no deps
-    var pc = join_path(inst, str_from("pkg-c"));
-    mkdir_str(pc);
-    file_write_all(to_cstr(join_path(pc, str_from("manifest.json"))),
-        "{\"agent\":{\"name\":\"pkg-c\",\"version\":\"1.0.0\",\"description\":\"C\"},\"dependencies\":{},\"runtime\":\"native\"}",
-        strlen("{\"agent\":{\"name\":\"pkg-c\",\"version\":\"1.0.0\",\"description\":\"C\"},\"dependencies\":{},\"runtime\":\"native\"}"));
-
+    write_manifest_deps(d, "pkg-c", "native", "");
     # B depends on C
-    var pb = join_path(inst, str_from("pkg-b"));
-    mkdir_str(pb);
-    file_write_all(to_cstr(join_path(pb, str_from("manifest.json"))),
-        "{\"agent\":{\"name\":\"pkg-b\",\"version\":\"1.0.0\",\"description\":\"B\"},\"dependencies\":{\"pkg-c\":\">=1.0\"},\"runtime\":\"native\"}",
-        strlen("{\"agent\":{\"name\":\"pkg-b\",\"version\":\"1.0.0\",\"description\":\"B\"},\"dependencies\":{\"pkg-c\":\">=1.0\"},\"runtime\":\"native\"}"));
-
+    write_manifest_deps(d, "pkg-b", "native",
+        "\"pkg-c\":\">=1.0\"");
     # A depends on B
-    var pa = join_path(inst, str_from("pkg-a"));
-    mkdir_str(pa);
-    file_write_all(to_cstr(join_path(pa, str_from("manifest.json"))),
-        "{\"agent\":{\"name\":\"pkg-a\",\"version\":\"1.0.0\",\"description\":\"A\"},\"dependencies\":{\"pkg-b\":\">=1.0\"},\"runtime\":\"native\"}",
-        strlen("{\"agent\":{\"name\":\"pkg-a\",\"version\":\"1.0.0\",\"description\":\"A\"},\"dependencies\":{\"pkg-b\":\">=1.0\"},\"runtime\":\"native\"}"));
+    write_manifest_deps(d, "pkg-a", "native",
+        "\"pkg-b\":\">=1.0\"");
 
     var r = payload(resolver_new(d, c));
     var names = vec_new();
@@ -836,16 +851,10 @@ fn test_resolve_all_cycle_error() {
     var inst = join_path(d, str_from("installed"));
     mkdir_str(inst);
     # A -> B, B -> A (cycle)
-    var pa = join_path(inst, str_from("cyc-a"));
-    mkdir_str(pa);
-    file_write_all(to_cstr(join_path(pa, str_from("manifest.json"))),
-        "{\"agent\":{\"name\":\"cyc-a\",\"version\":\"1.0.0\",\"description\":\"\"},\"dependencies\":{\"cyc-b\":\">=1.0\"},\"runtime\":\"native\"}",
-        strlen("{\"agent\":{\"name\":\"cyc-a\",\"version\":\"1.0.0\",\"description\":\"\"},\"dependencies\":{\"cyc-b\":\">=1.0\"},\"runtime\":\"native\"}"));
-    var pb = join_path(inst, str_from("cyc-b"));
-    mkdir_str(pb);
-    file_write_all(to_cstr(join_path(pb, str_from("manifest.json"))),
-        "{\"agent\":{\"name\":\"cyc-b\",\"version\":\"1.0.0\",\"description\":\"\"},\"dependencies\":{\"cyc-a\":\">=1.0\"},\"runtime\":\"native\"}",
-        strlen("{\"agent\":{\"name\":\"cyc-b\",\"version\":\"1.0.0\",\"description\":\"\"},\"dependencies\":{\"cyc-a\":\">=1.0\"},\"runtime\":\"native\"}"));
+    write_manifest_deps(d, "cyc-a", "native",
+        "\"cyc-b\":\">=1.0\"");
+    write_manifest_deps(d, "cyc-b", "native",
+        "\"cyc-a\":\">=1.0\"");
     var r = payload(resolver_new(d, c));
     var names = vec_new();
     vec_push(names, str_from("cyc-a"));
@@ -975,6 +984,70 @@ fn test_resolve_with_recipes() {
     rm_rf(d); rm_rf(c);
 }
 
+fn test_resolution_trace() {
+    test_group("resolution_trace");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "traced-pkg", "native");
+    var r = payload(resolver_new(d, c));
+    r = resolver_with_trace(r);
+    resolver_resolve(r, str_from("traced-pkg"));
+    var trace = resolver_get_trace(r);
+    assert(vec_len(trace) >= 1, "trace has entries");
+    # Check trace contains marketplace hit
+    var found_hit = 0;
+    var i = 0;
+    while (i < vec_len(trace)) {
+        var entry = vec_get(trace, i);
+        if (str_contains(entry, str_from("hit")) == 1) { found_hit = 1; }
+        i = i + 1;
+    }
+    assert(found_hit, "trace shows hit");
+    # Resolve a miss
+    resolver_clear_trace(r);
+    resolver_resolve(r, str_from("nonexistent-pkg"));
+    var trace2 = resolver_get_trace(r);
+    assert(vec_len(trace2) >= 1, "miss trace has entries");
+    var found_miss = 0;
+    i = 0;
+    while (i < vec_len(trace2)) {
+        if (str_contains(vec_get(trace2, i), str_from("miss")) == 1) { found_miss = 1; }
+        i = i + 1;
+    }
+    assert(found_miss, "trace shows miss");
+    rm_rf(d); rm_rf(c);
+}
+
+fn test_levenshtein() {
+    test_group("levenshtein");
+    assert_eq(levenshtein(str_from("kitten"), str_from("sitting")), 3, "kitten/sitting");
+    assert_eq(levenshtein(str_from(""), str_from("abc")), 3, "empty/abc");
+    assert_eq(levenshtein(str_from("abc"), str_from("abc")), 0, "same");
+    assert_eq(levenshtein(str_from("nginx"), str_from("ngins")), 1, "nginx/ngins");
+    assert_eq(levenshtein(str_from("curl"), str_from("crul")), 2, "curl/crul");
+}
+
+fn test_suggestion_engine() {
+    test_group("suggestion_engine");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "nginx", "native");
+    write_manifest(d, "curl", "native");
+    write_manifest(d, "openssl", "native");
+    var r = payload(resolver_new(d, c));
+    var names = collect_known_names(r);
+    assert(vec_len(names) >= 3, "has names");
+    var s1 = suggest_package(str_from("nginx"), names);
+    assert(s1 != 0, "nginx -> suggestion");
+    assert(str_eq(s1, str_from("nginx")), "nginx -> nginx");
+    var s2 = suggest_package(str_from("zzzzzzz"), names);
+    assert_eq(s2, 0, "no match for zzzzzzz");
+    var msg = build_suggestion(str_from("nginx"), s1);
+    assert(str_contains(msg, str_from("Did you mean")), "has suggestion text");
+    assert(str_contains(msg, str_from("nginx")), "has correct name");
+    rm_rf(d); rm_rf(c);
+}
+
 fn test_sysdb_unavailable() {
     test_group("sysdb_unavailable");
     var db = sysdb_make(0);
@@ -1046,6 +1119,9 @@ fn main() {
     test_recipe_db_load();
     test_recipe_to_resolved();
     test_resolve_with_recipes();
+    test_resolution_trace();
+    test_levenshtein();
+    test_suggestion_engine();
     test_sysdb_unavailable();
     return assert_summary();
 }

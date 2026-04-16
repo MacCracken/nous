@@ -59,9 +59,9 @@
 
 - [x] Dedicated error types (7 variants, full display)
 - [x] Package name validation errors
-- [ ] Conflict explanation (which constraints conflict)
-- [ ] Suggestion engine for typos
-- [ ] Resolution trace with --verbose mode
+- [x] Conflict explanation (which constraints conflict)
+- [x] Suggestion engine for typos (Levenshtein distance)
+- [x] Resolution trace with `resolver_with_trace(r)`
 
 ## Future
 
@@ -74,9 +74,10 @@
 
 - [x] P1 complete — full dependency graph resolution with cycle detection
 - [x] P2 complete — zugot recipe awareness
-- [x] P5 partial — dedicated error types, full display for all variants
-- [ ] P5 complete — conflict explanations, suggestion engine, resolution trace
+- [x] P5 complete — conflict explanations, suggestion engine, resolution trace
+- [x] Security audit — internal (P0-P2 fixed) + external (8 attack categories)
+- [x] `cyrius lint` clean on all source (0 warnings)
+- [x] 233 tests, 13 benchmarks, 3 fuzz harnesses — all pass
 - [ ] All public API documented with examples
 - [ ] Integration tests against real apt on CI
-- [ ] `cyrius audit` clean (fmt + lint + test)
-- [ ] Benchmark regressions gated
+- [ ] Benchmark regressions gated in CI

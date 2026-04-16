@@ -5,7 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2026-04-16
+## [1.0.0] - 2026-04-16
+
+### Added
+
+- **P5: Error Quality** — complete
+  - Conflict explanation engine: detailed error messages identify which packages impose conflicting constraints ("A requires foo>=2.0 conflicts with B requires foo<1.0")
+  - Typo suggestion engine: Levenshtein distance matching against known packages ("Package 'ngins' not found. Did you mean 'nginx'?")
+  - Resolution trace: `resolver_with_trace(r)` enables step-by-step logging of resolution decisions ("marketplace: foo ... hit", "system: bar ... miss"). Trace accessible via `resolver_get_trace(r)`.
+
+- **P(-1) Scaffold Hardening**
+  - `cyrius lint` clean on all source files (0 warnings)
+  - Shared `finalize_graph()` function — deduplicated cycle/conflict/topo logic between `resolver_resolve_all` and `resolver_resolve_all_with_recipes`
+
+- **Security Audit** — internal + external research
+  - Fixed P0: command injection in sysdb_* functions (replaced shell strings with array-based exec)
+  - Fixed P0: NULL dereference in accessor chains (added NULL checks at every level)
+  - Fixed P1: path traversal in scan_installed (reject ".." and "/" in entries)
+  - Fixed P1: integer overflow in semver_parse (MAX_SAFE bound check)
+  - Fixed P2: TOCTOU in scan_installed (removed file_exists before read)
+  - External research: 8 attack categories analyzed (dependency confusion, supply chain, etc.)
+  - Full audit report: `docs/audit/2026-04-16.md`
+
+### Changed
+
+- All sysdb_* functions now use array-based `exec_capture()` instead of shell string concatenation
+- `finalize_graph()` extracts shared logic from both resolve_all variants
+- 233 tests total, 13 benchmarks, 3 fuzz harnesses
+
+## [0.3.0] - 2026-04-16
 
 ### Added
 
