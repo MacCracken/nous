@@ -40,7 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Lint and fmt steps auto-discover `src/*.cyr` and `tests/*.{tcyr,
     bcyr,fcyr}` so adding a module doesn't require editing CI.
   - Test step asserts on the `0 failed` line rather than a hardcoded
-    assertion count (was `271 assertions`, now self-reports).
+    assertion count (was `271 assertions`, now self-reports). Uses
+    `grep -a` so the leading non-printable byte in `cyrius test`'s
+    summary doesn't trip GNU grep's binary-file heuristic and silently
+    drop the matching line on the runner (caught in the first CI run
+    of this branch — green tests, red step).
   - Bench is non-fatal; output uploaded as artifact.
   - Security scan added (raw `system()` / `exec_str` patterns rejected).
 - **Release workflow rewrite** (`.github/workflows/release.yml`):

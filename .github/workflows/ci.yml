@@ -93,10 +93,16 @@ jobs:
           grep -q "all smoke checks passed" /tmp/smoke_output
 
       - name: Test suite
+        # `cyrius test` prefixes its summary with a non-printable
+        # byte (visible as `�` in the runner log) — without `-a` /
+        # --text, GNU grep treats the stream as binary and silently
+        # drops the matching line on stdout, leaving the second grep
+        # with empty input and a misleading exit-1 even though
+        # `0 failed`. Force text mode on both filters.
         run: |
           out=$(cyrius test tests/nous.tcyr 2>&1)
           echo "$out"
-          echo "$out" | grep -E "passed,.*failed" | grep -q "0 failed"
+          echo "$out" | grep -a -E "passed,.*failed" | grep -a -q "0 failed"
 
       - name: Fuzz harness
         run: cyrius test tests/nous.fcyr

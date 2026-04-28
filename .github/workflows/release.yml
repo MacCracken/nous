@@ -58,10 +58,13 @@ jobs:
           echo "nous: $(wc -c < build/nous) bytes"
 
       - name: Test
+        # See ci.yml's Test suite step: `cyrius test` summary leads
+        # with a non-printable byte; force grep into text mode so the
+        # binary-file heuristic doesn't drop the matching line.
         run: |
           out=$(cyrius test tests/nous.tcyr 2>&1)
           echo "$out"
-          echo "$out" | grep -E "passed,.*failed" | grep -q "0 failed"
+          echo "$out" | grep -a -E "passed,.*failed" | grep -a -q "0 failed"
 
       - name: Smoke test
         run: ./build/nous | grep -q "all smoke checks passed"
