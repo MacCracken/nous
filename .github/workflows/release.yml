@@ -2,7 +2,11 @@ name: Release
 
 on:
   push:
-    tags: ['[0-9]*']
+    # Accept both `v1.2.3` and `1.2.3` tag styles. The version-verify
+    # step below enforces semver shape + match against VERSION file.
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
   contents: write
@@ -12,25 +16,27 @@ jobs:
     name: CI Gate
     uses: ./.github/workflows/ci.yml
 
-  release:
-    name: Build & Release
+  build:
+    name: Build Release
     needs: [ci]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify version matches tag
+      - name: Verify version
         run: |
           FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
-          TAG_VERSION="${GITHUB_REF_NAME}"
-          test "$FILE_VERSION" = "$TAG_VERSION" || {
-            echo "VERSION ($FILE_VERSION) != tag ($TAG_VERSION)"
-            exit 1
-          }
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "$TAG" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "tag ($TAG) is not semver x.y.z"; exit 1; }
+          [ "$FILE_VERSION" = "$TAG" ] || {
+            echo "VERSION ($FILE_VERSION) != tag ($TAG)"; exit 1; }
+          echo "Version verified: $TAG (cyrius.cyml pulls from VERSION via \${file:VERSION})"
 
       - name: Install Cyrius toolchain
         run: |
-          CYRIUS_VERSION="$(cat .cyrius-toolchain | tr -d '[:space:]')"
+          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
+          echo "Installing Cyrius $CYRIUS_VERSION"
           curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
@@ -39,23 +45,67 @@ jobs:
           cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
           chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
+          echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
-      - name: Build release binary
+      - name: Resolve deps
+        run: cyrius deps
+
+      - name: Build (DCE)
         run: |
           mkdir -p build
           CYRIUS_DCE=1 cyrius build src/main.cyr build/nous
           strip build/nous 2>/dev/null || true
+          echo "nous: $(wc -c < build/nous) bytes"
 
-      - name: Package
+      - name: Test
         run: |
-          VERSION=$(cat VERSION | tr -d '[:space:]')
-          tar czf "nous-${VERSION}-x86_64-linux.tar.gz" -C build nous
-          sha256sum "nous-${VERSION}-x86_64-linux.tar.gz" > "nous-${VERSION}-x86_64-linux.tar.gz.sha256"
+          out=$(cyrius test tests/nous.tcyr 2>&1)
+          echo "$out"
+          echo "$out" | grep -E "passed,.*failed" | grep -q "0 failed"
 
-      - name: Create release
-        uses: softprops/action-gh-release@v2
+      - name: Smoke test
+        run: ./build/nous | grep -q "all smoke checks passed"
+
+      - name: Clean toolchain artifacts
+        run: rm -f cyrius-*.tar.gz
+
+      - name: Archive
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          git archive --format=tar.gz --prefix="nous-${TAG}/" -o "nous-${TAG}-src.tar.gz" HEAD
+          cp build/nous "nous-${TAG}-x86_64-linux"
+          sha256sum nous-*.tar.gz nous-*-linux > SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
         with:
-          generate_release_notes: true
+          name: release-artifacts
+          path: |
+            nous-*.tar.gz
+            nous-*-linux
+            SHA256SUMS
+
+  release:
+    name: Create GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+
+      - name: Extract changelog
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          awk "/^## \\[${TAG}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md > /tmp/body.md
+          [ -s /tmp/body.md ] || echo "No changelog entry for $TAG." > /tmp/body.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: "nous ${{ github.ref_name }}"
+          body_path: /tmp/body.md
+          prerelease: ${{ startsWith(github.ref_name, '0.') || startsWith(github.ref_name, 'v0.') }}
           files: |
-            nous-*-x86_64-linux.tar.gz
-            nous-*-x86_64-linux.tar.gz.sha256
+            nous-*.tar.gz
+            nous-*-linux
+            SHA256SUMS

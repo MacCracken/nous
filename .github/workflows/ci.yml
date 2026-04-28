@@ -11,19 +11,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  CYRIUS_HOME: /home/runner/.cyrius
-
 jobs:
-  build-and-test:
-    name: Build + Test + Lint
+  build:
+    name: Build & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Cyrius toolchain
         run: |
-          CYRIUS_VERSION="$(cat .cyrius-toolchain | tr -d '[:space:]')"
+          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
           echo "Installing Cyrius $CYRIUS_VERSION"
           curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
@@ -33,100 +30,115 @@ jobs:
           cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
           chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
+          echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
+
+      - name: Resolve dependencies
+        # No-op today (no [deps.NAME] blocks), but kept so a future
+        # external dep is picked up automatically.
+        run: cyrius deps
 
       - name: Lint
+        # nous uses a barrel-include pattern: src/nous.cyr brings every
+        # module into scope. Linting per-module flags spurious warnings
+        # because the modules don't redeclare their dependencies (and a
+        # few have minor cosmetic warnings — multiple blank lines etc.
+        # — flagged for a future hygiene pass on the roadmap). Lint the
+        # barrel + each test entry, fail on any "  warn " line.
         run: |
-          cyrius lint src/nous.cyr
-          cyrius lint tests/nous.tcyr
-          cyrius lint tests/nous.bcyr
-          cyrius lint tests/nous.fcyr
+          fail=0
+          for f in src/nous.cyr tests/nous.tcyr tests/nous.bcyr tests/nous.fcyr; do
+            [ -f "$f" ] || continue
+            out=$(cyrius lint "$f" 2>&1)
+            echo "$out"
+            if echo "$out" | grep -qE '^\s*warn '; then
+              fail=1
+            fi
+          done
+          [ $fail -eq 0 ] || { echo "lint: warnings present"; exit 1; }
 
-      - name: Build
+      - name: Format check (advisory)
+        # cyrius fmt --check emits the formatted source to stdout;
+        # diff against the file in-place to detect drift. Currently
+        # advisory because a few historical files have drift that
+        # predates the 5.7.29 modernization (resolver.cyr, recipe.cyr,
+        # registry.cyr, tests/nous.tcyr, tests/nous.bcyr). Promote to
+        # fail-on-drift after a dedicated `cyrius fmt` sweep.
+        continue-on-error: true
+        run: |
+          drift=0
+          for f in src/*.cyr tests/*.tcyr tests/*.bcyr tests/*.fcyr; do
+            [ -f "$f" ] || continue
+            if ! diff -q <(cyrius fmt "$f" --check 2>/dev/null) "$f" > /dev/null; then
+              echo "needs fmt: $f"
+              drift=$((drift + 1))
+            fi
+          done
+          echo "fmt drift: $drift file(s) (advisory)"
+
+      - name: Vet
+        run: cyrius vet src/main.cyr
+
+      - name: Build (DCE)
         run: |
           mkdir -p build
           CYRIUS_DCE=1 cyrius build src/main.cyr build/nous
+          echo "nous: $(wc -c < build/nous) bytes"
 
-      - name: Smoke check
-        run: ./build/nous
+      - name: Verify ELF
+        run: xxd -l 4 build/nous | grep -q "7f45 4c46"
 
-      - name: Test suite (271 assertions)
-        run: cyrius test tests/nous.tcyr
+      - name: Smoke test
+        run: |
+          ./build/nous | tee /tmp/smoke_output
+          grep -q "all smoke checks passed" /tmp/smoke_output
+
+      - name: Test suite
+        run: |
+          out=$(cyrius test tests/nous.tcyr 2>&1)
+          echo "$out"
+          echo "$out" | grep -E "passed,.*failed" | grep -q "0 failed"
 
       - name: Fuzz harness
         run: cyrius test tests/nous.fcyr
 
-  bench:
-    name: Benchmarks
-    runs-on: ubuntu-latest
-    needs: [build-and-test]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Cyrius toolchain
+      - name: Bench
+        # Non-fatal: numbers go to bench-history.csv and the artifact upload.
         run: |
-          CYRIUS_VERSION="$(cat .cyrius-toolchain | tr -d '[:space:]')"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
-          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
-          echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
+          if [ -x scripts/bench-history.sh ]; then
+            sh scripts/bench-history.sh "ci-${GITHUB_SHA::7}" || true
+          else
+            cyrius bench tests/nous.bcyr 2>&1 | tee bench-output.txt || true
+          fi
+        continue-on-error: true
 
-      - name: Run benchmarks
-        run: |
-          mkdir -p build
-          cyrius bench tests/nous.bcyr 2>&1 | tee bench-output.txt
-
-      - name: Check for regressions
-        run: |
-          # Parse benchmark output and check against thresholds
-          # Fail if any microbenchmark exceeds 1ms avg or recipe_db_load exceeds 30ms
-          awk '
-            /avg/ {
-              name = $1;
-              gsub(/:/, "", name);
-              # Extract avg value
-              for (i=1; i<=NF; i++) {
-                if ($i == "avg") {
-                  val = $(i-1);
-                  gsub(/[^0-9.]/, "", val);
-                  unit = $(i-1);
-                  # Convert to microseconds
-                  if (unit ~ /ms/) { val = val * 1000; }
-                  if (unit ~ /us/) { val = val * 1; }
-                  if (unit ~ /ns/) { val = val / 1000; }
-                  # Threshold: 1000us for micro, 30000us for recipe_db_load
-                  threshold = 1000;
-                  if (name == "recipe_db_load") threshold = 30000;
-                  if (val > threshold) {
-                    printf "REGRESSION: %s = %.0fus (threshold: %dus)\n", name, val, threshold;
-                    exit 1;
-                  }
-                }
-              }
-            }
-          ' bench-output.txt
-          echo "All benchmarks within thresholds"
-
-      - name: Upload benchmark results
+      - name: Upload bench artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bench-results
-          path: bench-output.txt
+          name: bench-history
+          path: |
+            bench-history.csv
+            bench-output.txt
+          if-no-files-found: ignore
+          retention-days: 90
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-x86_64
+          path: build/nous
+          retention-days: 5
 
   integration:
     name: Integration (apt)
     runs-on: ubuntu-latest
-    needs: [build-and-test]
+    needs: [build]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Cyrius toolchain
         run: |
-          CYRIUS_VERSION="$(cat .cyrius-toolchain | tr -d '[:space:]')"
+          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
           curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
@@ -135,12 +147,12 @@ jobs:
           cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
           chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
+          echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
       - name: Verify apt tools available
-        run: |
-          which apt-cache && which dpkg-query && echo "apt tools available"
+        run: which apt-cache && which dpkg-query && echo "apt tools available"
 
-      - name: Build
+      - name: Build (DCE)
         run: |
           mkdir -p build
           CYRIUS_DCE=1 cyrius build src/main.cyr build/nous
@@ -148,18 +160,61 @@ jobs:
       - name: Run test suite (includes integration_apt)
         run: cyrius test tests/nous.tcyr
 
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan for dangerous patterns
+        # Match code lines only — strip comments so an inline `# `
+        # comment doesn't mask a real call.
+        run: |
+          FAIL=0
+          scan() {
+            local label="$1"; shift
+            local pat="$1"; shift
+            local hits
+            hits=$(grep -rn "$pat" src/ 2>/dev/null | awk -F: '
+              { line=$3; for(i=4;i<=NF;i++) line=line":"$i;
+                sub(/^[[:space:]]+/,"",line);
+                if (substr(line,1,1) != "#") print $1":"$2":"line }')
+            if [ -n "$hits" ]; then
+              echo "FAIL: $label"
+              echo "$hits"
+              FAIL=1
+            fi
+          }
+          scan "raw system()"   '\bsystem\s*\('
+          scan "shell exec_str" '\bexec_str\s*\('
+          # nous shells out to apt-cache/dpkg-query via array-based
+          # exec_capture only — flag any string-form shell call.
+          echo "security scan complete (fail: $FAIL)"
+          exit $FAIL
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check required docs
+
+      - name: Check required files
         run: |
-          for doc in README.md CHANGELOG.md VERSION LICENSE cyrius.cyml \
-                     docs/api.md docs/architecture/overview.md \
-                     docs/development/roadmap.md docs/audit/2026-04-16.md; do
-            test -f "$doc" && echo "OK: $doc" || { echo "MISSING: $doc"; exit 1; }
+          MISSING=0
+          for f in README.md CHANGELOG.md VERSION CONTRIBUTING.md SECURITY.md \
+                   LICENSE CLAUDE.md cyrius.cyml \
+                   docs/api.md docs/architecture/overview.md \
+                   docs/development/roadmap.md; do
+            if [ -f "$f" ]; then echo "  OK: $f"
+            else echo "  MISSING: $f"; MISSING=1; fi
           done
-      - name: Verify VERSION matches
+          exit $MISSING
+
+      - name: Verify version consistency
+        # cyrius.cyml pulls package.version from VERSION via
+        # ${file:VERSION}; just check VERSION appears in CHANGELOG.
         run: |
-          echo "VERSION: $(cat VERSION)"
+          VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "VERSION file: $VERSION"
+          grep -q "$VERSION" CHANGELOG.md || { echo "FAIL: version not in CHANGELOG.md"; exit 1; }
+          echo "Version consistent (manifest pulls VERSION via \${file:VERSION})"

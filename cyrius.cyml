@@ -1,30 +1,40 @@
 [package]
 name = "nous"
-version = "1.1.0"
+version = "${file:VERSION}"
 description = "nous — package resolver for AGNOS (system, marketplace, Flutter)"
 license = "GPL-3.0-only"
+repository = "https://github.com/MacCracken/nous"
 language = "cyrius"
-cyrius = "5.1.7"
+cyrius = "5.7.29"
 
 [build]
 entry = "src/main.cyr"
-output = "nous"
-modules = [
-    "src/types.cyr",
-    "src/util.cyr",
-    "src/error.cyr",
-    "src/strategy.cyr",
-    "src/source.cyr",
-    "src/command.cyr",
-    "src/sort.cyr",
-    "src/registry.cyr",
-    "src/sysdb.cyr",
-    "src/resolver.cyr",
-    "src/json.cyr",
-    "src/version.cyr",
-    "src/graph.cyr",
-    "src/recipe.cyr",
-]
+output = "build/nous"
 
 [deps]
-stdlib = ["string", "fmt", "alloc", "vec", "str", "syscalls", "io", "args", "assert", "hashmap", "json", "fs", "tagged", "process", "bench", "fnptr", "toml"]
+stdlib = [
+    "string",
+    "fmt",
+    "alloc",
+    "vec",
+    "str",
+    "syscalls",
+    "io",
+    "args",
+    "assert",
+    "hashmap",
+    "json",
+    "fs",
+    "tagged",
+    "process",
+    "bench",
+    "fnptr",
+    "toml",
+]
+
+# Distribution manifest. Single binary today (`nous`); release.yml
+# packages the x86_64 build. Kept declarative so future tooling
+# (`cyrius package`, ark) reads from one source instead of
+# release.yml.
+[release]
+bins = ["nous"]

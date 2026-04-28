@@ -23,7 +23,7 @@ ark (dependency resolution). Nous is the single source of truth for resolving pa
 
 0. Read roadmap, CHANGELOG, and open issues — know what was intended before auditing what was built
 1. Test + benchmark sweep of existing code
-2. Cleanliness check: `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo audit`, `cargo deny check`, `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
+2. Cleanliness check (Cyrius): `cyrius fmt <file> --check` per source file (diff against in-place), `cyrius lint <file>` (auto-discover `src/*.cyr` and `tests/*.{tcyr,bcyr,fcyr}`; treat any `warn ` line as failure), `cyrius vet src/main.cyr` (include-graph audit), `cyrius deny src/main.cyr` (project policy enforcement), `cyrius doc --check src/nous.cyr` (doc warnings as errors). Mirrors the CI step order — a clean local run should green-light CI.
 3. Get baseline benchmarks (`./scripts/bench-history.sh`)
 4. Internal deep review — gaps, optimizations, security, logging/errors, docs
 5. External research — domain completeness, missing capabilities, best practices, world-class accuracy
@@ -36,7 +36,7 @@ ark (dependency resolution). Nous is the single source of truth for resolving pa
 ### Work Loop / Working Loop (continuous)
 
 1. Work phase — new features, roadmap items, bug fixes
-2. Cleanliness check: `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, `cargo audit`, `cargo deny check`, `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`
+2. Cleanliness check (Cyrius): `cyrius fmt <file> --check` per source file (diff against in-place), `cyrius lint <file>` (auto-discover `src/*.cyr` and `tests/*.{tcyr,bcyr,fcyr}`; treat any `warn ` line as failure), `cyrius vet src/main.cyr` (include-graph audit), `cyrius deny src/main.cyr` (project policy enforcement), `cyrius doc --check src/nous.cyr` (doc warnings as errors). Mirrors the CI step order — a clean local run should green-light CI.
 3. Test + benchmark additions for new code
 4. Run benchmarks (`./scripts/bench-history.sh`)
 5. Internal review — performance, memory, security, throughput, correctness
@@ -45,7 +45,7 @@ ark (dependency resolution). Nous is the single source of truth for resolving pa
 8. Run benchmarks again — prove the wins
 9. If review heavy → return to step 5
 10. Documentation — update CHANGELOG, roadmap, docs, ADRs, source citations (see [Documentation Standards](#documentation-standards))
-11. Version check — VERSION, Cargo.toml, recipe (in zugot) all in sync
+11. Version check — `VERSION`, `cyrius.cyml` (auto-pulled via `${file:VERSION}`), recipe (in zugot) all in sync. The `src/main.cyr` smoke string is currently hardcoded — flagged on the roadmap for templating.
 12. Return to step 1
 
 ### Task Sizing

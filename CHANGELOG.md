@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Cyrius toolchain bump**: 5.1.7 → 5.7.29. Source required no edits;
+  271 tests still pass, 18 benchmarks still green. Verified locally
+  against cyrius 5.7.28 (one patch behind 5.7.29 release).
+- **Vendored `lib/*.cyr` re-synced** from cyrius 5.7.29 stdlib for the
+  17 modules nous declares in `[deps] stdlib`: `alloc`, `args`,
+  `assert`, `bench`, `fmt`, `fnptr`, `fs`, `hashmap`, `io`, `json`,
+  `process`, `str`, `string`, `syscalls`, `tagged`, `toml`, `vec`.
+- **`cyrius.cyml` modernized** to match the argonaut/daimon pattern
+  picked up across AGNOS:
+  - `version = "${file:VERSION}"` template instead of a hardcoded
+    string. Eliminates the 1.1.0 / 1.1.1 drift that existed between
+    the manifest and the `VERSION` file.
+  - `repository = "https://github.com/MacCracken/nous"` field added.
+  - `[build] modules = [...]` removed — nous already barrel-includes
+    every module through `src/nous.cyr`; carrying the same list under
+    `[build]` re-injects them ahead of `main.cyr` and inflates the
+    binary by ~38% (yukti's deliberation, captured in their cyml
+    comment).
+  - New `[release]` section (`bins = ["nous"]`) — declarative binary
+    inventory for future `cyrius package` / ark tooling.
+- **CI workflow rewrite** (`.github/workflows/ci.yml`) following
+  argonaut's modernization template:
+  - Toolchain version is grepped from `cyrius.cyml` (the now-canonical
+    pin) rather than the deprecated `.cyrius-toolchain` file.
+  - `CYRIUS_HOME` exported to `$GITHUB_ENV` so subsequent steps see it.
+  - New steps: `cyrius deps` (no-op today, future-proof), `cyrius fmt
+    --check` drift detection, `cyrius vet` include audit, ELF-magic
+    sanity check after build.
+  - Lint and fmt steps auto-discover `src/*.cyr` and `tests/*.{tcyr,
+    bcyr,fcyr}` so adding a module doesn't require editing CI.
+  - Test step asserts on the `0 failed` line rather than a hardcoded
+    assertion count (was `271 assertions`, now self-reports).
+  - Bench is non-fatal; output uploaded as artifact.
+  - Security scan added (raw `system()` / `exec_str` patterns rejected).
+- **Release workflow rewrite** (`.github/workflows/release.yml`):
+  - Accepts both `vX.Y.Z` and `X.Y.Z` tag styles.
+  - Source tarball produced with `git archive` (was missing).
+  - `SHA256SUMS` covers source + binary in a single file.
+  - Changelog body extracted from this file for the GitHub release
+    notes (was `generate_release_notes: true` boilerplate).
+  - Pre-release flag auto-set when version starts with `0.`.
+- **`scripts/bench-history.sh`** rewritten — was still calling
+  `cargo bench` from the pre-port Rust era. Now invokes
+  `cyrius bench tests/nous.bcyr`, appends one CSV row per bench
+  per labelled run, supports a `--save` snapshot mode.
+
+### Removed
+
+- **`.cyrius-toolchain` file** — deprecated by cyrius v5.5.41 in
+  favour of the `cyrius` field in `cyrius.cyml`. CI/release workflows
+  read from the manifest now.
+
+### Notes
+
+- `src/main.cyr` still prints `nous 1.1.0` on smoke (hardcoded
+  string); the cyml manifest version comes from `VERSION` (1.1.1).
+  Out of scope for this toolchain bump but flagged on the roadmap.
+- `CLAUDE.md` retains some Rust-era wording (cargo commands,
+  "flat library crate"). Updated the cleanliness-check command list
+  to its Cyrius equivalents in this pass; broader rewrite deferred.
+
 ## [1.1.1] - 2026-04-16
 
 ### Removed

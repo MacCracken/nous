@@ -17,7 +17,10 @@
 - 14-module split matching ark's architecture pattern
 - Dead code elimination (CYRIUS_DCE=1) in CI/release
 - 271 tests, 18 benchmarks, 3 fuzz harnesses, full API docs
-- Ported from Rust to Cyrius 5.1.7
+- Ported from Rust to Cyrius 5.1.7; tracked toolchain forward to 5.7.29
+- CI/release modernized to the argonaut/daimon pattern (manifest-driven
+  toolchain pin, `git archive` source tarball, SHA256SUMS, changelog
+  extraction)
 
 ## Backlog
 
@@ -32,6 +35,25 @@
 - Replace registry stub with real mela marketplace API
 - Package metadata sync
 - Trust integration with sigil (package signing/verification)
+
+## Housekeeping
+
+- Per-module `cyrius lint` reports cosmetic warnings on `src/error.cyr`,
+  `src/recipe.cyr`, `src/resolver.cyr`, `src/source.cyr` (multiple
+  consecutive blank lines). The barrel `src/nous.cyr` lints clean,
+  which is what CI checks. Sweep these so per-file lint can be
+  promoted in CI.
+- `cyrius fmt --check` reports drift on `src/recipe.cyr`,
+  `src/registry.cyr`, `src/resolver.cyr`, `tests/nous.tcyr`,
+  `tests/nous.bcyr`. Run a one-shot `cyrius fmt` over the tree, then
+  promote the CI step from advisory to fail-on-drift.
+- `src/main.cyr` prints a hardcoded version string (`nous 1.1.0`).
+  Wire it up to the `VERSION` file the way `cyrius.cyml` already
+  does (`${file:VERSION}` template) so smoke output and tag are
+  auto-consistent.
+- `CLAUDE.md` still describes the project in Rust-crate terms
+  (cargo fmt/clippy/audit/deny; "flat library crate"). Sweep when
+  the next P(-1) audit comes around.
 
 ## Future
 
