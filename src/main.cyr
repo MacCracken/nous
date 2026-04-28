@@ -20,7 +20,23 @@ fn main() {
     alloc_init();
     args_init();
 
-    println("nous 1.1.0 — package resolver for AGNOS");
+    # Banner reads VERSION at runtime — single source of truth, same
+    # idiom daimon uses (`file_read_all("VERSION", ...)` from lib/io.cyr,
+    # which is already in nous's `[deps] stdlib`). Fallback only fires
+    # if the binary is run from a directory without VERSION; cyrius has
+    # no compile-time string-from-file templating today, so a literal
+    # is unavoidable for that branch — keep it in lockstep with VERSION
+    # whenever the file is bumped.
+    var ver_buf = alloc(16);
+    var ver_n = file_read_all("VERSION", ver_buf, 15);
+    if (ver_n > 0) {
+        if (load8(ver_buf + ver_n - 1) == 10) { ver_n = ver_n - 1; }
+        store8(ver_buf + ver_n, 0);
+        print("nous ", 5);
+        print(ver_buf, ver_n);
+        println(" — package resolver for AGNOS");
+    }
+    else { println("nous 1.1.1 — package resolver for AGNOS"); }
 
     if (detect_source(str_from("acme/scanner")) != SOURCE_MARKETPLACE) {
         println("FAIL: detect_source marketplace");

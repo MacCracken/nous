@@ -54,6 +54,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cargo bench` from the pre-port Rust era. Now invokes
   `cyrius bench tests/nous.bcyr`, appends one CSV row per bench
   per labelled run, supports a `--save` snapshot mode.
+- **`src/main.cyr` banner reads VERSION at runtime** instead of
+  hardcoding `"nous 1.1.0"`. Mirrors daimon's idiom
+  (`file_read_all("VERSION", ver_buf, 15)` from `lib/io.cyr`, which is
+  already in nous's `[deps] stdlib`); strips a trailing newline,
+  null-terminates, and falls back to a literal only when the VERSION
+  file isn't accessible from cwd. Verified end-to-end: cwd-with-VERSION
+  reads correctly, cwd-without falls back, a `VERSION` bump is picked
+  up at next run with no rebuild required.
 
 ### Removed
 
@@ -63,12 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 
-- `src/main.cyr` still prints `nous 1.1.0` on smoke (hardcoded
-  string); the cyml manifest version comes from `VERSION` (1.1.1).
-  Out of scope for this toolchain bump but flagged on the roadmap.
-- `CLAUDE.md` retains some Rust-era wording (cargo commands,
-  "flat library crate"). Updated the cleanliness-check command list
-  to its Cyrius equivalents in this pass; broader rewrite deferred.
+- `CLAUDE.md` retains some Rust-era wording ("flat library crate").
+  Updated the cleanliness-check command list to its Cyrius equivalents
+  in this pass; broader rewrite deferred.
 
 ## [1.1.1] - 2026-04-16
 

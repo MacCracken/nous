@@ -47,10 +47,6 @@
   `src/registry.cyr`, `src/resolver.cyr`, `tests/nous.tcyr`,
   `tests/nous.bcyr`. Run a one-shot `cyrius fmt` over the tree, then
   promote the CI step from advisory to fail-on-drift.
-- `src/main.cyr` prints a hardcoded version string (`nous 1.1.0`).
-  Wire it up to the `VERSION` file the way `cyrius.cyml` already
-  does (`${file:VERSION}` template) so smoke output and tag are
-  auto-consistent.
 - `CLAUDE.md` still describes the project in Rust-crate terms
   (cargo fmt/clippy/audit/deny; "flat library crate"). Sweep when
   the next P(-1) audit comes around.
