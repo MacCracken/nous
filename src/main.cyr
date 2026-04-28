@@ -36,7 +36,7 @@ fn main() {
         print(ver_buf, ver_n);
         println(" — package resolver for AGNOS");
     }
-    else { println("nous 1.1.1 — package resolver for AGNOS"); }
+    else { println("nous 1.1.2 — package resolver for AGNOS"); }
 
     if (detect_source(str_from("acme/scanner")) != SOURCE_MARKETPLACE) {
         println("FAIL: detect_source marketplace");
