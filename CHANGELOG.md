@@ -57,8 +57,14 @@ library conventions already adopted by its sibling AGNOS libraries
   package (dependency list lost in `mpkg_to_resolved`). Fixed by binding the
   accessor to a local first in `src/graph.cyr` (`dep_graph_detect_cycle`,
   `dep_graph_topo_sort`, `resolver_resolve_all`), `src/recipe.cyr`
-  (`recipe_db_load`), and `src/resolver.cyr` (`mpkg_to_resolved`). The suite is
-  back to **271 passed, 0 failed** on 6.0.1. Full reproduction, bisection proof
+  (`recipe_db_load`), `src/resolver.cyr` (`mpkg_to_resolved`), and
+  `src/sysdb.cyr` (`sysdb_search`, `sysdb_get_installed`, `sysdb_list`,
+  `sysdb_info`). The sysdb sites are apt/dpkg-gated and so manifested **only in
+  CI** (Ubuntu): `integration_apt` skips on the dev box (Arch, no dpkg), so a
+  green local 271/0 still failed CI until those were de-nested. The CI test step
+  now always prints per-test output (it previously died at `set -e` before
+  echoing, masking the failure as a bare "exit code 2"). The suite is
+  **271 passed, 0 failed** on 6.0.1. Full reproduction, bisection proof
   (only `lib/vec.cyr`'s added `: i64` annotations trigger it; bodies identical),
   and the remaining same-pattern sites scheduled for the 1.2.1 hardening sweep
   are documented in

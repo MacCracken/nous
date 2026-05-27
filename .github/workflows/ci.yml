@@ -139,15 +139,23 @@ jobs:
           grep -q "all smoke checks passed" /tmp/smoke_output
 
       - name: Test suite
-        # `cyrius test` prefixes its summary with a non-printable
-        # byte (visible as `�` in the runner log) — without `-a` /
-        # --text, GNU grep treats the stream as binary and silently
-        # drops the matching line on stdout, leaving the second grep
-        # with empty input and a misleading exit-1 even though
-        # `0 failed`. Force text mode on both filters.
+        # `cyrius test` prefixes its summary with a non-printable byte
+        # (visible as `�`) — without `-a`/--text, GNU grep treats the
+        # stream as binary and drops the matching line. Force text mode.
+        #
+        # Capture with `set +e` first: `cyrius test` returns the failure
+        # COUNT as its exit code, so under the runner's default `set -e`
+        # the `out=$(…)` assignment would abort the step *before* echoing
+        # — hiding which assertions failed (this masked a sysdb apt-path
+        # failure as a bare "exit code 2"). Always print the per-test
+        # output, then assert on the `0 failed` summary line.
         run: |
+          set +e
           out=$(cyrius test tests/nous.tcyr 2>&1)
+          rc=$?
+          set -e
           echo "$out"
+          echo "cyrius test exit code: $rc"
           echo "$out" | grep -a -E "passed,.*failed" | grep -a -q "0 failed"
 
       - name: Fuzz harness

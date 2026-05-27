@@ -30,7 +30,10 @@ fn sysdb_search(db, query) {
     var results = vec_new();
     var i = 0;
     while (i < vec_len(lines)) {
-        var line = str_trim(vec_get(lines, i));
+        # De-nest vec_get from str_trim() (Cyrius 6.0.1 nested-typed-call
+        # miscompile — see docs/development/issues/0001-cyrius-6.0.1-vec-get-recompute.md).
+        var lraw = vec_get(lines, i);
+        var line = str_trim(lraw);
         if (str_len(line) > 0) {
             var sp = str_find(line, str_from(" - "));
             if (sp >= 0) {
@@ -80,10 +83,16 @@ fn sysdb_get_installed(db, name) {
     if (output == 0) { return Ok(0); }
     var lines = str_split(output, 10);
     if (vec_len(lines) == 0) { return Ok(0); }
-    var fields = str_split(vec_get(lines, 0), 9);
+    # De-nest every vec_get into a local (Cyrius 6.0.1 nested-typed-call
+    # miscompile — see docs/development/issues/0001-cyrius-6.0.1-vec-get-recompute.md).
+    var line0 = vec_get(lines, 0);
+    var fields = str_split(line0, 9);
     if (vec_len(fields) < 3) { return Ok(0); }
-    var skb = str_to_int(str_trim(vec_get(fields, 2)));
-    return Ok(installed_pkg_new(vec_get(fields, 0), vec_get(fields, 1), SOURCE_SYSTEM, 0, skb * 1024, 0));
+    var f2 = vec_get(fields, 2);
+    var skb = str_to_int(str_trim(f2));
+    var fname = vec_get(fields, 0);
+    var fver = vec_get(fields, 1);
+    return Ok(installed_pkg_new(fname, fver, SOURCE_SYSTEM, 0, skb * 1024, 0));
 }
 
 fn sysdb_list(db) {
@@ -94,12 +103,21 @@ fn sysdb_list(db) {
     var pkgs = vec_new();
     var i = 0;
     while (i < vec_len(lines)) {
-        var line = str_trim(vec_get(lines, i));
+        # De-nest every vec_get into a local (Cyrius 6.0.1 nested-typed-call
+        # miscompile — see docs/development/issues/0001-cyrius-6.0.1-vec-get-recompute.md).
+        var lraw = vec_get(lines, i);
+        var line = str_trim(lraw);
         if (str_len(line) > 0) {
             var f = str_split(line, 9);
-            if (vec_len(f) >= 4 && str_contains(vec_get(f, 3), str_from("install ok installed")) == 1) {
-                var skb = str_to_int(str_trim(vec_get(f, 2)));
-                vec_push(pkgs, installed_pkg_new(vec_get(f, 0), vec_get(f, 1), SOURCE_SYSTEM, 0, skb * 1024, 0));
+            if (vec_len(f) >= 4) {
+                var f3 = vec_get(f, 3);
+                if (str_contains(f3, str_from("install ok installed")) == 1) {
+                    var f2 = vec_get(f, 2);
+                    var skb = str_to_int(str_trim(f2));
+                    var fn0 = vec_get(f, 0);
+                    var fn1 = vec_get(f, 1);
+                    vec_push(pkgs, installed_pkg_new(fn0, fn1, SOURCE_SYSTEM, 0, skb * 1024, 0));
+                }
             }
         }
         i = i + 1;
@@ -169,7 +187,10 @@ fn sysdb_info(db, name) {
             var dp = str_split(str_sub(line, 9, str_len(line) - 9), 44);
             var di = 0;
             while (di < vec_len(dp)) {
-                var dep = str_trim(vec_get(dp, di));
+                # De-nest vec_get from str_trim() (Cyrius 6.0.1 — see
+                # docs/development/issues/0001-cyrius-6.0.1-vec-get-recompute.md).
+                var draw = vec_get(dp, di);
+                var dep = str_trim(draw);
                 var spc = str_index_of(dep, 32);
                 if (spc > 0) { dep = str_sub(dep, 0, spc); }
                 if (str_len(dep) > 0) { vec_push(deps, dep); }

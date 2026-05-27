@@ -67,11 +67,14 @@ Each is an independent, releasable bite.
 
 ### 1.2.1 — Hygiene + codegen-workaround sweep
 
-- **Harden the remaining at-risk `vec_get` nesting sites** flagged in
-  [issue 0001](issues/0001-cyrius-6.0.1-vec-get-recompute.md): `src/sysdb.cyr`
-  (~lines 33, 83, 85, 97, 100, 101, 172), `src/source.cyr` (~133),
-  `src/recipe.cyr` (~284, 513). They pass the 271-test suite today (incl.
-  `integration_apt`), so they're a defensive cleanup, not a known break.
+- **Finish de-nesting the remaining `vec_get` nesting sites** flagged in
+  [issue 0001](issues/0001-cyrius-6.0.1-vec-get-recompute.md): `src/source.cyr`
+  (~133), `src/recipe.cyr` (~284, 517), and the value-discarding
+  `vec_push`/`str_builder_add` wrappers in `src/json.cyr` / `src/sort.cyr`.
+  These run in every environment and pass the suite, so it's a defensive
+  consistency pass, not a known break. (The cycle/topo/resolver/recipe and the
+  apt-gated `sysdb` sites were already fixed in 1.2.0 — the sysdb ones only
+  surfaced in CI, since `integration_apt` skips on dpkg-less dev boxes.)
   Revert all workarounds (and this item) if a Cyrius release fixes the bug —
   re-run the issue's reproducer to confirm.
 - Run a one-shot `cyrius fmt` over `src/` + `tests/`. `cyrius fmt --check`

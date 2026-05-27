@@ -187,19 +187,30 @@ it. Sites fixed:
 | `src/graph.cyr` | `resolver_resolve_all` | `map_has(visited, to_cstr(dep))` |
 | `src/recipe.cyr` | `recipe_db_load` | `str_from(vec_get(categories, ci))` |
 | `src/resolver.cyr` | `mpkg_to_resolved` | `str_from(vec_get(dk, i))` |
+| `src/sysdb.cyr` | `sysdb_search`, `sysdb_get_installed`, `sysdb_list`, `sysdb_info` | `str_trim`/`str_split`/`str_to_int`/`str_contains`/`installed_pkg_new` wrapping `vec_get` |
 
-## Remaining at-risk sites (tracked, not yet hardened)
+### Note: the sysdb sites manifested only in CI
 
-These use the same `outer(vec_get(...))` nesting shape but currently pass the
-full 271-test suite (including `integration_apt`, which exercises sysdb against
-real `dpkg` output). Scheduled for the 1.2.1 hardening sweep
-(`docs/development/roadmap.md`); de-nesting is a safe, behaviour-preserving
-transform:
+The sysdb apt-path sites are guarded by `sysdb_available()` (apt/dpkg present).
+On the dev box (Arch, no `dpkg`) `integration_apt` *skips*, so the suite was
+271/0 locally while CI (Ubuntu, apt present) ran those asserts and failed — the
+`cyrius test` step exited with the failure count (`2`). The bug is **not**
+machine-non-deterministic; the affected code path simply doesn't execute without
+apt. Lesson: a green local run isn't sufficient for env-gated paths — the CI
+test step now always prints per-test output (it previously died at `set -e`
+before echoing, masking the failure as a bare "exit code 2").
 
-- `src/sysdb.cyr`: lines ~33, 83, 85, 97, 100, 101, 172 (`str_trim`/`str_split`/
-  `str_to_int`/`str_contains` wrapping `vec_get`)
+## Remaining at-risk sites (defensive cleanup, 1.2.1)
+
+Same `outer(vec_get(...))` shape, but these run in **every** environment and
+pass the full suite (deterministic — no env gate), so they are not known to be
+miscompiled here; de-nesting them is a safe, behaviour-preserving consistency
+pass scheduled for 1.2.1 (`docs/development/roadmap.md`):
+
 - `src/source.cyr`: line ~133 (`str_from(vec_get(rkeys, i))`)
-- `src/recipe.cyr`: lines ~284, 513 (`str_trim`/`to_cstr` wrapping `vec_get`)
+- `src/recipe.cyr`: lines ~284, 517 (`str_trim`/`to_cstr` wrapping `vec_get`)
+- `src/json.cyr`, `src/sort.cyr`: `vec_push`/`str_builder_add`/`vec_set`-wrapped
+  `vec_get` (value-discarding outer calls — lower risk)
 
 ## Verification
 

@@ -85,12 +85,17 @@ jobs:
           echo "nous: $(wc -c < build/nous) bytes"
 
       - name: Test
-        # See ci.yml's Test suite step: `cyrius test` summary leads
-        # with a non-printable byte; force grep into text mode so the
-        # binary-file heuristic doesn't drop the matching line.
+        # See ci.yml's Test suite step: force grep text mode (-a), and
+        # capture under `set +e` so a non-zero `cyrius test` exit (it
+        # returns the failure count) doesn't abort the step before the
+        # per-test output is printed.
         run: |
+          set +e
           out=$(cyrius test tests/nous.tcyr 2>&1)
+          rc=$?
+          set -e
           echo "$out"
+          echo "cyrius test exit code: $rc"
           echo "$out" | grep -a -E "passed,.*failed" | grep -a -q "0 failed"
 
       - name: Smoke test
