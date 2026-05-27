@@ -17,7 +17,7 @@ fn sysdb_search(db, query) {
     var vr = validate_package_name(query);
     if (is_err_result(vr) == 1) { return Ok(vec_new()); }
     var args = vec_new();
-    vec_push(args, "apt-cache");
+    vec_push(args, tool_path("apt-cache"));
     vec_push(args, "search");
     vec_push(args, "--names-only");
     vec_push(args, to_cstr(query));
@@ -52,7 +52,7 @@ fn sysdb_is_installed(db, name) {
     var vr = validate_package_name(name);
     if (is_err_result(vr) == 1) { return Ok(0); }
     var args = vec_new();
-    vec_push(args, "dpkg-query");
+    vec_push(args, tool_path("dpkg-query"));
     vec_push(args, "-W");
     vec_push(args, "-f");
     vec_push(args, "${Status}");
@@ -71,7 +71,7 @@ fn sysdb_get_installed(db, name) {
     var vr = validate_package_name(name);
     if (is_err_result(vr) == 1) { return Ok(0); }
     var args = vec_new();
-    vec_push(args, "dpkg-query");
+    vec_push(args, tool_path("dpkg-query"));
     vec_push(args, "-W");
     vec_push(args, "-f");
     vec_push(args, "${Package}\t${Version}\t${Installed-Size}\n");
@@ -161,7 +161,7 @@ fn sysdb_info(db, name) {
     var vr = validate_package_name(name);
     if (is_err_result(vr) == 1) { return Ok(0); }
     var args = vec_new();
-    vec_push(args, "apt-cache");
+    vec_push(args, tool_path("apt-cache"));
     vec_push(args, "show");
     vec_push(args, to_cstr(name));
     if (cmd_buf == 0) { cmd_buf = alloc(65536); }

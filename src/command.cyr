@@ -17,6 +17,17 @@ fn cmd_run(cmd_str) {
 }
 
 fn which_exists(name) {
+    return which_path(name) != 0;
+}
+
+# Resolve `name` to its absolute path on PATH (cstr), or 0 if not found.
+# sysdb passes the result to exec_capture: its child execve's argv[0]
+# directly with an empty envp, so it cannot search PATH itself — a bare
+# command name like "dpkg-query" silently fails to launch (child exits
+# 127, no output, integration_apt asserts fail in CI). Resolving in the
+# parent (which has PATH) and handing the child a full path is the fix.
+# See docs/development/issues/0002-sysdb-exec-bare-name-path.md.
+fn which_path(name) {
     var pe = getenv("PATH");
     if (pe == 0) { return 0; }
     var dirs = str_split(str_from(pe), 58);
@@ -24,10 +35,19 @@ fn which_exists(name) {
     while (i < vec_len(dirs)) {
         var dir = vec_get(dirs, i);
         if (str_len(dir) > 0) {
-            if (file_exists(to_cstr(join_path(dir, str_from(name)))) == 1) { return 1; }
+            var full = to_cstr(join_path(dir, str_from(name)));
+            if (file_exists(full) == 1) { return full; }
         }
         i = i + 1;
     }
     return 0;
+}
+
+# Absolute path of a system tool for exec_capture, falling back to the
+# bare name if PATH resolution fails (preserves prior behaviour).
+fn tool_path(name) {
+    var p = which_path(name);
+    if (p != 0) { return p; }
+    return name;
 }
 

@@ -72,6 +72,18 @@ library conventions already adopted by its sibling AGNOS libraries
   compiler itself is **not** modified — the bug is reported upstream and treated
   as an external dependency.
 
+- **sysdb now resolves absolute tool paths before exec.** `exec_capture`'s child
+  `execve`s `argv[0]` directly with an empty envp, so it never searched `PATH` —
+  a bare `"apt-cache"`/`"dpkg-query"` silently failed to launch, so
+  `sysdb_search` returned nothing and `sysdb_is_installed` returned 0. This was
+  **pre-existing** (the `exec_capture` envp/execve behaviour is identical on
+  5.7.29 and 6.0.1) and only surfaced in CI: `integration_apt` skips on the dev
+  box (Arch, no dpkg) but runs on CI's Ubuntu, where it failed "search found
+  results" + "coreutils installed". Fixed with `which_path`/`tool_path` in
+  `src/command.cyr` (resolve via `getenv("PATH")` in the parent) — the array
+  exec (no shell, no injection) is preserved, only `argv[0]` becomes absolute.
+  See `docs/development/issues/0002-sysdb-exec-bare-name-path.md`.
+
 ### CI / Release
 
 - **Hardened toolchain install** (`ci.yml` build + integration jobs,
