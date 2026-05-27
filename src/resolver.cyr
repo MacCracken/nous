@@ -17,7 +17,10 @@ fn mpkg_to_resolved(pkg, src) {
     var ds = vec_new();
     var i = 0;
     while (i < vec_len(dk)) {
-        vec_push(ds, str_from(vec_get(dk, i)));
+        # De-nest vec_get from the str_from() argument (Cyrius 6.0.1
+        # nested-typed-call miscompile — see docs/development/issues/).
+        var kraw = vec_get(dk, i);
+        vec_push(ds, str_from(kraw));
         i = i + 1;
     }
     return resolved_pkg_new(mpkg_name(pkg), mpkg_version(pkg), src, mpkg_desc(pkg), mp_size(pkg), ds, 1);

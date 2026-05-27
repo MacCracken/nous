@@ -1,25 +1,33 @@
-/target/
-**/*.rs.bk
-Cargo.lock
-!Cargo.lock
+# Build output
+/build/
+
+# Stdlib + deps. `lib/` is resolved from cyrius.cyml `[deps]`: `cyrius
+# build`/`test` auto-vendor the stdlib here from the version-pinned
+# ~/.cyrius/versions/<v>/lib/ snapshot (CI symlinks it instead). A build
+# artifact, not source — never commit. Pre-1.2.0 nous committed lib/*.cyr,
+# which shadowed the version-matched 6.0.1 stdlib; de-vendored at 1.2.0.
+# No trailing slash: matches both the vendored dir and the CI symlink.
+/lib
+
+# NOTE: dist/ is deliberately tracked. dist/nous.cyr is nous's
+# consumer-facing bundle (`cyrius distlib`), not a transient artifact.
+
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
 *~
+
+# OS
 .DS_Store
 Thumbs.db
-/coverage/
-*.profraw
-*.profdata
-lcov.info
-tarpaulin-report.*
-.claude/
-/target/criterion/
+
+# Secrets
 .env
 .env.*
 *.pem
 *.key
 
-# Cyrius
-/build/
+# Claude Code
+.claude/

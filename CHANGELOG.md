@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-05-26
+
+Opens the **1.2.x modernization arc** — bring nous up to the Cyrius 6.0.1
+library conventions already adopted by its sibling AGNOS libraries
+(patra 1.9.5, sigil 3.4.3). See `docs/development/roadmap.md` for the
+1.2.1–1.2.4 follow-ons.
+
+### Changed
+
+- **Cyrius toolchain bump**: 5.7.29 → 6.0.1 (`cyrius.cyml` pin). Source
+  required no edits; the smoke build is clean — both the pin-drift
+  warning (`pins 5.7.29 but cycc is 6.0.1`) and the stdlib-shadow note
+  are gone. 6.0.1 is the 6.0.0 cycle-open hotfix (two-binary rename
+  `cyrc→cybs`, `cc5→cycc`; fixes the `_init_cyrius_lib` skip-prefix
+  off-by-one that broke the version-pinned `lib/` fallback).
+- **`lib/` de-vendored**. Removed the 24 committed `lib/*.cyr` stdlib
+  files (synced from the 5.7.29 stdlib, stale at 6.0.1). nous is
+  stdlib-only, so `cyrius build` now resolves `include "lib/X.cyr"` from
+  the version-pinned `~/.cyrius/versions/6.0.1/lib/` snapshot — the same
+  convention patra/sigil use (their `lib/` is gitignored, not committed).
+  All 17 declared stdlib modules are present in the 6.0.1 snapshot.
+- **`.gitignore` de-Rust-ified**. Dropped the Rust-era entries
+  (`Cargo.lock`, `*.rs.bk`, `/target/criterion/`, tarpaulin, `*.profraw`,
+  `lcov.info`) and adopted the Cyrius shape: ignore `/build/` and `/lib/`;
+  keep `dist/` tracked. Matches patra/sigil.
+
+### Added
+
+- **`[lib]` section + `dist/nous.cyr` bundle**. `cyrius.cyml` now declares
+  `[lib] modules = [...]` (the 14 `src/*.cyr` in barrel order), and
+  `cyrius distlib` concatenates them into `dist/nous.cyr` — nous's
+  consumer-facing single-file artifact (~82 KB, 2424 lines). Stdlib is
+  not bundled; the consumer supplies its own `[deps] stdlib` surface, the
+  same shape as `dist/patra.cyr` / `dist/sigil.cyr`. This gives ark a
+  one-file consumption path in place of the 14 individually-listed
+  `src/*.cyr` modules it pins today (consumer migration tracked as 1.2.3).
+- **`modules` kept under `[lib]`, never `[build]`** — documented inline.
+  5.7.x+ treats `[build].modules` as an auto-prepend list that
+  re-injects every src file ahead of the entry and inflates the binary
+  (~38%); nous removed `[build] modules` at 1.1.2 for the same reason.
+
+### Fixed
+
+- **Worked around a Cyrius 6.0.1 codegen bug** exposed by the stdlib bump: a
+  typed `vec_get(): i64` nested as a call argument (`str_from(vec_get(…))`,
+  `map_get(m, vec_get(…))`) or re-evaluated for the same index within a scope
+  returns a **wrong value**. It produced silently-incorrect resolution — a
+  cyclic graph read as acyclic (→ SIGSEGV via `vec_len(0)`), topological sort
+  emitting a 1-element order, and `resolver_resolve_all` resolving only the seed
+  package (dependency list lost in `mpkg_to_resolved`). Fixed by binding the
+  accessor to a local first in `src/graph.cyr` (`dep_graph_detect_cycle`,
+  `dep_graph_topo_sort`, `resolver_resolve_all`), `src/recipe.cyr`
+  (`recipe_db_load`), and `src/resolver.cyr` (`mpkg_to_resolved`). The suite is
+  back to **271 passed, 0 failed** on 6.0.1. Full reproduction, bisection proof
+  (only `lib/vec.cyr`'s added `: i64` annotations trigger it; bodies identical),
+  and the remaining same-pattern sites scheduled for the 1.2.1 hardening sweep
+  are documented in
+  `docs/development/issues/0001-cyrius-6.0.1-vec-get-recompute.md`. The Cyrius
+  compiler itself is **not** modified — the bug is reported upstream and treated
+  as an external dependency.
+
+### CI / Release
+
+- **Hardened toolchain install** (`ci.yml` build + integration jobs,
+  `release.yml`) to the patra pattern: pre-flight the release asset URL
+  (HTTP status check) and verify the download is a real gzip tarball
+  before extraction — surfaces a misconfigured `cyrius =` pin as a clear
+  error instead of tar's misleading "not in gzip format". Toolchain now
+  installs into a versioned `$HOME/.cyrius/versions/<v>/{bin,lib}` layout
+  with `bin`/`lib` symlinks + a `current` marker (multi-version safe).
+- **Stdlib via symlink in CI** — new `ln -sf "$HOME/.cyrius/lib" lib`
+  step replaces the deleted committed `lib/`.
+- **distlib sync gate** (`ci.yml`) — regenerates the bundle and
+  `git diff --exit-code dist/nous.cyr` fails the build if the committed
+  bundle is stale.
+- **Release ships the bundle** — `nous-<tag>.cyr` (the `dist/` bundle) is
+  now a release asset alongside the x86_64 binary, source tarball, and
+  `SHA256SUMS`. Mirrors patra shipping `patra-<tag>.cyr`.
+
 ## [1.1.2] - 2026-04-28
 
 ### Changed

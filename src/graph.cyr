@@ -102,8 +102,15 @@ fn dep_graph_detect_cycle(g) {
     store64(result_holder, 0);
     i = 0;
     while (i < vec_len(nodes)) {
-        var name = str_from(vec_get(nodes, i));
-        if (map_get(color, vec_get(nodes, i)) == 0) {
+        # Cache the vec_get result in a local. Under Cyrius 6.0.1, a typed
+        # `vec_get(): i64` re-evaluated for the same index within one scope
+        # can yield a wrong value on a later call — here the original code
+        # called vec_get(nodes, i) twice (str_from + map_get), and the
+        # color lookup missed the gray node, so a real cycle read as "no
+        # cycle". See docs/development/issues/0001-cyrius-6.0.1-vec-get-recompute.md.
+        var nd = vec_get(nodes, i);
+        if (map_get(color, nd) == 0) {
+            var name = str_from(nd);
             if (detect_cycle_dfs(g, name, color, vec_new(), result_holder) == 1) {
                 return load64(result_holder);
             }
@@ -134,7 +141,8 @@ fn dep_graph_topo_sort(g) {
             var deps = map_get(dg_edges(g), cname);
             var j = 0;
             while (j < vec_len(deps)) {
-                var dep = to_cstr(vec_get(deps, j));
+                var draw = vec_get(deps, j);
+                var dep = to_cstr(draw);
                 if (map_has(in_degree, dep) == 1) {
                     map_set(in_degree, dep, map_get(in_degree, dep) + 1);
                 }
@@ -147,8 +155,12 @@ fn dep_graph_topo_sort(g) {
     var queue = vec_new();
     i = 0;
     while (i < vec_len(nodes)) {
-        if (map_get(in_degree, vec_get(nodes, i)) == 0) {
-            vec_push(queue, vec_get(nodes, i));
+        # Cache vec_get(nodes, i): re-evaluating a typed vec_get twice in
+        # one scope miscompiles under Cyrius 6.0.1 (see
+        # docs/development/issues/0001-cyrius-6.0.1-vec-get-recompute.md).
+        var ni = vec_get(nodes, i);
+        if (map_get(in_degree, ni) == 0) {
+            vec_push(queue, ni);
         }
         i = i + 1;
     }
@@ -161,7 +173,8 @@ fn dep_graph_topo_sort(g) {
             var deps = map_get(dg_edges(g), cname);
             var j = 0;
             while (j < vec_len(deps)) {
-                var dep = to_cstr(vec_get(deps, j));
+                var draw = vec_get(deps, j);
+                var dep = to_cstr(draw);
                 if (map_has(in_degree, dep) == 1) {
                     var nd = map_get(in_degree, dep) - 1;
                     map_set(in_degree, dep, nd);
@@ -251,7 +264,10 @@ fn resolver_resolve_all(r, names) {
         var j = 0;
         while (j < vec_len(deps)) {
             var dep = vec_get(deps, j);
-            if (map_has(visited, to_cstr(dep)) == 0) {
+            # De-nest to_cstr from the map_has() argument (Cyrius 6.0.1
+            # nested-typed-call miscompile — see docs/development/issues/).
+            var dcstr = to_cstr(dep);
+            if (map_has(visited, dcstr) == 0) {
                 vec_push(pending, dep);
             }
             j = j + 1;

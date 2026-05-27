@@ -19,22 +19,56 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Cyrius toolchain
+        # Hardened install (patra/sigil pattern): pre-flight the release
+        # asset URL and verify the download is a real gzip tarball before
+        # extraction, so a misconfigured `cyrius =` pin surfaces as a clear
+        # error instead of tar's misleading "not in gzip format". Installs
+        # into a versioned $HOME/.cyrius/versions/<v>/ layout with bin/lib
+        # symlinks (multi-version safe).
         run: |
-          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
+          set -e
+          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')}"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          TARBALL="cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          URL="https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/$TARBALL"
+          HTTP_CODE=$(curl -sL -o /dev/null -w "%{http_code}" -I "$URL")
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "302" ]; then
+            echo "::error::Cyrius release $CYRIUS_VERSION not found on GitHub (HTTP $HTTP_CODE)."
+            echo "::error::Asset URL: $URL"
+            echo "::error::This usually means cyrius.cyml's 'cyrius =' pin was bumped ahead of the published release."
+            echo "::error::Fix: roll the pin back to a tagged cyrius version (https://github.com/MacCracken/cyrius/releases) or wait for $CYRIUS_VERSION to be tagged."
+            exit 1
+          fi
+          curl -sLO "$URL"
+          if ! file "$TARBALL" | grep -q "gzip compressed"; then
+            echo "::error::Downloaded $TARBALL is not a gzip archive."
+            echo "::error::First 200 bytes (likely a GitHub error page):"
+            head -c 200 "$TARBALL" || true
+            exit 1
+          fi
+          tar xzf "$TARBALL"
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
-          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
+          mkdir -p "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib"
+          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/" 2>/dev/null || true
+          cp "$CYRIUS_DIR/scripts/cyrius" "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/cyrius" 2>/dev/null || true
+          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib/" 2>/dev/null || true
+          chmod +x "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/"* 2>/dev/null || true
+          ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/bin"
+          ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib" "$HOME/.cyrius/lib"
+          echo "$CYRIUS_VERSION" > "$HOME/.cyrius/current"
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
+      - name: Setup lib symlink
+        # nous no longer commits lib/ (1.2.0 de-vendor). Symlink the
+        # installed stdlib snapshot so every step (lint/vet/build/distlib/
+        # test) resolves `include "lib/X.cyr"`. All 17 declared stdlib
+        # modules ship in the snapshot.
+        run: ln -sf "$HOME/.cyrius/lib" lib
+
       - name: Resolve dependencies
-        # No-op today (no [deps.NAME] blocks), but kept so a future
-        # external dep is picked up automatically.
+        # No-op today (no [deps.NAME] git blocks; stdlib comes from the
+        # snapshot above), but kept so a future external dep is picked up.
         run: cyrius deps
 
       - name: Lint
@@ -42,7 +76,7 @@ jobs:
         # module into scope. Linting per-module flags spurious warnings
         # because the modules don't redeclare their dependencies (and a
         # few have minor cosmetic warnings — multiple blank lines etc.
-        # — flagged for a future hygiene pass on the roadmap). Lint the
+        # — flagged for the 1.2.1 hygiene sweep on the roadmap). Lint the
         # barrel + each test entry, fail on any "  warn " line.
         run: |
           fail=0
@@ -59,10 +93,10 @@ jobs:
       - name: Format check (advisory)
         # cyrius fmt --check emits the formatted source to stdout;
         # diff against the file in-place to detect drift. Currently
-        # advisory because a few historical files have drift that
-        # predates the 5.7.29 modernization (resolver.cyr, recipe.cyr,
-        # registry.cyr, tests/nous.tcyr, tests/nous.bcyr). Promote to
-        # fail-on-drift after a dedicated `cyrius fmt` sweep.
+        # advisory because a few historical files have drift
+        # (resolver.cyr, recipe.cyr, registry.cyr, tests/nous.tcyr,
+        # tests/nous.bcyr). Promote to fail-on-drift after the 1.2.1
+        # `cyrius fmt` sweep.
         continue-on-error: true
         run: |
           drift=0
@@ -77,6 +111,18 @@ jobs:
 
       - name: Vet
         run: cyrius vet src/main.cyr
+
+      - name: Verify dist bundle in sync
+        # dist/nous.cyr is committed (nous's consumer-facing bundle).
+        # Regenerate it from [lib] modules and fail if the committed copy
+        # is stale — a contributor who edits src/ must rebuild the bundle.
+        run: |
+          cyrius distlib
+          if ! git diff --exit-code dist/nous.cyr; then
+            echo "::error::dist/nous.cyr is stale — run 'cyrius distlib' and commit the result."
+            exit 1
+          fi
+          echo "dist/nous.cyr in sync"
 
       - name: Build (DCE)
         run: |
@@ -143,17 +189,40 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Cyrius toolchain
+        # Same hardened install as the build job (see comments there).
         run: |
-          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          set -e
+          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')}"
+          echo "Installing Cyrius $CYRIUS_VERSION"
+          TARBALL="cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          URL="https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/$TARBALL"
+          HTTP_CODE=$(curl -sL -o /dev/null -w "%{http_code}" -I "$URL")
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "302" ]; then
+            echo "::error::Cyrius release $CYRIUS_VERSION not found on GitHub (HTTP $HTTP_CODE)."
+            echo "::error::Asset URL: $URL"
+            exit 1
+          fi
+          curl -sLO "$URL"
+          if ! file "$TARBALL" | grep -q "gzip compressed"; then
+            echo "::error::Downloaded $TARBALL is not a gzip archive."
+            head -c 200 "$TARBALL" || true
+            exit 1
+          fi
+          tar xzf "$TARBALL"
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
-          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
+          mkdir -p "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib"
+          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/" 2>/dev/null || true
+          cp "$CYRIUS_DIR/scripts/cyrius" "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/cyrius" 2>/dev/null || true
+          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib/" 2>/dev/null || true
+          chmod +x "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/"* 2>/dev/null || true
+          ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/bin"
+          ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib" "$HOME/.cyrius/lib"
+          echo "$CYRIUS_VERSION" > "$HOME/.cyrius/current"
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
+
+      - name: Setup lib symlink
+        run: ln -sf "$HOME/.cyrius/lib" lib
 
       - name: Verify apt tools available
         run: which apt-cache && which dpkg-query && echo "apt tools available"

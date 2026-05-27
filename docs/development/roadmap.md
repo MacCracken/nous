@@ -1,5 +1,29 @@
 # Roadmap
 
+## Completed (v1.2.0) — Cyrius 6.0.1 modernization
+
+Opens the 1.2.x arc: align nous with the Cyrius 6.0.1 library conventions
+already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
+
+- Cyrius toolchain pin 5.7.29 → 6.0.1; clean smoke build (pin-drift +
+  stdlib-shadow warnings eliminated)
+- `lib/` de-vendored (24 committed stdlib files removed); stdlib now
+  resolved from the version-pinned `~/.cyrius/versions/6.0.1/lib/` snapshot
+- `[lib] modules = [...]` added; `cyrius distlib` produces the
+  consumer-facing `dist/nous.cyr` bundle (the 14 src modules, ~82 KB)
+- `.gitignore` de-Rust-ified (Cyrius shape: ignore `/build/` + `/lib/`,
+  track `dist/`)
+- CI/release hardened to the patra pattern: release-asset HTTP pre-flight
+  + gzip verify, versioned toolchain layout, stdlib-via-symlink, a
+  distlib-sync gate, and `nous-<tag>.cyr` shipped as a release artifact
+- Worked around a Cyrius 6.0.1 codegen bug (typed `vec_get` nested as a call
+  argument / re-evaluated returns a wrong value) that the stdlib bump exposed in
+  cycle detection, topo sort, and `resolver_resolve_all`. Fixed by binding the
+  accessor to a local; suite back to 271/0. Reported upstream with a
+  self-contained reproducer +
+  [issue 0001](issues/0001-cyrius-6.0.1-vec-get-recompute.md). Compiler not
+  touched — treated as an external dependency.
+
 ## Completed (v1.1.1)
 
 - Single-package and transitive dependency resolution across system, marketplace, Flutter, and community sources
@@ -36,20 +60,53 @@
 - Package metadata sync
 - Trust integration with sigil (package signing/verification)
 
-## Housekeeping
+## 1.2.x Modernization Arc
 
-- Per-module `cyrius lint` reports cosmetic warnings on `src/error.cyr`,
+Continued alignment to Cyrius 6.0.1 conventions, sequenced after 1.2.0.
+Each is an independent, releasable bite.
+
+### 1.2.1 — Hygiene + codegen-workaround sweep
+
+- **Harden the remaining at-risk `vec_get` nesting sites** flagged in
+  [issue 0001](issues/0001-cyrius-6.0.1-vec-get-recompute.md): `src/sysdb.cyr`
+  (~lines 33, 83, 85, 97, 100, 101, 172), `src/source.cyr` (~133),
+  `src/recipe.cyr` (~284, 513). They pass the 271-test suite today (incl.
+  `integration_apt`), so they're a defensive cleanup, not a known break.
+  Revert all workarounds (and this item) if a Cyrius release fixes the bug —
+  re-run the issue's reproducer to confirm.
+- Run a one-shot `cyrius fmt` over `src/` + `tests/`. `cyrius fmt --check`
+  reports drift on `src/recipe.cyr`, `src/registry.cyr`,
+  `src/resolver.cyr`, `tests/nous.tcyr`, `tests/nous.bcyr`.
+- Clear the per-module `cyrius lint` cosmetic warnings on `src/error.cyr`,
   `src/recipe.cyr`, `src/resolver.cyr`, `src/source.cyr` (multiple
-  consecutive blank lines). The barrel `src/nous.cyr` lints clean,
-  which is what CI checks. Sweep these so per-file lint can be
-  promoted in CI.
-- `cyrius fmt --check` reports drift on `src/recipe.cyr`,
-  `src/registry.cyr`, `src/resolver.cyr`, `tests/nous.tcyr`,
-  `tests/nous.bcyr`. Run a one-shot `cyrius fmt` over the tree, then
-  promote the CI step from advisory to fail-on-drift.
-- `CLAUDE.md` still describes the project in Rust-crate terms
-  (cargo fmt/clippy/audit/deny; "flat library crate"). Sweep when
-  the next P(-1) audit comes around.
+  consecutive blank lines). The barrel `src/nous.cyr` already lints clean.
+- Promote the CI fmt step from advisory to **fail-on-drift**, and switch
+  lint from barrel-only to per-module fail-on-warn.
+
+### 1.2.2 — Policy gates
+
+- Add a `cyrius deny src/main.cyr` project policy and wire it into CI.
+- Add `cyrius doc --check src/nous.cyr` (doc-warnings-as-errors) to CI.
+- Completes the CLAUDE.md cleanliness-check order (fmt → lint → vet →
+  deny → doc).
+
+### 1.2.3 — Consumer migration (ark)
+
+- Migrate ark to consume `modules = ["dist/nous.cyr"]` (one bundle) in
+  place of the 14 individually-listed `src/*.cyr` it pins today; bump
+  ark's nous `tag` to the 1.2.x release. Consumer-side change, executed
+  in the ark repo and coordinated from here.
+
+### 1.2.4 — Docs & instructions
+
+- De-Rust-ify `CLAUDE.md` — it still describes the project in Rust-crate
+  terms ("flat library crate"; cargo fmt/clippy/audit/deny lineage).
+- Refresh `docs/architecture/overview.md` for the `dist/nous.cyr`
+  bundle-consumption model.
+- Template the `src/main.cyr` smoke version string so the hardcoded
+  no-VERSION-file fallback banner (`"nous 1.2.0 …"`) tracks `VERSION`
+  automatically (standing item; revisit when cyrius gains compile-time
+  string-from-file templating).
 
 ## Future
 

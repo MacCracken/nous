@@ -5,11 +5,41 @@ description = "nous — package resolver for AGNOS (system, marketplace, Flutter
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/nous"
 language = "cyrius"
-cyrius = "5.7.29"
+cyrius = "6.0.1"
 
 [build]
 entry = "src/main.cyr"
 output = "build/nous"
+
+# `cyrius distlib` reads this section to build dist/nous.cyr — nous's
+# single-file, consumer-facing artifact (ark consumes it; see roadmap
+# 1.2.3). Order matches src/nous.cyr's barrel includes; each module may
+# reference symbols defined earlier. The bundle is a pure concatenation
+# of these src files — stdlib is NOT bundled (the consumer supplies the
+# `[deps] stdlib` surface below), same shape as patra/sigil.
+#
+# IMPORTANT: keep `modules` under `[lib]`, NOT `[build]`. 5.7.x+ treats
+# `[build].modules` as an auto-prepend list and inlines every src file
+# ahead of the entry source, which then re-includes them via its own
+# include directives — producing duplicate-fn warnings and a ~38% larger
+# binary. nous removed `[build] modules` at 1.1.2 for exactly this reason.
+[lib]
+modules = [
+    "src/types.cyr",
+    "src/util.cyr",
+    "src/error.cyr",
+    "src/strategy.cyr",
+    "src/source.cyr",
+    "src/command.cyr",
+    "src/sort.cyr",
+    "src/registry.cyr",
+    "src/sysdb.cyr",
+    "src/resolver.cyr",
+    "src/json.cyr",
+    "src/version.cyr",
+    "src/graph.cyr",
+    "src/recipe.cyr",
+]
 
 [deps]
 stdlib = [

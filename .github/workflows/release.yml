@@ -34,18 +34,45 @@ jobs:
           echo "Version verified: $TAG (cyrius.cyml pulls from VERSION via \${file:VERSION})"
 
       - name: Install Cyrius toolchain
+        # Hardened install (patra/sigil pattern): pre-flight the release
+        # asset URL + verify the gzip tarball before extraction, so a
+        # misconfigured `cyrius =` pin surfaces clearly. Versioned
+        # $HOME/.cyrius/versions/<v>/ layout with bin/lib symlinks.
         run: |
-          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep -oP '(?<=^cyrius = ")[^"]+' cyrius.cyml)}"
+          set -e
+          CYRIUS_VERSION="${CYRIUS_VERSION:-$(grep '^cyrius = ' cyrius.cyml | head -1 | sed 's/cyrius = "\(.*\)"/\1/')}"
           echo "Installing Cyrius $CYRIUS_VERSION"
-          curl -sLO "https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
-          tar xzf "cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          TARBALL="cyrius-$CYRIUS_VERSION-x86_64-linux.tar.gz"
+          URL="https://github.com/MacCracken/cyrius/releases/download/$CYRIUS_VERSION/$TARBALL"
+          HTTP_CODE=$(curl -sL -o /dev/null -w "%{http_code}" -I "$URL")
+          if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "302" ]; then
+            echo "::error::Cyrius release $CYRIUS_VERSION not found on GitHub (HTTP $HTTP_CODE)."
+            echo "::error::Asset URL: $URL"
+            echo "::error::Fix: roll cyrius.cyml's 'cyrius =' pin back to a tagged version, or wait for $CYRIUS_VERSION to be tagged."
+            exit 1
+          fi
+          curl -sLO "$URL"
+          if ! file "$TARBALL" | grep -q "gzip compressed"; then
+            echo "::error::Downloaded $TARBALL is not a gzip archive."
+            head -c 200 "$TARBALL" || true
+            exit 1
+          fi
+          tar xzf "$TARBALL"
           CYRIUS_DIR="cyrius-$CYRIUS_VERSION-x86_64-linux"
-          mkdir -p "$HOME/.cyrius/bin" "$HOME/.cyrius/lib"
-          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/bin/" 2>/dev/null || true
-          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/lib/" 2>/dev/null || true
-          chmod +x "$HOME/.cyrius/bin/"* 2>/dev/null || true
+          mkdir -p "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib"
+          cp "$CYRIUS_DIR/bin/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/" 2>/dev/null || true
+          cp "$CYRIUS_DIR/scripts/cyrius" "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/cyrius" 2>/dev/null || true
+          cp -r "$CYRIUS_DIR/lib/"* "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib/" 2>/dev/null || true
+          chmod +x "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin/"* 2>/dev/null || true
+          ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/bin" "$HOME/.cyrius/bin"
+          ln -sfn "$HOME/.cyrius/versions/$CYRIUS_VERSION/lib" "$HOME/.cyrius/lib"
+          echo "$CYRIUS_VERSION" > "$HOME/.cyrius/current"
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
+
+      - name: Setup lib symlink
+        # nous de-vendored lib/ at 1.2.0; symlink the installed stdlib.
+        run: ln -sf "$HOME/.cyrius/lib" lib
 
       - name: Resolve deps
         run: cyrius deps
@@ -69,6 +96,15 @@ jobs:
       - name: Smoke test
         run: ./build/nous | grep -q "all smoke checks passed"
 
+      - name: Regenerate bundle
+        # Rebuild dist/nous.cyr from [lib] modules so the shipped bundle
+        # matches the tagged source exactly. Then assert the committed
+        # copy is in sync (the same gate ci.yml enforces).
+        run: |
+          cyrius distlib
+          git diff --exit-code dist/nous.cyr || {
+            echo "::error::dist/nous.cyr is stale — run 'cyrius distlib' and commit before tagging."; exit 1; }
+
       - name: Clean toolchain artifacts
         run: rm -f cyrius-*.tar.gz
 
@@ -77,13 +113,15 @@ jobs:
           TAG="${GITHUB_REF_NAME#v}"
           git archive --format=tar.gz --prefix="nous-${TAG}/" -o "nous-${TAG}-src.tar.gz" HEAD
           cp build/nous "nous-${TAG}-x86_64-linux"
-          sha256sum nous-*.tar.gz nous-*-linux > SHA256SUMS
+          cp dist/nous.cyr "nous-${TAG}.cyr"
+          sha256sum nous-*.tar.gz nous-*.cyr nous-*-linux > SHA256SUMS
 
       - uses: actions/upload-artifact@v4
         with:
           name: release-artifacts
           path: |
             nous-*.tar.gz
+            nous-*.cyr
             nous-*-linux
             SHA256SUMS
 
@@ -110,5 +148,6 @@ jobs:
           prerelease: ${{ startsWith(github.ref_name, '0.') || startsWith(github.ref_name, 'v0.') }}
           files: |
             nous-*.tar.gz
+            nous-*.cyr
             nous-*-linux
             SHA256SUMS
