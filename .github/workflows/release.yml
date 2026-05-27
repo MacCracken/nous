@@ -78,10 +78,14 @@ jobs:
         run: cyrius deps
 
       - name: Build (DCE)
+        # Do NOT `strip` the output: a cyrius raw ELF is not a standard
+        # toolchain binary — `strip` leaves the size unchanged but corrupts
+        # it so it SIGSEGVs at runtime (caught by the smoke step, and it
+        # would otherwise ship a segfaulting `nous-<tag>-x86_64-linux`).
+        # DCE already trims dead code; that's the only size reduction we do.
         run: |
           mkdir -p build
           CYRIUS_DCE=1 cyrius build src/main.cyr build/nous
-          strip build/nous 2>/dev/null || true
           echo "nous: $(wc -c < build/nous) bytes"
 
       - name: Test

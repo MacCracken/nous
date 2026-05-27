@@ -101,6 +101,11 @@ library conventions already adopted by its sibling AGNOS libraries
 - **Release ships the bundle** — `nous-<tag>.cyr` (the `dist/` bundle) is
   now a release asset alongside the x86_64 binary, source tarball, and
   `SHA256SUMS`. Mirrors patra shipping `patra-<tag>.cyr`.
+- **Dropped the `strip` of the release binary.** A cyrius raw ELF is not a
+  standard toolchain artifact — `strip` left the byte size unchanged but
+  corrupted it so it SIGSEGV'd at runtime (the release smoke step caught it;
+  it would otherwise have shipped a segfaulting `nous-<tag>-x86_64-linux`).
+  DCE is the only size reduction now, matching the patra/sigil release flow.
 
 ## [1.1.2] - 2026-04-28
 
