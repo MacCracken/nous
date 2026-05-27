@@ -16,26 +16,26 @@ enum ConstraintOp {
 }
 
 # SemVer: sv_major(0) sv_minor(8) sv_patch(16)
-fn semver_new(major, minor, patch) {
+fn semver_new(major, minor, patch): i64 {
     var p = alloc(24);
     store64(p, major); store64(p + 8, minor); store64(p + 16, patch);
     return p;
 }
-fn sv_major(v) { return load64(v); }
-fn sv_minor(v) { return load64(v + 8); }
-fn sv_patch(v) { return load64(v + 16); }
+fn sv_major(v): i64 { return load64(v); }
+fn sv_minor(v): i64 { return load64(v + 8); }
+fn sv_patch(v): i64 { return load64(v + 16); }
 
 # Constraint: ct_op(0) ct_ver(8)
-fn constraint_new(op, ver) {
+fn constraint_new(op, ver): i64 {
     var p = alloc(16);
     store64(p, op); store64(p + 8, ver);
     return p;
 }
-fn ct_op(c) { return load64(c); }
-fn ct_ver(c) { return load64(c + 8); }
+fn ct_op(c): i64 { return load64(c); }
+fn ct_ver(c): i64 { return load64(c + 8); }
 
 # Parse "1.2.3" into SemVer. Returns 0 on failure.
-fn semver_parse(s) {
+fn semver_parse(s): i64 {
     var d = str_data(s);
     var len = str_len(s);
     var pos = 0;
@@ -74,7 +74,7 @@ fn semver_parse(s) {
 }
 
 # Compare two SemVers. Returns -1, 0, or 1.
-fn semver_cmp(a, b) {
+fn semver_cmp(a, b): i64 {
     if (sv_major(a) < sv_major(b)) { return (0 - 1); }
     if (sv_major(a) > sv_major(b)) { return 1; }
     if (sv_minor(a) < sv_minor(b)) { return (0 - 1); }
@@ -84,9 +84,9 @@ fn semver_cmp(a, b) {
     return 0;
 }
 
-fn semver_eq(a, b) { return semver_cmp(a, b) == 0; }
+fn semver_eq(a, b): i64 { return semver_cmp(a, b) == 0; }
 
-fn semver_to_str(v) {
+fn semver_to_str(v): i64 {
     var sb = str_builder_new();
     str_builder_add_int(sb, sv_major(v));
     str_builder_add_cstr(sb, ".");
@@ -97,7 +97,7 @@ fn semver_to_str(v) {
 }
 
 # Parse ">=1.2.3", "^1.0", "~1.2", "=1.0.0", ">2.0", "*"
-fn constraint_parse(s) {
+fn constraint_parse(s): i64 {
     var d = str_data(s);
     var len = str_len(s);
     if (len == 0) { return constraint_new(OP_ANY, semver_new(0, 0, 0)); }
@@ -143,7 +143,7 @@ fn constraint_parse(s) {
 }
 
 # Check if version v satisfies constraint c.
-fn constraint_matches(c, v) {
+fn constraint_matches(c, v): i64 {
     var op = ct_op(c);
     var cv = ct_ver(c);
     if (op == OP_ANY) { return 1; }

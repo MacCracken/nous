@@ -3,13 +3,13 @@
 # Error constructors
 # ===================================================================
 
-fn nous_err(kind, msg, detail) {
+fn nous_err(kind, msg, detail): i64 {
     return Err(nous_error_new(kind, msg, detail));
 }
-fn err_registry_io(path, detail) { return nous_err(ERR_REGISTRY_IO, path, detail); }
-fn err_invalid_name(name, reason) { return nous_err(ERR_INVALID_PACKAGE_NAME, name, reason); }
+fn err_registry_io(path, detail): i64 { return nous_err(ERR_REGISTRY_IO, path, detail); }
+fn err_invalid_name(name, reason): i64 { return nous_err(ERR_INVALID_PACKAGE_NAME, name, reason); }
 
-fn format_cycle(cycle) {
+fn format_cycle(cycle): i64 {
     var sb = str_builder_new();
     var i = 0;
     while (i < vec_len(cycle)) {
@@ -20,7 +20,7 @@ fn format_cycle(cycle) {
     return str_builder_build(sb);
 }
 
-fn nous_error_msg(e) {
+fn nous_error_msg(e): i64 {
     var kind = ne_kind(e);
     var msg = ne_msg(e);
     var detail = ne_detail(e);
@@ -63,7 +63,7 @@ fn nous_error_msg(e) {
 }
 
 # Serializable error kind companion (mirrors NousErrorKind in Rust)
-fn nous_error_to_kind(e) {
+fn nous_error_to_kind(e): i64 {
     return nous_error_new(ne_kind(e), ne_msg(e), ne_detail(e));
 }
 
@@ -71,7 +71,7 @@ fn nous_error_to_kind(e) {
 # Package name validation
 # ===================================================================
 
-fn is_valid_name_char(c) {
+fn is_valid_name_char(c): i64 {
     if (c >= 97 && c <= 122) { return 1; }
     if (c >= 65 && c <= 90) { return 1; }
     if (c >= 48 && c <= 57) { return 1; }
@@ -79,7 +79,7 @@ fn is_valid_name_char(c) {
     return 0;
 }
 
-fn validate_package_name(name) {
+fn validate_package_name(name): i64 {
     if (str_len(name) == 0) {
         return err_invalid_name(name, str_from("package name cannot be empty"));
     }

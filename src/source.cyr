@@ -3,7 +3,7 @@
 # Source display
 # ===================================================================
 
-fn source_to_str(src) {
+fn source_to_str(src): i64 {
     if (src == SOURCE_SYSTEM) { return str_from("system"); }
     if (src == SOURCE_MARKETPLACE) { return str_from("marketplace"); }
     if (src == SOURCE_FLUTTER_APP) { return str_from("flutter-app"); }
@@ -15,7 +15,7 @@ fn source_to_str(src) {
 # Source detection
 # ===================================================================
 
-fn detect_source(name) {
+fn detect_source(name): i64 {
     if (str_len(name) == 0) { return SOURCE_UNKNOWN; }
     if (str_index_of(name, 47) >= 0) { return SOURCE_MARKETPLACE; }
     if (str_ends_with(name, str_from(".flutter")) == 1) { return SOURCE_FLUTTER_APP; }
@@ -47,7 +47,7 @@ fn detect_source(name) {
 # Typo suggestion engine (Levenshtein distance)
 # ===================================================================
 
-fn levenshtein(a, b) {
+fn levenshtein(a, b): i64 {
     var al = str_len(a);
     var bl = str_len(b);
     var ad = str_data(a);
@@ -86,7 +86,7 @@ fn levenshtein(a, b) {
 
 # Find the closest matching package name from a list.
 # Returns the best match Str, or 0 if nothing is close enough (distance > 3).
-fn suggest_package(name, known_names) {
+fn suggest_package(name, known_names): i64 {
     var best = 0;
     var best_dist = 4;
     var i = 0;
@@ -103,7 +103,7 @@ fn suggest_package(name, known_names) {
 }
 
 # Build suggestion message: "Package 'ngins' not found. Did you mean 'nginx'?"
-fn build_suggestion(name, suggestion) {
+fn build_suggestion(name, suggestion): i64 {
     if (suggestion == 0) { return 0; }
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "package '");
@@ -115,7 +115,7 @@ fn build_suggestion(name, suggestion) {
 }
 
 # Collect all known package names from resolver sources.
-fn collect_known_names(r) {
+fn collect_known_names(r): i64 {
     var names = vec_new();
     # From marketplace registry
     var pkgs = rg_pkgs(rs_reg(r));

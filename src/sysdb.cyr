@@ -3,15 +3,15 @@
 # SystemPackageDb
 # ===================================================================
 
-fn sysdb_new() {
+fn sysdb_new(): i64 {
     var ok = 0;
     if (which_exists("apt-cache") == 1 && which_exists("dpkg-query") == 1) { ok = 1; }
     return sysdb_make(ok);
 }
 
-fn sysdb_available(db) { return sd_apt(db); }
+fn sysdb_available(db): i64 { return sd_apt(db); }
 
-fn sysdb_search(db, query) {
+fn sysdb_search(db, query): i64 {
     if (sd_apt(db) == 0) { return Ok(vec_new()); }
     # Validate query to prevent command injection
     var vr = validate_package_name(query);
@@ -47,7 +47,7 @@ fn sysdb_search(db, query) {
     return Ok(results);
 }
 
-fn sysdb_is_installed(db, name) {
+fn sysdb_is_installed(db, name): i64 {
     if (sd_apt(db) == 0) { return Ok(0); }
     var vr = validate_package_name(name);
     if (is_err_result(vr) == 1) { return Ok(0); }
@@ -66,7 +66,7 @@ fn sysdb_is_installed(db, name) {
     return Ok(0);
 }
 
-fn sysdb_get_installed(db, name) {
+fn sysdb_get_installed(db, name): i64 {
     if (sd_apt(db) == 0) { return Ok(0); }
     var vr = validate_package_name(name);
     if (is_err_result(vr) == 1) { return Ok(0); }
@@ -95,7 +95,7 @@ fn sysdb_get_installed(db, name) {
     return Ok(installed_pkg_new(fname, fver, SOURCE_SYSTEM, 0, skb * 1024, 0));
 }
 
-fn sysdb_list(db) {
+fn sysdb_list(db): i64 {
     if (sd_apt(db) == 0) { return Ok(vec_new()); }
     var output = cmd_run(str_from("dpkg-query -W -f '${Package}\t${Version}\t${Installed-Size}\t${Status}\n'"));
     if (output == 0) { return Ok(vec_new()); }
@@ -125,7 +125,7 @@ fn sysdb_list(db) {
     return Ok(pkgs);
 }
 
-fn sysdb_updates(db) {
+fn sysdb_updates(db): i64 {
     if (sd_apt(db) == 0) { return Ok(vec_new()); }
     var output = cmd_run(str_from("apt list --upgradable 2>/dev/null"));
     if (output == 0) { return Ok(vec_new()); }
@@ -156,7 +156,7 @@ fn sysdb_updates(db) {
     return Ok(upd);
 }
 
-fn sysdb_info(db, name) {
+fn sysdb_info(db, name): i64 {
     if (sd_apt(db) == 0) { return Ok(0); }
     var vr = validate_package_name(name);
     if (is_err_result(vr) == 1) { return Ok(0); }

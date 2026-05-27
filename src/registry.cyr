@@ -5,7 +5,7 @@
 
 # Extract the "dependencies":{...} object from raw JSON into a hashmap.
 # Keys are dep names (C strings in map), values are version constraint Strs.
-fn json_extract_deps(data) {
+fn json_extract_deps(data): i64 {
     var deps = map_new();
     var d = str_data(data);
     var dl = str_len(data);
@@ -61,7 +61,7 @@ fn json_extract_deps(data) {
     return deps;
 }
 
-fn parse_manifest_file(file_path) {
+fn parse_manifest_file(file_path): i64 {
     var buf = alloc(8192);
     var n = file_read_all(to_cstr(file_path), buf, 8192);
     if (n <= 0) { return 0; }
@@ -79,7 +79,7 @@ fn parse_manifest_file(file_path) {
     return manifest_new(agent, deps, runtime);
 }
 
-fn scan_installed(base_dir) {
+fn scan_installed(base_dir): i64 {
     var pkgs = vec_new();
     var idir = join_path(base_dir, str_from("installed"));
     var cd = to_cstr(idir);
@@ -110,14 +110,14 @@ fn scan_installed(base_dir) {
     return pkgs;
 }
 
-fn registry_new(base_dir) {
+fn registry_new(base_dir): i64 {
     if (our_is_dir(to_cstr(base_dir)) == 0) {
         return err_registry_io(base_dir, str_from("marketplace directory does not exist"));
     }
     return Ok(registry_make(base_dir, scan_installed(base_dir)));
 }
 
-fn registry_search(reg, query) {
+fn registry_search(reg, query): i64 {
     var results = vec_new();
     var pkgs = rg_pkgs(reg);
     var i = 0;
@@ -132,7 +132,7 @@ fn registry_search(reg, query) {
     return results;
 }
 
-fn registry_get(reg, name) {
+fn registry_get(reg, name): i64 {
     var pkgs = rg_pkgs(reg);
     var i = 0;
     while (i < vec_len(pkgs)) {
@@ -143,16 +143,16 @@ fn registry_get(reg, name) {
     return 0;
 }
 
-fn registry_list(reg) { return rg_pkgs(reg); }
+fn registry_list(reg): i64 { return rg_pkgs(reg); }
 
-fn registry_reload(reg) {
+fn registry_reload(reg): i64 {
     var dir = rg_dir(reg);
     var new_pkgs = scan_installed(dir);
     store64(reg + 8, new_pkgs);
 }
 
 # Stub — real implementation lives in mela. Kept for interface parity.
-fn registry_install_package(reg, tarball, dest) {
+fn registry_install_package(reg, tarball, dest): i64 {
     return Ok(0);
 }
 

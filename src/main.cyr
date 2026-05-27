@@ -16,7 +16,7 @@ include "src/version.cyr"
 include "src/graph.cyr"
 include "src/recipe.cyr"
 
-fn main() {
+fn main(): i64 {
     alloc_init();
     args_init();
 
@@ -36,7 +36,7 @@ fn main() {
         print(ver_buf, ver_n);
         println(" — package resolver for AGNOS");
     }
-    else { println("nous 1.2.2 — package resolver for AGNOS"); }
+    else { println("nous 1.2.3 — package resolver for AGNOS"); }
 
     if (detect_source(str_from("acme/scanner")) != SOURCE_MARKETPLACE) {
         println("FAIL: detect_source marketplace");

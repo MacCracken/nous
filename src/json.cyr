@@ -3,7 +3,7 @@
 # JSON serialization
 # ===================================================================
 
-fn source_json(src) {
+fn source_json(src): i64 {
     if (src == SOURCE_SYSTEM) { return "\"system\""; }
     if (src == SOURCE_MARKETPLACE) { return "\"marketplace\""; }
     if (src == SOURCE_FLUTTER_APP) { return "\"flutter-app\""; }
@@ -11,7 +11,7 @@ fn source_json(src) {
     return "\"unknown\"";
 }
 
-fn source_from_json(s) {
+fn source_from_json(s): i64 {
     if (str_eq(s, str_from("system")) == 1) { return SOURCE_SYSTEM; }
     if (str_eq(s, str_from("marketplace")) == 1) { return SOURCE_MARKETPLACE; }
     if (str_eq(s, str_from("flutter-app")) == 1) { return SOURCE_FLUTTER_APP; }
@@ -19,12 +19,12 @@ fn source_from_json(s) {
     return SOURCE_UNKNOWN;
 }
 
-fn bool_json(v) {
+fn bool_json(v): i64 {
     if (v == 1) { return "true"; }
     return "false";
 }
 
-fn json_str_vec(v) {
+fn json_str_vec(v): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "[");
     var i = 0;
@@ -42,7 +42,7 @@ fn json_str_vec(v) {
 
 # --- ResolvedPkg ---
 
-fn resolved_to_json(pkg) {
+fn resolved_to_json(pkg): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"name\":\"");
     str_builder_add(sb, rp_name(pkg));
@@ -62,7 +62,7 @@ fn resolved_to_json(pkg) {
     return str_builder_build(sb);
 }
 
-fn resolved_from_json(data) {
+fn resolved_from_json(data): i64 {
     var name = json_extract_str(data, "name");
     var ver = json_extract_str(data, "version");
     var src_s = json_extract_str(data, "source");
@@ -77,7 +77,7 @@ fn resolved_from_json(data) {
 
 # --- InstalledPkg ---
 
-fn installed_to_json(pkg) {
+fn installed_to_json(pkg): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"name\":\"");
     str_builder_add(sb, ip_name(pkg));
@@ -95,7 +95,7 @@ fn installed_to_json(pkg) {
     return str_builder_build(sb);
 }
 
-fn installed_from_json(data) {
+fn installed_from_json(data): i64 {
     var name = json_extract_str(data, "name");
     var ver = json_extract_str(data, "version");
     var src_s = json_extract_str(data, "source");
@@ -108,7 +108,7 @@ fn installed_from_json(data) {
 
 # --- AvailUpdate ---
 
-fn update_to_json(u) {
+fn update_to_json(u): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"name\":\"");
     str_builder_add(sb, load64(u));
@@ -133,7 +133,7 @@ fn update_to_json(u) {
 
 # --- Strategy ---
 
-fn strategy_to_json(s) {
+fn strategy_to_json(s): i64 {
     var k = st_kind(s);
     if (k == STRAT_MARKETPLACE_FIRST) { return str_from("\"MarketplaceFirst\""); }
     if (k == STRAT_SYSTEM_FIRST) { return str_from("\"SystemFirst\""); }
@@ -148,7 +148,7 @@ fn strategy_to_json(s) {
     return str_from("\"MarketplaceFirst\"");
 }
 
-fn strategy_from_json(data) {
+fn strategy_from_json(data): i64 {
     if (str_contains(data, str_from("MarketplaceFirst")) == 1) { return strategy_default(); }
     if (str_contains(data, str_from("SystemFirst")) == 1) { return strategy_system_first(); }
     if (str_contains(data, str_from("SearchAll")) == 1) { return strategy_search_all(); }
@@ -161,7 +161,7 @@ fn strategy_from_json(data) {
 
 # --- SearchResult ---
 
-fn search_result_to_json(sr) {
+fn search_result_to_json(sr): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"results\":[");
     var res = sr_results(sr);
@@ -180,7 +180,7 @@ fn search_result_to_json(sr) {
 
 # --- NousErrorKind ---
 
-fn error_kind_to_json(e) {
+fn error_kind_to_json(e): i64 {
     var sb = str_builder_new();
     var k = ne_kind(e);
     str_builder_add_cstr(sb, "{\"kind\":");
@@ -195,7 +195,7 @@ fn error_kind_to_json(e) {
     return str_builder_build(sb);
 }
 
-fn error_kind_from_json(data) {
+fn error_kind_from_json(data): i64 {
     var msg = json_extract_str(data, "message");
     var det = json_extract_str(data, "detail");
     if (msg == 0) { msg = str_from(""); }
@@ -217,7 +217,7 @@ fn error_kind_from_json(data) {
 
 # --- AgentInfo ---
 
-fn agent_info_to_json(a) {
+fn agent_info_to_json(a): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"name\":\"");
     str_builder_add(sb, ai_name(a));
@@ -231,7 +231,7 @@ fn agent_info_to_json(a) {
 
 # --- Manifest ---
 
-fn manifest_to_json(m) {
+fn manifest_to_json(m): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"agent\":");
     str_builder_add(sb, agent_info_to_json(mf_agent(m)));

@@ -3,7 +3,7 @@
 # Sorting
 # ===================================================================
 
-fn sort_resolved(v) {
+fn sort_resolved(v): i64 {
     var len = vec_len(v);
     var i = 1;
     while (i < len) {
@@ -21,7 +21,7 @@ fn sort_resolved(v) {
     }
 }
 
-fn sort_installed(v) {
+fn sort_installed(v): i64 {
     var len = vec_len(v);
     var i = 1;
     while (i < len) {
@@ -39,7 +39,7 @@ fn sort_installed(v) {
     }
 }
 
-fn sort_mpkg(v) {
+fn sort_mpkg(v): i64 {
     var len = vec_len(v);
     var i = 1;
     while (i < len) {

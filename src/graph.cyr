@@ -7,17 +7,17 @@
 # nodes = hashmap: pkg_name -> ResolvedPkg
 # edges = hashmap: pkg_name -> vec of dep_name Strs
 # versions = hashmap: pkg_name -> vec of Constraint
-fn dep_graph_new() {
+fn dep_graph_new(): i64 {
     var p = alloc(24);
     store64(p, map_new());
     store64(p + 8, map_new());
     store64(p + 16, map_new());
     return p;
 }
-fn dg_nodes(g) { return load64(g); }
-fn dg_edges(g) { return load64(g + 8); }
+fn dg_nodes(g): i64 { return load64(g); }
+fn dg_edges(g): i64 { return load64(g + 8); }
 
-fn dep_graph_add(g, pkg) {
+fn dep_graph_add(g, pkg): i64 {
     var cname = to_cstr(rp_name(pkg));
     map_set(dg_nodes(g), cname, pkg);
     # Add edges from this pkg's deps
@@ -37,7 +37,7 @@ fn dep_graph_add(g, pkg) {
 
 # Colors: 0=white (unvisited), 1=gray (in progress), 2=black (done)
 
-fn detect_cycle_dfs(g, name, color, path, result_cycle) {
+fn detect_cycle_dfs(g, name, color, path, result_cycle): i64 {
     var cname = to_cstr(name);
     map_set(color, cname, 1);
     vec_push(path, name);
@@ -89,7 +89,7 @@ fn detect_cycle_dfs(g, name, color, path, result_cycle) {
     return 0;
 }
 
-fn dep_graph_detect_cycle(g) {
+fn dep_graph_detect_cycle(g): i64 {
     var color = map_new();
     var nodes = map_keys(dg_nodes(g));
     var i = 0;
@@ -124,7 +124,7 @@ fn dep_graph_detect_cycle(g) {
 # P1: Topological Sort (Kahn's Algorithm)
 # ===================================================================
 
-fn dep_graph_topo_sort(g) {
+fn dep_graph_topo_sort(g): i64 {
     var nodes = map_keys(dg_nodes(g));
     var in_degree = map_new();
     # Initialize in-degree to 0
@@ -194,7 +194,7 @@ fn dep_graph_topo_sort(g) {
 
 # Check if two constraints on the same package are satisfiable.
 # Returns 1 if they can both be satisfied, 0 if conflict.
-fn constraints_compatible(c1, c2) {
+fn constraints_compatible(c1, c2): i64 {
     # Test a range of versions to see if any satisfies both.
     # For exact matches this is definitive. For ranges, we test
     # the constraint versions and nearby versions.
@@ -222,17 +222,17 @@ fn constraints_compatible(c1, c2) {
 # ===================================================================
 
 # ResPlan: pl_packages(0) pl_order(8)
-fn res_plan_new(packages, order) {
+fn res_plan_new(packages, order): i64 {
     var p = alloc(16);
     store64(p, packages); store64(p + 8, order);
     return p;
 }
-fn pl_packages(p) { return load64(p); }
-fn pl_order(p) { return load64(p + 8); }
+fn pl_packages(p): i64 { return load64(p); }
+fn pl_order(p): i64 { return load64(p + 8); }
 
 # Resolve a list of package names transitively.
 # Returns Ok(ResPlan) or Err(NousError).
-fn resolver_resolve_all(r, names) {
+fn resolver_resolve_all(r, names): i64 {
     var graph = dep_graph_new();
     var pending = vec_new();
     var visited = map_new();

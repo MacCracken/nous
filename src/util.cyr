@@ -3,7 +3,7 @@
 # Filesystem helpers (is_dir from fs.cyr is broken, use stat directly)
 # ===================================================================
 
-fn our_is_dir(cpath) {
+fn our_is_dir(cpath): i64 {
     var statbuf[18];
     var r = syscall(SYS_STAT, cpath, &statbuf);
     if (r < 0) { return 0; }
@@ -16,7 +16,7 @@ fn our_is_dir(cpath) {
 # Utility functions
 # ===================================================================
 
-fn to_cstr(s) {
+fn to_cstr(s): i64 {
     if (s == 0) { return ""; }
     var data = str_data(s);
     var len = str_len(s);
@@ -26,7 +26,7 @@ fn to_cstr(s) {
     return buf;
 }
 
-fn str_compare(a, b) {
+fn str_compare(a, b): i64 {
     var ad = str_data(a);
     var al = str_len(a);
     var bd = str_data(b);
@@ -46,7 +46,7 @@ fn str_compare(a, b) {
     return 0;
 }
 
-fn str_find(haystack, needle) {
+fn str_find(haystack, needle): i64 {
     var hd = str_data(haystack);
     var hl = str_len(haystack);
     var nd = str_data(needle);
@@ -62,7 +62,7 @@ fn str_find(haystack, needle) {
     return (0 - 1);
 }
 
-fn json_extract_str(data, key) {
+fn json_extract_str(data, key): i64 {
     var d = str_data(data);
     var dl = str_len(data);
     var kl = strlen(key);
@@ -92,21 +92,21 @@ fn json_extract_str(data, key) {
     return 0;
 }
 
-fn file_mtime(cpath) {
+fn file_mtime(cpath): i64 {
     var statbuf[18];
     var r = syscall(SYS_STAT, cpath, &statbuf);
     if (r < 0) { return 0; }
     return load64(&statbuf + 88);
 }
 
-fn file_stat_size(cpath) {
+fn file_stat_size(cpath): i64 {
     var statbuf[18];
     var r = syscall(SYS_STAT, cpath, &statbuf);
     if (r < 0) { return 0; }
     return load64(&statbuf + 48);
 }
 
-fn dir_size_recursive(path) {
+fn dir_size_recursive(path): i64 {
     var cp = to_cstr(path);
     if (our_is_dir(cp) == 0) { return file_stat_size(cp); }
     var entries = dir_list(path);
@@ -120,7 +120,7 @@ fn dir_size_recursive(path) {
     return total;
 }
 
-fn join_path(dir, name) {
+fn join_path(dir, name): i64 {
     var sb = str_builder_new();
     str_builder_add(sb, dir);
     str_builder_add_cstr(sb, "/");
@@ -128,5 +128,5 @@ fn join_path(dir, name) {
     return str_builder_build(sb);
 }
 
-fn mkdir_str(path) { sys_mkdir(to_cstr(path), 493); }
+fn mkdir_str(path): i64 { sys_mkdir(to_cstr(path), 493); }
 

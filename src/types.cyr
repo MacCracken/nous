@@ -58,32 +58,32 @@ enum ErrKind {
 # Constructors
 # ===================================================================
 
-fn nous_error_new(kind, msg, detail) {
+fn nous_error_new(kind, msg, detail): i64 {
     var p = alloc(24);
     store64(p, kind); store64(p + 8, msg); store64(p + 16, detail);
     return p;
 }
 
-fn agent_info_new(name, version, desc) {
+fn agent_info_new(name, version, desc): i64 {
     var p = alloc(24);
     store64(p, name); store64(p + 8, version); store64(p + 16, desc);
     return p;
 }
 
-fn manifest_new(agent, deps, runtime) {
+fn manifest_new(agent, deps, runtime): i64 {
     var p = alloc(24);
     store64(p, agent); store64(p + 8, deps); store64(p + 16, runtime);
     return p;
 }
 
-fn installed_mpkg_new(manifest, size, path, at) {
+fn installed_mpkg_new(manifest, size, path, at): i64 {
     var p = alloc(32);
     store64(p, manifest); store64(p + 8, size);
     store64(p + 16, path); store64(p + 24, at);
     return p;
 }
 
-fn resolved_pkg_new(name, ver, src, desc, size, deps, trusted) {
+fn resolved_pkg_new(name, ver, src, desc, size, deps, trusted): i64 {
     var p = alloc(56);
     store64(p, name); store64(p + 8, ver); store64(p + 16, src);
     store64(p + 24, desc); store64(p + 32, size);
@@ -91,45 +91,45 @@ fn resolved_pkg_new(name, ver, src, desc, size, deps, trusted) {
     return p;
 }
 
-fn installed_pkg_new(name, ver, src, date, size, auto_inst) {
+fn installed_pkg_new(name, ver, src, date, size, auto_inst): i64 {
     var p = alloc(48);
     store64(p, name); store64(p + 8, ver); store64(p + 16, src);
     store64(p + 24, date); store64(p + 32, size); store64(p + 40, auto_inst);
     return p;
 }
 
-fn avail_update_new(name, src, inst_ver, avail_ver, changelog) {
+fn avail_update_new(name, src, inst_ver, avail_ver, changelog): i64 {
     var p = alloc(40);
     store64(p, name); store64(p + 8, src); store64(p + 16, inst_ver);
     store64(p + 24, avail_ver); store64(p + 32, changelog);
     return p;
 }
 
-fn search_result_new(results, sources, total) {
+fn search_result_new(results, sources, total): i64 {
     var p = alloc(24);
     store64(p, results); store64(p + 8, sources); store64(p + 16, total);
     return p;
 }
 
-fn sysdb_make(apt_available) {
+fn sysdb_make(apt_available): i64 {
     var p = alloc(8);
     store64(p, apt_available);
     return p;
 }
 
-fn registry_make(base_dir, packages) {
+fn registry_make(base_dir, packages): i64 {
     var p = alloc(16);
     store64(p, base_dir); store64(p + 8, packages);
     return p;
 }
 
-fn strategy_new(kind, only_source) {
+fn strategy_new(kind, only_source): i64 {
     var p = alloc(16);
     store64(p, kind); store64(p + 8, only_source);
     return p;
 }
 
-fn resolver_make(strat, cache, reg, sysdb) {
+fn resolver_make(strat, cache, reg, sysdb): i64 {
     var p = alloc(56);
     store64(p, strat); store64(p + 8, cache);
     store64(p + 16, reg); store64(p + 24, sysdb);
@@ -142,59 +142,59 @@ fn resolver_make(strat, cache, reg, sysdb) {
 # Accessors (field_index * 8)
 # ===================================================================
 
-fn ne_kind(p) { return load64(p); }
-fn ne_msg(p) { return load64(p + 8); }
-fn ne_detail(p) { return load64(p + 16); }
+fn ne_kind(p): i64 { return load64(p); }
+fn ne_msg(p): i64 { return load64(p + 8); }
+fn ne_detail(p): i64 { return load64(p + 16); }
 
-fn ai_name(p) { return load64(p); }
-fn ai_version(p) { return load64(p + 8); }
-fn ai_desc(p) { return load64(p + 16); }
+fn ai_name(p): i64 { return load64(p); }
+fn ai_version(p): i64 { return load64(p + 8); }
+fn ai_desc(p): i64 { return load64(p + 16); }
 
-fn mf_agent(p) { return load64(p); }
-fn mf_deps(p) { return load64(p + 8); }
-fn mf_runtime(p) { return load64(p + 16); }
+fn mf_agent(p): i64 { return load64(p); }
+fn mf_deps(p): i64 { return load64(p + 8); }
+fn mf_runtime(p): i64 { return load64(p + 16); }
 
-fn mp_manifest(p) { return load64(p); }
-fn mp_size(p) { return load64(p + 8); }
-fn mp_path(p) { return load64(p + 16); }
-fn mp_at(p) { return load64(p + 24); }
+fn mp_manifest(p): i64 { return load64(p); }
+fn mp_size(p): i64 { return load64(p + 8); }
+fn mp_path(p): i64 { return load64(p + 16); }
+fn mp_at(p): i64 { return load64(p + 24); }
 
-fn rp_name(p) { return load64(p); }
-fn rp_ver(p) { return load64(p + 8); }
-fn rp_src(p) { return load64(p + 16); }
-fn rp_desc(p) { return load64(p + 24); }
-fn rp_size(p) { return load64(p + 32); }
-fn rp_deps(p) { return load64(p + 40); }
-fn rp_trust(p) { return load64(p + 48); }
+fn rp_name(p): i64 { return load64(p); }
+fn rp_ver(p): i64 { return load64(p + 8); }
+fn rp_src(p): i64 { return load64(p + 16); }
+fn rp_desc(p): i64 { return load64(p + 24); }
+fn rp_size(p): i64 { return load64(p + 32); }
+fn rp_deps(p): i64 { return load64(p + 40); }
+fn rp_trust(p): i64 { return load64(p + 48); }
 
-fn ip_name(p) { return load64(p); }
-fn ip_ver(p) { return load64(p + 8); }
-fn ip_src(p) { return load64(p + 16); }
-fn ip_date(p) { return load64(p + 24); }
-fn ip_size(p) { return load64(p + 32); }
-fn ip_auto(p) { return load64(p + 40); }
+fn ip_name(p): i64 { return load64(p); }
+fn ip_ver(p): i64 { return load64(p + 8); }
+fn ip_src(p): i64 { return load64(p + 16); }
+fn ip_date(p): i64 { return load64(p + 24); }
+fn ip_size(p): i64 { return load64(p + 32); }
+fn ip_auto(p): i64 { return load64(p + 40); }
 
-fn sr_results(p) { return load64(p); }
-fn sr_sources(p) { return load64(p + 8); }
-fn sr_total(p) { return load64(p + 16); }
+fn sr_results(p): i64 { return load64(p); }
+fn sr_sources(p): i64 { return load64(p + 8); }
+fn sr_total(p): i64 { return load64(p + 16); }
 
-fn sd_apt(p) { return load64(p); }
+fn sd_apt(p): i64 { return load64(p); }
 
-fn rg_dir(p) { return load64(p); }
-fn rg_pkgs(p) { return load64(p + 8); }
+fn rg_dir(p): i64 { return load64(p); }
+fn rg_pkgs(p): i64 { return load64(p + 8); }
 
-fn st_kind(p) { return load64(p); }
-fn st_only(p) { return load64(p + 8); }
+fn st_kind(p): i64 { return load64(p); }
+fn st_only(p): i64 { return load64(p + 8); }
 
-fn rs_strat(p) { return load64(p); }
-fn rs_cache(p) { return load64(p + 8); }
-fn rs_reg(p) { return load64(p + 16); }
-fn rs_sys(p) { return load64(p + 24); }
-fn rs_set_strat(p, v) { store64(p, v); }
+fn rs_strat(p): i64 { return load64(p); }
+fn rs_cache(p): i64 { return load64(p + 8); }
+fn rs_reg(p): i64 { return load64(p + 16); }
+fn rs_sys(p): i64 { return load64(p + 24); }
+fn rs_set_strat(p, v): i64 { store64(p, v); }
 
 # Shorthand for deep access: InstalledMPkg -> name/version/desc/runtime/deps
 # NULL-safe: returns 0 if any pointer in the chain is NULL
-fn mpkg_name(p) {
+fn mpkg_name(p): i64 {
     if (p == 0) { return 0; }
     var m = mp_manifest(p);
     if (m == 0) { return 0; }
@@ -202,7 +202,7 @@ fn mpkg_name(p) {
     if (a == 0) { return 0; }
     return ai_name(a);
 }
-fn mpkg_version(p) {
+fn mpkg_version(p): i64 {
     if (p == 0) { return 0; }
     var m = mp_manifest(p);
     if (m == 0) { return 0; }
@@ -210,7 +210,7 @@ fn mpkg_version(p) {
     if (a == 0) { return 0; }
     return ai_version(a);
 }
-fn mpkg_desc(p) {
+fn mpkg_desc(p): i64 {
     if (p == 0) { return 0; }
     var m = mp_manifest(p);
     if (m == 0) { return 0; }
@@ -218,13 +218,13 @@ fn mpkg_desc(p) {
     if (a == 0) { return 0; }
     return ai_desc(a);
 }
-fn mpkg_runtime(p) {
+fn mpkg_runtime(p): i64 {
     if (p == 0) { return 0; }
     var m = mp_manifest(p);
     if (m == 0) { return str_from(""); }
     return mf_runtime(m);
 }
-fn mpkg_deps(p) {
+fn mpkg_deps(p): i64 {
     if (p == 0) { return map_new(); }
     var m = mp_manifest(p);
     if (m == 0) { return map_new(); }

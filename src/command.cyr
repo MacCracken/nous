@@ -5,7 +5,7 @@
 
 var cmd_buf = 0;
 
-fn cmd_run(cmd_str) {
+fn cmd_run(cmd_str): i64 {
     if (cmd_buf == 0) { cmd_buf = alloc(65536); }
     var args = vec_new();
     vec_push(args, "/bin/sh");
@@ -16,7 +16,7 @@ fn cmd_run(cmd_str) {
     return str_new(cmd_buf, n);
 }
 
-fn which_exists(name) {
+fn which_exists(name): i64 {
     return which_path(name) != 0;
 }
 
@@ -27,7 +27,7 @@ fn which_exists(name) {
 # 127, no output, integration_apt asserts fail in CI). Resolving in the
 # parent (which has PATH) and handing the child a full path is the fix.
 # See docs/development/issues/0002-sysdb-exec-bare-name-path.md.
-fn which_path(name) {
+fn which_path(name): i64 {
     var pe = getenv("PATH");
     if (pe == 0) { return 0; }
     var dirs = str_split(str_from(pe), 58);
@@ -45,7 +45,7 @@ fn which_path(name) {
 
 # Absolute path of a system tool for exec_capture, falling back to the
 # bare name if PATH resolution fails (preserves prior behaviour).
-fn tool_path(name) {
+fn tool_path(name): i64 {
     var p = which_path(name);
     if (p != 0) { return p; }
     return name;

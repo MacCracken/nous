@@ -43,6 +43,13 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
   cleanliness order: fmt → lint → vet → deny → doc.
 - Re-reviewed the arc against vidya + cyrius; added the 1.2.3 return-type sweep.
 
+## Completed (v1.2.3) — Return-type annotation sweep
+
+- Annotated all 206 `src/*.cyr` functions `: i64` (was 0% typed), matching the
+  cyrius stdlib (100% typed) and patra/sigil (uniform `: i64`). Behaviour-
+  preserving idiom alignment — 271/0 unchanged; fmt/lint/vet/deny/doc clean;
+  codegen verified. Independent of the issue-0001 de-nesting.
+
 ## Completed (v1.1.1)
 
 - Single-package and transitive dependency resolution across system, marketplace, Flutter, and community sources
@@ -82,21 +89,9 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
 ## 1.2.x Modernization Arc
 
 Continued alignment to Cyrius 6.0.1 conventions, sequenced after 1.2.0.
-Each is an independent, releasable bite. (1.2.0, 1.2.1 shipped — see Completed.)
+Each is an independent, releasable bite. (1.2.0–1.2.3 shipped — see Completed.)
 Scope re-confirmed 2026-05-26 against sibling **vidya** and the **cyrius**
-stdlib/docs to catch any missed modernization items (notably the return-type
-gap below — cyrius stdlib is 100% typed, vidya's lib ~99%, nous 0%).
-
-### 1.2.3 — Return-type annotation sweep
-
-- Annotate all ~204 `src/*.cyr` functions with explicit return types
-  (`: i64` / `: Str`). **Headline modernization** found in the vidya/cyrius
-  review: the cyrius stdlib annotates 100% of functions and vidya's lib ~99%,
-  while nous is at 0%. In 6.0.1 return types are documentation (optional — no
-  lint/deny rule enforces them), so this is a mechanical, behaviour-preserving
-  sweep — verify 271/0 + clean fmt/lint/vet after.
-- NOTE: annotation does **not** replace the issue-0001 de-nesting (shipped in
-  1.2.0/1.2.1); it's an independent idiom alignment.
+stdlib/docs. The final nous-side arc item remains:
 
 ### 1.2.4 — Docs modernization + P(-1) arc closeout
 
