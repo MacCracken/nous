@@ -11,7 +11,6 @@ fn resolver_new(mkt_dir, cache_dir) {
 
 fn resolver_with_strategy(r, strat) { rs_set_strat(r, strat); return r; }
 
-
 fn mpkg_to_resolved(pkg, src) {
     var dk = map_keys(mpkg_deps(pkg));
     var ds = vec_new();
@@ -135,7 +134,7 @@ fn resolver_list(r) {
     while (i < vec_len(ml)) {
         var mpkg = vec_get(ml, i);
         vec_push(pkgs, installed_pkg_new(mpkg_name(mpkg), mpkg_version(mpkg),
-            SOURCE_MARKETPLACE, mp_at(mpkg), mp_size(mpkg), 0));
+        SOURCE_MARKETPLACE, mp_at(mpkg), mp_size(mpkg), 0));
         i = i + 1;
     }
     var sres = sysdb_list(rs_sys(r));

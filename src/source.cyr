@@ -11,7 +11,6 @@ fn source_to_str(src) {
     return str_from("unknown");
 }
 
-
 # ===================================================================
 # Source detection
 # ===================================================================
@@ -122,7 +121,8 @@ fn collect_known_names(r) {
     var pkgs = rg_pkgs(rs_reg(r));
     var i = 0;
     while (i < vec_len(pkgs)) {
-        vec_push(names, mpkg_name(vec_get(pkgs, i)));
+        var pk = vec_get(pkgs, i);
+        vec_push(names, mpkg_name(pk));
         i = i + 1;
     }
     # From recipe DB if attached
@@ -130,7 +130,8 @@ fn collect_known_names(r) {
         var rkeys = map_keys(rdb_recipes(rs_rdb(r)));
         i = 0;
         while (i < vec_len(rkeys)) {
-            vec_push(names, str_from(vec_get(rkeys, i)));
+            var rk = vec_get(rkeys, i);
+            vec_push(names, str_from(rk));
             i = i + 1;
         }
     }

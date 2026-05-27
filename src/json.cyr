@@ -31,7 +31,8 @@ fn json_str_vec(v) {
     while (i < vec_len(v)) {
         if (i > 0) { str_builder_add_cstr(sb, ","); }
         str_builder_add_cstr(sb, "\"");
-        str_builder_add(sb, vec_get(v, i));
+        var e = vec_get(v, i);
+        str_builder_add(sb, e);
         str_builder_add_cstr(sb, "\"");
         i = i + 1;
     }
@@ -167,7 +168,8 @@ fn search_result_to_json(sr) {
     var i = 0;
     while (i < vec_len(res)) {
         if (i > 0) { str_builder_add_cstr(sb, ","); }
-        str_builder_add(sb, resolved_to_json(vec_get(res, i)));
+        var rj = vec_get(res, i);
+        str_builder_add(sb, resolved_to_json(rj));
         i = i + 1;
     }
     str_builder_add_cstr(sb, "],\"total_matches\":");
@@ -239,9 +241,10 @@ fn manifest_to_json(m) {
     while (i < vec_len(keys)) {
         if (i > 0) { str_builder_add_cstr(sb, ","); }
         str_builder_add_cstr(sb, "\"");
-        str_builder_add_cstr(sb, vec_get(keys, i));
+        var k = vec_get(keys, i);
+        str_builder_add_cstr(sb, k);
         str_builder_add_cstr(sb, "\":\"");
-        str_builder_add(sb, map_get(mf_deps(m), vec_get(keys, i)));
+        str_builder_add(sb, map_get(mf_deps(m), k));
         str_builder_add_cstr(sb, "\"");
         i = i + 1;
     }

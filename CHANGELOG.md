@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-05-26
+
+Hygiene + codegen-workaround sweep — first 1.2.x arc follow-on after 1.2.0.
+271/0 throughout; behaviour unchanged.
+
+### Changed
+
+- **Completed the Cyrius 6.0.1 `vec_get`-nesting de-nest sweep**
+  ([issue 0001](docs/development/issues/0001-cyrius-6.0.1-vec-get-recompute.md)).
+  Bound the remaining nested / re-evaluated typed accessors to locals in
+  `src/source.cyr` (`collect_known_names`), `src/recipe.cyr` (`read_build_order`,
+  `finalize_graph`), `src/json.cyr` (the str-vec / search / manifest-deps
+  serializers), and `src/sort.cyr` — all three insertion sorts re-read
+  `vec_get(v, j)` twice per inner-loop iteration, the proven-dangerous re-eval
+  shape. No `outer(vec_get(…))` sites remain in `src/`.
+- **`cyrius fmt` applied across `src/` + `tests/`** — the whole tree is now in
+  the 6.0.1 canonical format (idempotent).
+- **Cleared per-module lint warnings** — removed the consecutive-blank-line
+  warnings in `error.cyr`, `recipe.cyr`, `resolver.cyr`, `source.cyr`. Every
+  module + test entry lints clean.
+
+### CI
+
+- **Format check promoted from advisory to fail-on-drift** — and the check
+  itself fixed: `cyrius fmt <f> --check` is exit-code based (0 = formatted,
+  non-zero = drift; it prints nothing), but the old step diffed its empty stdout
+  against the file and so falsely reported drift on every clean file. Now asserts
+  exit 0 per file.
+- **Lint promoted from barrel-only to per-module fail-on-warn**, auto-discovering
+  every `src/*.cyr` + test entry.
+
 ## [1.2.0] - 2026-05-26
 
 Opens the **1.2.x modernization arc** — bring nous up to the Cyrius 6.0.1

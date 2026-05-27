@@ -409,7 +409,7 @@ fn test_errors() {
 fn test_json() {
     test_group("json");
     var pkg = resolved_pkg_new(str_from("test-pkg"), str_from("1.2.3"),
-        SOURCE_SYSTEM, str_from("A test"), 4096, vec_new(), 1);
+    SOURCE_SYSTEM, str_from("A test"), 4096, vec_new(), 1);
     var json = resolved_to_json(pkg);
     assert(str_contains(json, str_from("test-pkg")), "name");
     assert(str_contains(json, str_from("1.2.3")), "ver");
@@ -492,7 +492,7 @@ fn test_search_result_serde() {
     test_group("search_result_serde");
     var results = vec_new();
     vec_push(results, resolved_pkg_new(str_from("test"), str_from("1.0.0"),
-        SOURCE_SYSTEM, str_from("A test"), 1024, vec_new(), 1));
+    SOURCE_SYSTEM, str_from("A test"), 1024, vec_new(), 1));
     var sr = search_result_new(results, vec_new(), 1);
     var json = search_result_to_json(sr);
     assert(str_contains(json, str_from("test")), "has name");
@@ -504,7 +504,7 @@ fn test_manifest_serde_roundtrip() {
     var deps = map_new();
     map_set(deps, "dep-a", str_from(">=1.0"));
     var agent = agent_info_new(str_from("test-agent"), str_from("2.0.0"),
-        str_from("A test agent"));
+    str_from("A test agent"));
     var m = manifest_new(agent, deps, str_from("native"));
     var json = manifest_to_json(m);
     assert(str_contains(json, str_from("test-agent")), "has name");
@@ -596,7 +596,7 @@ fn test_resolved_json_roundtrip() {
     vec_push(deps, str_from("libc"));
     vec_push(deps, str_from("libssl"));
     var pkg = resolved_pkg_new(str_from("test-pkg"), str_from("1.2.3"),
-        SOURCE_SYSTEM, str_from("A test package"), 4096, deps, 1);
+    SOURCE_SYSTEM, str_from("A test package"), 4096, deps, 1);
     var json = resolved_to_json(pkg);
     assert(str_contains(json, str_from("libc")), "deps in json");
     assert(str_contains(json, str_from("libssl")), "deps 2 in json");
@@ -610,7 +610,7 @@ fn test_resolved_json_roundtrip() {
 fn test_installed_json_roundtrip() {
     test_group("installed_json");
     var pkg = installed_pkg_new(str_from("my-agent"), str_from("2.0.0"),
-        SOURCE_MARKETPLACE, 1000000, 8192, 0);
+    SOURCE_MARKETPLACE, 1000000, 8192, 0);
     var json = installed_to_json(pkg);
     assert(str_contains(json, str_from("my-agent")), "name");
     assert(str_contains(json, str_from("marketplace")), "src");
@@ -623,7 +623,7 @@ fn test_installed_json_roundtrip() {
 fn test_update_json() {
     test_group("update_json");
     var u = avail_update_new(str_from("openssl"), SOURCE_SYSTEM,
-        str_from("3.0.0"), str_from("3.1.0"), str_from("Security fixes"));
+    str_from("3.0.0"), str_from("3.1.0"), str_from("Security fixes"));
     var json = update_to_json(u);
     assert(str_contains(json, str_from("openssl")), "name");
     assert(str_contains(json, str_from("3.0.0")), "inst ver");
@@ -731,13 +731,13 @@ fn test_dep_graph_basic() {
     vec_push(deps_a, str_from("B"));
     vec_push(deps_a, str_from("C"));
     var a = resolved_pkg_new(str_from("A"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, deps_a, 1);
+    SOURCE_MARKETPLACE, str_from(""), 0, deps_a, 1);
     var b = resolved_pkg_new(str_from("B"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1);
+    SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1);
     var deps_c = vec_new();
     vec_push(deps_c, str_from("B"));
     var c = resolved_pkg_new(str_from("C"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, deps_c, 1);
+    SOURCE_MARKETPLACE, str_from(""), 0, deps_c, 1);
     dep_graph_add(g, a);
     dep_graph_add(g, b);
     dep_graph_add(g, c);
@@ -755,11 +755,11 @@ fn test_topo_sort() {
     var deps_b = vec_new();
     vec_push(deps_b, str_from("C"));
     dep_graph_add(g, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, deps_a, 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, deps_a, 1));
     dep_graph_add(g, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, deps_b, 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, deps_b, 1));
     dep_graph_add(g, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
     var order = dep_graph_topo_sort(g);
     assert_eq(vec_len(order), 3, "3 in order");
     # A should come before B, B before C in topo order
@@ -773,11 +773,11 @@ fn test_cycle_detection() {
     var d1 = vec_new(); vec_push(d1, str_from("B"));
     var d2 = vec_new(); vec_push(d2, str_from("C"));
     dep_graph_add(g1, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, d1, 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, d1, 1));
     dep_graph_add(g1, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, d2, 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, d2, 1));
     dep_graph_add(g1, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
     assert_eq(dep_graph_detect_cycle(g1), 0, "no cycle");
 
     # Cycle: A -> B -> C -> A
@@ -786,11 +786,11 @@ fn test_cycle_detection() {
     var db = vec_new(); vec_push(db, str_from("C"));
     var dc = vec_new(); vec_push(dc, str_from("A"));
     dep_graph_add(g2, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, da, 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, da, 1));
     dep_graph_add(g2, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, db, 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, db, 1));
     dep_graph_add(g2, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, dc, 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, dc, 1));
     var cycle = dep_graph_detect_cycle(g2);
     assert(cycle != 0, "cycle detected");
     assert(vec_len(cycle) >= 3, "cycle has nodes");
@@ -804,13 +804,13 @@ fn test_diamond_deps() {
     var db = vec_new(); vec_push(db, str_from("D"));
     var dc = vec_new(); vec_push(dc, str_from("D"));
     dep_graph_add(g, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, da, 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, da, 1));
     dep_graph_add(g, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, db, 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, db, 1));
     dep_graph_add(g, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, dc, 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, dc, 1));
     dep_graph_add(g, resolved_pkg_new(str_from("D"), str_from("1.0.0"),
-        SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
+    SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
     assert_eq(dep_graph_detect_cycle(g), 0, "no cycle");
     var order = dep_graph_topo_sort(g);
     assert_eq(vec_len(order), 4, "4 in order");
@@ -837,10 +837,10 @@ fn test_resolve_all_basic() {
     write_manifest_deps(d, "pkg-c", "native", "");
     # B depends on C
     write_manifest_deps(d, "pkg-b", "native",
-        "\"pkg-c\":\">=1.0\"");
+    "\"pkg-c\":\">=1.0\"");
     # A depends on B
     write_manifest_deps(d, "pkg-a", "native",
-        "\"pkg-b\":\">=1.0\"");
+    "\"pkg-b\":\">=1.0\"");
 
     var r = payload(resolver_new(d, c));
     var names = vec_new();
@@ -865,9 +865,9 @@ fn test_resolve_all_cycle_error() {
     mkdir_str(inst);
     # A -> B, B -> A (cycle)
     write_manifest_deps(d, "cyc-a", "native",
-        "\"cyc-b\":\">=1.0\"");
+    "\"cyc-b\":\">=1.0\"");
     write_manifest_deps(d, "cyc-b", "native",
-        "\"cyc-a\":\">=1.0\"");
+    "\"cyc-a\":\">=1.0\"");
     var r = payload(resolver_new(d, c));
     var names = vec_new();
     vec_push(names, str_from("cyc-a"));
@@ -954,7 +954,7 @@ fn test_recipe_to_resolved() {
     vec_push(rt, str_from("openssl"));
     var recipe = recipe_alloc();
     recipe_set_pkg(recipe, str_from("test-recipe"), str_from("1.0.0"),
-        str_from("Test"), str_from("MIT"), str_from("x86_64"));
+    str_from("Test"), str_from("MIT"), str_from("x86_64"));
     recipe_set_meta(recipe, vec_new(), 1, str_from(""), str_from(""), vec_new());
     recipe_set_deps(recipe, rt, vec_new());
     var pkg = recipe_to_resolved(recipe);
@@ -976,12 +976,12 @@ fn test_resolve_with_recipes() {
     vec_push(rt_a, str_from("dep-b"));
     var recipe_a = recipe_alloc();
     recipe_set_pkg(recipe_a, str_from("pkg-a"), str_from("1.0.0"),
-        str_from("A"), str_from("MIT"), str_from("x86_64"));
+    str_from("A"), str_from("MIT"), str_from("x86_64"));
     recipe_set_deps(recipe_a, rt_a, vec_new());
     map_set(recipes, "pkg-a", recipe_a);
     var recipe_b = recipe_alloc();
     recipe_set_pkg(recipe_b, str_from("dep-b"), str_from("2.0.0"),
-        str_from("B"), str_from("MIT"), str_from("x86_64"));
+    str_from("B"), str_from("MIT"), str_from("x86_64"));
     recipe_set_deps(recipe_b, vec_new(), vec_new());
     map_set(recipes, "dep-b", recipe_b);
     var rdb = recipe_db_new(str_from("/tmp"), recipes, vec_new());
@@ -1096,12 +1096,12 @@ fn test_constraints_compatible() {
 fn test_nous_error_to_kind() {
     test_group("error_to_kind");
     var e = nous_error_new(ERR_COMMAND_EXEC,
-        str_from("apt-cache"), str_from("not found"));
+    str_from("apt-cache"), str_from("not found"));
     var k = nous_error_to_kind(e);
     assert_eq(ne_kind(k), ERR_COMMAND_EXEC, "kind preserved");
     assert(str_eq(ne_msg(k), str_from("apt-cache")), "msg preserved");
     assert(str_eq(ne_detail(k), str_from("not found")),
-        "detail preserved");
+    "detail preserved");
 }
 
 fn test_semver_eq() {
@@ -1118,22 +1118,22 @@ fn test_caret_zero() {
     # ^0.2.3 means >=0.2.3, <0.3.0
     var c = constraint_parse(str_from("^0.2.3"));
     assert(constraint_matches(c, semver_parse(str_from("0.2.3"))),
-        "0.2.3 in ^0.2.3");
+    "0.2.3 in ^0.2.3");
     assert(constraint_matches(c, semver_parse(str_from("0.2.9"))),
-        "0.2.9 in ^0.2.3");
+    "0.2.9 in ^0.2.3");
     assert(constraint_matches(c,
-        semver_parse(str_from("0.3.0"))) == 0,
-        "0.3.0 not in ^0.2.3");
+    semver_parse(str_from("0.3.0"))) == 0,
+    "0.3.0 not in ^0.2.3");
     assert(constraint_matches(c,
-        semver_parse(str_from("1.0.0"))) == 0,
-        "1.0.0 not in ^0.2.3");
+    semver_parse(str_from("1.0.0"))) == 0,
+    "1.0.0 not in ^0.2.3");
     # ^0.0.3 means >=0.0.3, <0.0.4
     var c2 = constraint_parse(str_from("^0.0.3"));
     assert(constraint_matches(c2, semver_parse(str_from("0.0.3"))),
-        "0.0.3 in ^0.0.3");
+    "0.0.3 in ^0.0.3");
     assert(constraint_matches(c2,
-        semver_parse(str_from("0.0.4"))) == 0,
-        "0.0.4 not in ^0.0.3");
+    semver_parse(str_from("0.0.4"))) == 0,
+    "0.0.4 not in ^0.0.3");
 }
 
 fn test_tilde_zero() {
@@ -1141,12 +1141,12 @@ fn test_tilde_zero() {
     # ~0.2.0 means >=0.2.0, <0.3.0 — same major.minor
     var c = constraint_parse(str_from("~0.2.0"));
     assert(constraint_matches(c, semver_parse(str_from("0.2.0"))),
-        "0.2.0 in ~0.2");
+    "0.2.0 in ~0.2");
     assert(constraint_matches(c, semver_parse(str_from("0.2.9"))),
-        "0.2.9 in ~0.2");
+    "0.2.9 in ~0.2");
     assert(constraint_matches(c,
-        semver_parse(str_from("0.3.0"))) == 0,
-        "0.3.0 not in ~0.2");
+    semver_parse(str_from("0.3.0"))) == 0,
+    "0.3.0 not in ~0.2");
 }
 
 fn test_empty_graph() {
@@ -1161,8 +1161,8 @@ fn test_single_node_graph() {
     test_group("single_node_graph");
     var g = dep_graph_new();
     dep_graph_add(g, resolved_pkg_new(str_from("solo"),
-        str_from("1.0"), SOURCE_MARKETPLACE, str_from(""),
-        0, vec_new(), 1));
+    str_from("1.0"), SOURCE_MARKETPLACE, str_from(""),
+    0, vec_new(), 1));
     assert_eq(dep_graph_detect_cycle(g), 0, "no cycle");
     var order = dep_graph_topo_sort(g);
     assert_eq(vec_len(order), 1, "one node");
@@ -1173,7 +1173,7 @@ fn test_semver_overflow() {
     test_group("semver_overflow");
     # Crafted version with huge numbers should not crash
     var v = semver_parse(
-        str_from("99999999999999999999999.0.0"));
+    str_from("99999999999999999999999.0.0"));
     assert_eq(v, 0, "overflow returns 0");
     # Normal large version should work
     var v2 = semver_parse(str_from("999.999.999"));
@@ -1213,7 +1213,7 @@ fn test_integration_apt() {
         assert(vec_len(sr) > 0, "search found results");
         # is_installed
         var inst = payload(sysdb_is_installed(db,
-            str_from("coreutils")));
+        str_from("coreutils")));
         assert_eq(inst, 1, "coreutils installed");
     }
 }

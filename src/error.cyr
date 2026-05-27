@@ -67,7 +67,6 @@ fn nous_error_to_kind(e) {
     return nous_error_new(ne_kind(e), ne_msg(e), ne_detail(e));
 }
 
-
 # ===================================================================
 # Package name validation
 # ===================================================================

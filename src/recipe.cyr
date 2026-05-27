@@ -17,7 +17,6 @@ fn recipe_set_deps(r, rt_deps, bd_deps) {
     store64(r + 80, rt_deps); store64(r + 88, bd_deps);
 }
 
-
 # Recipe accessors
 fn rc_name(r) { return load64(r); }
 fn rc_ver(r) { return load64(r + 8); }
@@ -281,7 +280,8 @@ fn read_build_order(zugot_path) {
     var lines = str_split(content, 10);
     var i = 0;
     while (i < vec_len(lines)) {
-        var line = str_trim(vec_get(lines, i));
+        var lraw = vec_get(lines, i);
+        var line = str_trim(lraw);
         # Skip empty lines and comments
         if (str_len(line) > 0 && load8(str_data(line)) != 35) {
             vec_push(order, line);
@@ -361,8 +361,8 @@ fn recipe_db_count(db) {
 # Convert a Recipe to a ResolvedPkg for use in the resolver.
 fn recipe_to_resolved(recipe) {
     return resolved_pkg_new(
-        rc_name(recipe), rc_ver(recipe), SOURCE_COMMUNITY,
-        rc_desc(recipe), 0, rc_rt_deps(recipe), 0
+    rc_name(recipe), rc_ver(recipe), SOURCE_COMMUNITY,
+    rc_desc(recipe), 0, rc_rt_deps(recipe), 0
     );
 }
 
@@ -494,7 +494,7 @@ fn finalize_graph(r, graph) {
                         str_builder_add_cstr(sb, " requires ");
                         str_builder_add(sb, constraint_str);
                         return nous_err(ERR_VERSION_CONFLICT, dep,
-                            str_builder_build(sb));
+                        str_builder_build(sb));
                     }
                 } else {
                     map_set(constraint_map, cdep, ct);
@@ -514,7 +514,8 @@ fn finalize_graph(r, graph) {
     var ordered_pkgs = vec_new();
     var oi = vec_len(order) - 1;
     while (oi >= 0) {
-        var oname = to_cstr(vec_get(order, oi));
+        var oraw = vec_get(order, oi);
+        var oname = to_cstr(oraw);
         if (map_has(dg_nodes(graph), oname) == 1) {
             vec_push(ordered_pkgs, map_get(dg_nodes(graph), oname));
         }

@@ -90,7 +90,7 @@ fn scan_installed(base_dir) {
         var entry = vec_get(entries, i);
         # Reject path traversal: no ".." or "/" in entry names
         if (str_contains(entry, str_from("..")) == 1 ||
-            str_index_of(entry, 47) >= 0) {
+        str_index_of(entry, 47) >= 0) {
             i = i + 1;
             continue;
         }
@@ -124,7 +124,7 @@ fn registry_search(reg, query) {
     while (i < vec_len(pkgs)) {
         var pkg = vec_get(pkgs, i);
         if (str_contains(mpkg_name(pkg), query) == 1 ||
-            str_contains(mpkg_desc(pkg), query) == 1) {
+        str_contains(mpkg_desc(pkg), query) == 1) {
             vec_push(results, pkg);
         }
         i = i + 1;

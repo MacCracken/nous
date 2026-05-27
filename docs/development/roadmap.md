@@ -24,6 +24,18 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
   [issue 0001](issues/0001-cyrius-6.0.1-vec-get-recompute.md). Compiler not
   touched — treated as an external dependency.
 
+## Completed (v1.2.1) — Hygiene + codegen-workaround sweep
+
+- Completed the issue-0001 `vec_get`-nesting de-nest sweep (source, recipe,
+  json, sort — incl. the sort inner-loop double `vec_get(v, j)` re-eval). No
+  `outer(vec_get(…))` sites remain in `src/`.
+- `cyrius fmt` applied across `src/` + `tests/` (whole tree canonical).
+- Cleared per-module lint warnings (consecutive blank lines in
+  error/recipe/resolver/source); every module lints clean.
+- CI: fmt check promoted advisory → **fail-on-drift** (and fixed — `--check` is
+  exit-code based, not stdout-diff); lint promoted barrel-only → **per-module
+  fail-on-warn**.
+
 ## Completed (v1.1.1)
 
 - Single-package and transitive dependency resolution across system, marketplace, Flutter, and community sources
@@ -63,28 +75,7 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
 ## 1.2.x Modernization Arc
 
 Continued alignment to Cyrius 6.0.1 conventions, sequenced after 1.2.0.
-Each is an independent, releasable bite.
-
-### 1.2.1 — Hygiene + codegen-workaround sweep
-
-- **Finish de-nesting the remaining `vec_get` nesting sites** flagged in
-  [issue 0001](issues/0001-cyrius-6.0.1-vec-get-recompute.md): `src/source.cyr`
-  (~133), `src/recipe.cyr` (~284, 517), and the value-discarding
-  `vec_push`/`str_builder_add` wrappers in `src/json.cyr` / `src/sort.cyr`.
-  These run in every environment and pass the suite, so it's a defensive
-  consistency pass, not a known break. (The cycle/topo/resolver/recipe and the
-  apt-gated `sysdb` sites were already fixed in 1.2.0 — the sysdb ones only
-  surfaced in CI, since `integration_apt` skips on dpkg-less dev boxes.)
-  Revert all workarounds (and this item) if a Cyrius release fixes the bug —
-  re-run the issue's reproducer to confirm.
-- Run a one-shot `cyrius fmt` over `src/` + `tests/`. `cyrius fmt --check`
-  reports drift on `src/recipe.cyr`, `src/registry.cyr`,
-  `src/resolver.cyr`, `tests/nous.tcyr`, `tests/nous.bcyr`.
-- Clear the per-module `cyrius lint` cosmetic warnings on `src/error.cyr`,
-  `src/recipe.cyr`, `src/resolver.cyr`, `src/source.cyr` (multiple
-  consecutive blank lines). The barrel `src/nous.cyr` already lints clean.
-- Promote the CI fmt step from advisory to **fail-on-drift**, and switch
-  lint from barrel-only to per-module fail-on-warn.
+Each is an independent, releasable bite. (1.2.1 shipped — see Completed above.)
 
 ### 1.2.2 — Policy gates
 
