@@ -108,6 +108,20 @@ jobs:
       - name: Vet
         run: cyrius vet src/main.cyr
 
+      - name: Deny (project policy)
+        # 1.2.2: built-in policy check (delegates to cybs; no config file).
+        # Passes clean today (0 violations). Completes the CLAUDE.md
+        # cleanliness order: fmt → lint → vet → deny → doc.
+        run: cyrius deny src/main.cyr
+
+      - name: Doc check
+        # 1.2.2: `cyrius doc --check` exits with the undocumented-function
+        # count. Run against the barrel (src/nous.cyr) — it has no functions
+        # of its own, so it passes; this mirrors the local cleanliness order.
+        # Per-function doc comments (and promoting this to per-module) are a
+        # 1.2.4 item.
+        run: cyrius doc --check src/nous.cyr
+
       - name: Verify dist bundle in sync
         # dist/nous.cyr is committed (nous's consumer-facing bundle).
         # Regenerate it from [lib] modules and fail if the committed copy

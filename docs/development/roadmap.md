@@ -36,6 +36,13 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
   exit-code based, not stdout-diff); lint promoted barrel-only → **per-module
   fail-on-warn**.
 
+## Completed (v1.2.2) — Policy gates
+
+- CI now runs `cyrius deny src/main.cyr` (0 violations) and
+  `cyrius doc --check src/nous.cyr` (barrel; passes), completing the CLAUDE.md
+  cleanliness order: fmt → lint → vet → deny → doc.
+- Re-reviewed the arc against vidya + cyrius; added the 1.2.3 return-type sweep.
+
 ## Completed (v1.1.1)
 
 - Single-package and transitive dependency resolution across system, marketplace, Flutter, and community sources
@@ -75,32 +82,56 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
 ## 1.2.x Modernization Arc
 
 Continued alignment to Cyrius 6.0.1 conventions, sequenced after 1.2.0.
-Each is an independent, releasable bite. (1.2.1 shipped — see Completed above.)
+Each is an independent, releasable bite. (1.2.0, 1.2.1 shipped — see Completed.)
+Scope re-confirmed 2026-05-26 against sibling **vidya** and the **cyrius**
+stdlib/docs to catch any missed modernization items (notably the return-type
+gap below — cyrius stdlib is 100% typed, vidya's lib ~99%, nous 0%).
 
-### 1.2.2 — Policy gates
+### 1.2.3 — Return-type annotation sweep
 
-- Add a `cyrius deny src/main.cyr` project policy and wire it into CI.
-- Add `cyrius doc --check src/nous.cyr` (doc-warnings-as-errors) to CI.
-- Completes the CLAUDE.md cleanliness-check order (fmt → lint → vet →
-  deny → doc).
+- Annotate all ~204 `src/*.cyr` functions with explicit return types
+  (`: i64` / `: Str`). **Headline modernization** found in the vidya/cyrius
+  review: the cyrius stdlib annotates 100% of functions and vidya's lib ~99%,
+  while nous is at 0%. In 6.0.1 return types are documentation (optional — no
+  lint/deny rule enforces them), so this is a mechanical, behaviour-preserving
+  sweep — verify 271/0 + clean fmt/lint/vet after.
+- NOTE: annotation does **not** replace the issue-0001 de-nesting (shipped in
+  1.2.0/1.2.1); it's an independent idiom alignment.
 
-### 1.2.3 — Consumer migration (ark)
+### 1.2.4 — Docs modernization + P(-1) arc closeout
 
-- Migrate ark to consume `modules = ["dist/nous.cyr"]` (one bundle) in
-  place of the 14 individually-listed `src/*.cyr` it pins today; bump
-  ark's nous `tag` to the 1.2.x release. Consumer-side change, executed
-  in the ark repo and coordinated from here.
+Docs / instructions:
+- De-Rust-ify `CLAUDE.md` — "flat library crate", cargo fmt/clippy/audit/deny
+  lineage, and the `#[must_use]` / `#[non_exhaustive]` Rust attributes (map to
+  cyrius `#must_use` and exhaustive `match`).
+- Start `docs/adr/` (vidya has one; nous's own Documentation Standards require
+  ADRs) — record the `Result<T, E>` adoption, the 14-module flat layout, and the
+  issue-0001 de-nest workaround.
+- Add `docs/guides/getting-started.md` (vidya model).
+- Refresh `docs/architecture/overview.md` for the `dist/nous.cyr` bundle model.
+- Add `#`-block doc comments to public functions; once documented, promote the
+  CI doc gate from the barrel to per-module (`cyrius doc --check` exits =
+  undocumented count). Optional doctest examples via `# >>>` / `# ===`.
+- Template the `src/main.cyr` version banner so the hardcoded no-VERSION-file
+  fallback tracks `VERSION` (revisit if cyrius gains compile-time string-from-
+  file templating).
 
-### 1.2.4 — Docs & instructions
+P(-1) Scaffold Hardening closeout (per CLAUDE.md P(-1)) — closes the 1.2.x arc:
+- Full test + benchmark sweep; baseline vs post-review deltas (never skip benches).
+- Cleanliness pass (fmt/lint/vet/deny/doc) + internal deep review (gaps, perf,
+  memory, security, errors/logging) + external research (resolver completeness /
+  world-class accuracy).
+- `@unsafe` audit — the cyrius guide wraps unchecked `load*`/`store*` in
+  `@unsafe { }`; deny/lint don't currently require it for nous, so this is a
+  judgment call to make during the review.
+- Documentation audit; mark the arc complete.
 
-- De-Rust-ify `CLAUDE.md` — it still describes the project in Rust-crate
-  terms ("flat library crate"; cargo fmt/clippy/audit/deny lineage).
-- Refresh `docs/architecture/overview.md` for the `dist/nous.cyr`
-  bundle-consumption model.
-- Template the `src/main.cyr` smoke version string so the hardcoded
-  no-VERSION-file fallback banner (`"nous 1.2.0 …"`) tracks `VERSION`
-  automatically (standing item; revisit when cyrius gains compile-time
-  string-from-file templating).
+## Consumer coordination (ark — separate repo, not a nous version)
+
+- Migrate ark to consume `modules = ["dist/nous.cyr"]` (one bundle) in place of
+  the 14 `src/*.cyr` it pins today; bump ark's nous `tag` to the latest 1.2.x.
+  Executed in the ark repo; coordinated from here. Not gating the nous arc
+  closeout.
 
 ## Future
 

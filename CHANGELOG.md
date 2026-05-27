@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-05-26
+
+Policy gates — completes the CLAUDE.md cleanliness order in CI.
+
+### CI
+
+- **Added `cyrius deny src/main.cyr` to CI** — the built-in project-policy
+  check (delegates to `cybs`; no config file). Passes clean today (14 deps,
+  0 violations).
+- **Added `cyrius doc --check src/nous.cyr` to CI** — `doc --check` exits with
+  the undocumented-function count; the barrel has no functions of its own, so
+  it passes. CI now mirrors the full local cleanliness order: fmt → lint → vet
+  → deny → doc. Per-function doc comments (and promoting the doc gate to
+  per-module) are tracked for 1.2.4.
+
+### Notes
+
+- Re-confirmed the 1.2.x arc against sibling **vidya** and the **cyrius** stdlib/
+  docs. Surfaced one headline gap — nous annotates 0% of its functions with
+  return types vs the cyrius stdlib's 100% / vidya's ~99% — now scheduled as the
+  1.2.3 return-type sweep. See `docs/development/roadmap.md`.
+
 ## [1.2.1] - 2026-05-26
 
 Hygiene + codegen-workaround sweep — first 1.2.x arc follow-on after 1.2.0.
