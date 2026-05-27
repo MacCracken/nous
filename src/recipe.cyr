@@ -314,11 +314,7 @@ fn recipe_db_load(zugot_path): i64 {
 
     var ci = 0;
     while (ci < vec_len(categories)) {
-        # De-nest vec_get from the str_from() argument: under Cyrius 6.0.1
-        # a typed vec_get() nested as a call argument can miscompile (see
-        # docs/development/issues/0001-cyrius-6.0.1-vec-get-recompute.md).
-        var craw = vec_get(categories, ci);
-        var cat = str_from(craw);
+        var cat = str_from(vec_get(categories, ci));
         var cat_dir = join_path(zugot_path, cat);
         var cdir = to_cstr(cat_dir);
         if (our_is_dir(cdir) == 1) {

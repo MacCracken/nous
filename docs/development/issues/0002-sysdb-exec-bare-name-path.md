@@ -75,6 +75,7 @@ exec_capture(["ls", "/"], …)           ->  0 bytes (the bug)
 
 `integration_apt`'s apt-backed asserts cannot run on the dev box (no dpkg), so
 final confirmation is via CI on Ubuntu, where `/usr/bin/apt-cache` and
-`/usr/bin/dpkg-query` resolve. The apt-output **parsing** is unchanged (and was
-de-nested under issue 0001), so once exec returns data the existing logic
-applies.
+`/usr/bin/dpkg-query` resolve. The apt-output **parsing** is unchanged, so once
+exec returns data the existing logic applies. (It was briefly de-nested under
+the since-retracted [issue 0001](0001-cyrius-6.0.1-vec-get-recompute.md); that
+de-nesting was reverted in 1.2.5 and never affected parsing behaviour.)

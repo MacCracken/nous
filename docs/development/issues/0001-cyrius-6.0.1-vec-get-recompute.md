@@ -1,226 +1,80 @@
 # 0001 — Cyrius 6.0.1: typed `vec_get` miscompiles when nested as a call argument / re-evaluated
 
-- **Status:** Open — reported upstream (Cyrius), worked around in nous 1.2.0
-- **Filed:** 2026-05-26
-- **Affected toolchain:** Cyrius `6.0.1` (`cycc`), x86_64-linux
-- **Last good toolchain (for nous):** the `5.7.29` stdlib snapshot
-- **Severity:** High — produces silently wrong results (no diagnostic, exit 0
-  in isolation; downstream null-deref → SIGSEGV in the full suite)
-- **Component:** code generation for typed stdlib accessors (`lib/vec.cyr`)
+- **Status:** **CLOSED — NOT A DEFECT (misdiagnosis).** Withdrawn 2026-05-27.
+- **Filed:** 2026-05-26 · **Closed:** 2026-05-27 (nous 1.2.5)
+- **Resolution:** There is no Cyrius codegen bug. The nested / re-evaluated
+  typed `vec_get` form compiles **correctly on both Cyrius 6.0.1 and 6.0.3**.
+  The original "proof" was a self-defective reproducer; the real CI failure was
+  entirely [issue 0002](0002-sysdb-exec-bare-name-path.md) (sysdb bare-`argv[0]`
+  PATH bug). The de-nesting workaround was unnecessary and was fully reverted in
+  nous 1.2.5.
 
-> This is an **upstream Cyrius** report. nous treats the Cyrius compiler as an
-> external dependency and does **not** patch it. The entry exists so the
-> workaround in nous source is traceable and so the bug can be verified against
-> a published Cyrius release.
+> Kept for the record so the misdiagnosis is traceable. The original report
+> claimed Cyrius 6.0.1 miscompiled a typed `vec_get(): i64` when used as a
+> nested call argument (`str_from(vec_get(…))`) or re-evaluated for the same
+> index in one scope, producing silently-wrong cycle detection / topo sort /
+> resolution. **That claim does not hold up.**
 
-## Summary
+## Why it was wrong
 
-Under Cyrius `6.0.1`, a typed stdlib accessor — most clearly `vec_get(v, i): i64`
-— returns a **wrong value** when it is used as a **nested argument** to another
-call (e.g. `str_from(vec_get(v, i))`, `map_get(m, vec_get(v, i))`) or
-**re-evaluated for the same index** within one scope while other typed calls and
-heap allocation happen in between. Binding the accessor result to a local
-variable first makes the result correct.
+### 1. The reproducer was self-defective
 
-The defect is **context-sensitive**: trivial reproductions pass; it manifests in
-realistic code that mixes recursion, `map_new()`-keyed lookups, `map_keys()`
-(which builds a vec), and `to_cstr` allocation churn.
+The minimal reproducer's `detect_cycle` ended its success path with
+`return load64(result_holder)`, but its `dfs` **never wrote `result_holder`** —
+the back-edge branch did `vec_pop(path); return 1;` with no `store64`. So
+`detect_cycle` returned `0` **unconditionally**, on every compiler and every
+stdlib, printing `RESULT: NO cycle found (WRONG)` regardless of codegen. (The
+real `src/graph.cyr:detect_cycle_dfs` *does* `store64(result_cycle, rev)` on the
+back edge — the reproducer dropped exactly that line.)
 
-## Proof — bisection
+Consequently the published bisection table —
 
-`lib/vec.cyr` is **byte-identical** between the `5.7.29` and `6.0.1` stdlib
-snapshots **except** for added explicit return-type annotations
-(`fn vec_get(v, idx)` → `fn vec_get(v, idx): i64`, and likewise for every other
-`vec_*`). The function *bodies* do not change.
+| `lib/vec.cyr` source | claimed reproducer result |
+|----------------------|---------------------------|
+| `5.7.29` (untyped)   | `cycle detected (correct)` |
+| `6.0.1`  (`: i64`)   | `NO cycle found (WRONG)`   |
 
-With nous's source unchanged, swapping only `lib/vec.cyr`:
+— is **not reproducible**: a reproducer that always returns `0` cannot print
+`cycle detected (correct)` under any toolchain. Adding the missing `store64`
+makes the reproducer print `cycle detected (correct)` on **both** 6.0.1 and
+6.0.3, nested form and de-nested form alike.
 
-| `lib/vec.cyr` source | reproducer result | nous test suite |
-|----------------------|-------------------|-----------------|
-| `5.7.29` (untyped sigs) | `cycle detected (correct)` | 271 passed, 0 failed |
-| `6.0.1`  (`: i64` sigs) | `NO cycle found (WRONG)`   | SIGSEGV in `cycle_detection` |
+### 2. The real nous suite passes nested on 6.0.1 *and* 6.0.3
 
-Every other stdlib module held constant. Overlaying *only* the 6.0.1 `vec.cyr`
-onto an otherwise-5.7.29 lib reproduces the failure; reverting *only* `vec.cyr`
-to 5.7.29 fixes it.
+Re-nesting every site the issue blamed — `dep_graph_detect_cycle`,
+`dep_graph_topo_sort`, `resolver_resolve_all`, `mpkg_to_resolved`,
+`recipe_db_load`, and the sysdb parsers — and running `cyrius test
+tests/nous.tcyr`:
 
-## Minimal reproducer
+| compiler | source form | suite |
+|----------|-------------|-------|
+| cycc 6.0.1 (6.0.1 lib) | de-nested (workaround) | 271 passed, 0 failed |
+| cycc 6.0.1 (6.0.1 lib) | **nested (original)**  | **271 passed, 0 failed** |
+| cycc 6.0.3 (6.0.3 lib) | nested (original)      | 271 passed, 0 failed |
 
-Self-contained (stdlib only). Build against a 6.0.1 stdlib and run.
-Mirrors nous's 3-colour DFS cycle detection over a cstr-keyed `map_new()` whose
-node list comes from `map_keys()`. Graph `A → B → C → A` (a cycle).
+No SIGSEGV, no truncated topo order, no dropped deps in any cell. The claimed
+"SIGSEGV in `cycle_detection` on 6.0.1" never occurred from nesting.
 
-```cyrius
-include "lib/syscalls.cyr"
-include "lib/string.cyr"
-include "lib/alloc.cyr"
-include "lib/str.cyr"
-include "lib/vec.cyr"
-include "lib/hashmap.cyr"
+### 3. The CI failures were issue 0002, not codegen
 
-fn to_cstr(s) {
-    if (s == 0) { return ""; }
-    var data = str_data(s);
-    var len = str_len(s);
-    var buf = alloc(len + 1);
-    memcpy(buf, data, len);
-    store8(buf + len, 0);
-    return buf;
-}
+The two CI assertion failures (`search found results`, `coreutils installed`)
+were in the **apt-gated sysdb path** and are fully explained by
+[issue 0002](0002-sysdb-exec-bare-name-path.md): `exec_capture` execve's a bare
+`argv[0]` with an empty envp, so `dpkg-query` / `apt-cache` never launched and
+sysdb returned empty. The `tool_path` fix (resolve to an absolute path in the
+parent) is the genuine repair. The 1.2.0 de-nesting of those same sysdb
+functions was incidental and did nothing — issue 0002 alone greened CI.
 
-fn dfs(edges, name, color, path, result_cycle) {
-    var cname = to_cstr(name);
-    map_set(color, cname, 1);
-    vec_push(path, name);
-    if (map_has(edges, cname) == 1) {
-        var deps = map_get(edges, cname);
-        var i = 0;
-        while (i < vec_len(deps)) {
-            var dep = vec_get(deps, i);
-            var cdep = to_cstr(dep);
-            var dep_color = map_get(color, cdep);
-            if (dep_color == 1) { vec_pop(path); return 1; }   # back edge
-            if (dep_color == 0) {
-                if (dfs(edges, dep, color, path, result_cycle) == 1) {
-                    vec_pop(path); return 1;
-                }
-            }
-            i = i + 1;
-        }
-    }
-    map_set(color, cname, 2);
-    vec_pop(path);
-    return 0;
-}
+## What was actually a (project) bug
 
-fn detect_cycle(nodes_map, edges) {
-    var color = map_new();
-    var nodes = map_keys(nodes_map);
-    var i = 0;
-    while (i < vec_len(nodes)) {
-        map_set(color, vec_get(nodes, i), 0);
-        i = i + 1;
-    }
-    var result_holder = alloc(8);
-    store64(result_holder, 0);
-    i = 0;
-    while (i < vec_len(nodes)) {
-        # BUG TRIGGER: vec_get(nodes, i) evaluated twice in this scope.
-        var name = str_from(vec_get(nodes, i));
-        if (map_get(color, vec_get(nodes, i)) == 0) {
-            if (dfs(edges, name, color, vec_new(), result_holder) == 1) {
-                return load64(result_holder);
-            }
-        }
-        i = i + 1;
-    }
-    return 0;
-}
+[Issue 0002](0002-sysdb-exec-bare-name-path.md) — sysdb's bare-`argv[0]` exec.
+It is a nous bug (our usage of `exec_capture`), not a compiler bug, and it is
+fixed. That is the bug the 0001 narrative was obscuring.
 
-fn main() {
-    alloc_init();
-    var nodes_map = map_new();
-    var edges = map_new();
-    var da = vec_new(); vec_push(da, str_from("B"));
-    var db = vec_new(); vec_push(db, str_from("C"));
-    var dc = vec_new(); vec_push(dc, str_from("A"));
-    map_set(nodes_map, to_cstr(str_from("A")), 1);
-    map_set(nodes_map, to_cstr(str_from("B")), 1);
-    map_set(nodes_map, to_cstr(str_from("C")), 1);
-    map_set(edges, to_cstr(str_from("A")), da);
-    map_set(edges, to_cstr(str_from("B")), db);
-    map_set(edges, to_cstr(str_from("C")), dc);
-    var r = detect_cycle(nodes_map, edges);
-    if (r != 0) { println("RESULT: cycle detected (correct)"); }
-    else { println("RESULT: NO cycle found (WRONG)"); }
-    return 0;
-}
+## Lesson
 
-var ec = main();
-syscall(60, ec);
-```
-
-### Expected
-```
-RESULT: cycle detected (correct)
-```
-### Actual (Cyrius 6.0.1)
-```
-RESULT: NO cycle found (WRONG)
-```
-
-The back edge `C → A` is missed: the colour lookup for the gray node `A`
-returns a value other than `1`, so a real cycle reads as "no cycle".
-
-### The one-line fix that flips it back to correct
-```cyrius
-        # cache the accessor in a local instead of re-evaluating it
-        var nd = vec_get(nodes, i);
-        if (map_get(color, nd) == 0) {
-            var name = str_from(nd);
-            ...
-```
-
-## Impact on nous
-
-When nous moves onto the 6.0.1 stdlib (1.2.0 de-vendor), the bug surfaced as:
-
-- `dep_graph_detect_cycle` — a cyclic graph read as acyclic → caller did
-  `vec_len(0)` → **SIGSEGV** in the test suite.
-- `dep_graph_topo_sort` — emitted a 1-element order for a 3-node chain.
-- `resolver_resolve_all` — resolved only the seed package (deps lost), because
-  `mpkg_to_resolved` built the dependency list with `str_from(vec_get(dk, i))`.
-
-All produced **silently wrong** results — exactly the class of failure a package
-resolver must never ship (resolution must be deterministic and cycle detection
-is mandatory).
-
-## Workaround (applied in nous 1.2.0)
-
-Bind the typed accessor to a local before using it in another call or re-using
-it. Sites fixed:
-
-| File | Function | Pattern removed |
-|------|----------|-----------------|
-| `src/graph.cyr` | `dep_graph_detect_cycle` | double `vec_get(nodes, i)` |
-| `src/graph.cyr` | `dep_graph_topo_sort` | double `vec_get(nodes, i)`; `to_cstr(vec_get(deps, j))` ×2 |
-| `src/graph.cyr` | `resolver_resolve_all` | `map_has(visited, to_cstr(dep))` |
-| `src/recipe.cyr` | `recipe_db_load` | `str_from(vec_get(categories, ci))` |
-| `src/resolver.cyr` | `mpkg_to_resolved` | `str_from(vec_get(dk, i))` |
-| `src/sysdb.cyr` | `sysdb_search`, `sysdb_get_installed`, `sysdb_list`, `sysdb_info` | `str_trim`/`str_split`/`str_to_int`/`str_contains`/`installed_pkg_new` wrapping `vec_get` |
-
-### Note: the sysdb sites manifested only in CI
-
-The sysdb apt-path sites are guarded by `sysdb_available()` (apt/dpkg present).
-On the dev box (Arch, no `dpkg`) `integration_apt` *skips*, so the suite was
-271/0 locally while CI (Ubuntu, apt present) ran those asserts and failed — the
-`cyrius test` step exited with the failure count (`2`). The bug is **not**
-machine-non-deterministic; the affected code path simply doesn't execute without
-apt. Lesson: a green local run isn't sufficient for env-gated paths — the CI
-test step now always prints per-test output (it previously died at `set -e`
-before echoing, masking the failure as a bare "exit code 2").
-
-## Remaining at-risk sites (defensive cleanup, 1.2.1)
-
-Same `outer(vec_get(...))` shape, but these run in **every** environment and
-pass the full suite (deterministic — no env gate), so they are not known to be
-miscompiled here; de-nesting them is a safe, behaviour-preserving consistency
-pass scheduled for 1.2.1 (`docs/development/roadmap.md`):
-
-- `src/source.cyr`: line ~133 (`str_from(vec_get(rkeys, i))`)
-- `src/recipe.cyr`: lines ~284, 517 (`str_trim`/`to_cstr` wrapping `vec_get`)
-- `src/json.cyr`, `src/sort.cyr`: `vec_push`/`str_builder_add`/`vec_set`-wrapped
-  `vec_get` (value-discarding outer calls — lower risk)
-
-## Verification
-
-```sh
-# reproduce (against a 6.0.1 stdlib): prints "NO cycle found (WRONG)"
-cyrius build repro.cyr repro && ./repro
-# nous suite, post-workaround: 271 passed, 0 failed
-cyrius test tests/nous.tcyr
-```
-
-When a Cyrius release fixes the codegen, re-run the reproducer; once it prints
-`cycle detected (correct)` the nous workarounds can be reverted (revert the
-commits referencing this file) and the pin bumped.
+A reproducer must be checked end-to-end before a defect is attributed to a
+third-party toolchain. A green-vs-red bisection table that the pasted
+reproducer cannot actually produce is the tell. When a downstream failure looks
+like a compiler bug, first confirm the downstream code is correct in isolation —
+here, the sysdb exec path (issue 0002) was the real cause the whole time.

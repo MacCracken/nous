@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.5] - 2026-05-27
+
+Cyrius 6.0.3 + **retraction of the phantom issue-0001 "codegen bug."**
+
+### Changed
+
+- **Toolchain pin 6.0.1 → 6.0.3** (`cyrius.cyml`). The smoke build is clean and
+  the pin-drift warning is gone; fmt/lint/vet/deny/doc, the 271-test suite, and
+  all 18 benchmarks pass unchanged on 6.0.3.
+
+### Fixed
+
+- **Reverted the unnecessary issue-0001 `vec_get` de-nesting workaround.**
+  Investigation showed there was **never a Cyrius codegen bug**: the typed
+  `vec_get` nested-call / re-eval form compiles correctly on **both cycc 6.0.1
+  and 6.0.3**, and the original reproducer was self-defective — its `dfs`
+  omitted the `store64(result_holder, …)` that the real
+  `detect_cycle_dfs` performs, so it returned `0` unconditionally on every
+  compiler (its bisection table is not reproducible). Re-nesting every blamed
+  site (`dep_graph_detect_cycle`, `dep_graph_topo_sort`, `resolver_resolve_all`,
+  `mpkg_to_resolved`, `recipe_db_load`, sysdb parsers) and running the suite
+  gives **271/0 on cycc 6.0.1 _and_ 6.0.3**. The de-nesting in `src/graph.cyr`,
+  `src/resolver.cyr`, `src/recipe.cyr`, and `src/sysdb.cyr` is restored to its
+  original nested form and every "Cyrius 6.0.1 miscompile" comment removed.
+  [Issue 0001](docs/development/issues/0001-cyrius-6.0.1-vec-get-recompute.md) is
+  **closed as not-a-defect**; ADR
+  [0003](docs/adr/0003-cyrius-6.0.1-vec-get-workaround.md) is **superseded**.
+- The real CI failure the 0001 narrative had obscured was entirely
+  [issue 0002](docs/development/issues/0002-sysdb-exec-bare-name-path.md) — the
+  sysdb bare-`argv[0]` PATH bug, a genuine nous-side defect, fixed in 1.2.0 via
+  `which_path`/`tool_path`. That fix **stands**.
+
+### Notes
+
+- No behaviour change for consumers: public API unchanged, resolution remains
+  deterministic, cycle detection unchanged. `dist/nous.cyr` regenerated (net
+  −42 lines from removing the workaround temps and comments).
+
 ## [1.2.4] - 2026-05-26
 
 Docs modernization + P(-1) arc closeout — **closes the 1.2.x arc.**

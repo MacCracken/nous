@@ -16,19 +16,20 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
 - CI/release hardened to the patra pattern: release-asset HTTP pre-flight
   + gzip verify, versioned toolchain layout, stdlib-via-symlink, a
   distlib-sync gate, and `nous-<tag>.cyr` shipped as a release artifact
-- Worked around a Cyrius 6.0.1 codegen bug (typed `vec_get` nested as a call
-  argument / re-evaluated returns a wrong value) that the stdlib bump exposed in
-  cycle detection, topo sort, and `resolver_resolve_all`. Fixed by binding the
-  accessor to a local; suite back to 271/0. Reported upstream with a
-  self-contained reproducer +
-  [issue 0001](issues/0001-cyrius-6.0.1-vec-get-recompute.md). Compiler not
-  touched — treated as an external dependency.
+- ~~Worked around a Cyrius 6.0.1 codegen bug~~ **[RETRACTED in 1.2.5 — there was
+  no codegen bug; misdiagnosis.](issues/0001-cyrius-6.0.1-vec-get-recompute.md)**
+  At the time, a typed `vec_get` nested/re-evaluated was *believed* to miscompile
+  in cycle detection, topo sort, and `resolver_resolve_all`, and was de-nested to
+  a local. The nested form actually compiles correctly on both 6.0.1 and 6.0.3;
+  the real cause of the failure was [issue 0002](issues/0002-sysdb-exec-bare-name-path.md)
+  (sysdb PATH). The de-nesting was reverted in 1.2.5.
 
 ## Completed (v1.2.1) — Hygiene + codegen-workaround sweep
 
-- Completed the issue-0001 `vec_get`-nesting de-nest sweep (source, recipe,
-  json, sort — incl. the sort inner-loop double `vec_get(v, j)` re-eval). No
-  `outer(vec_get(…))` sites remain in `src/`.
+- Extended the issue-0001 `vec_get` de-nest sweep (source, recipe, json, sort).
+  **(The 0001 "codegen bug" was later [retracted in 1.2.5](issues/0001-cyrius-6.0.1-vec-get-recompute.md)
+  as a misdiagnosis; the core de-nesting was reverted. These 1.2.1 sweep sites
+  carried no false comments and were left as ordinary local-binding style.)**
 - `cyrius fmt` applied across `src/` + `tests/` (whole tree canonical).
 - Cleared per-module lint warnings (consecutive blank lines in
   error/recipe/resolver/source); every module lints clean.
@@ -61,6 +62,21 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
   cleanliness + 271/0 + stable benches; internal review (zero TODO/unwrap/panic;
   both filed toolchain issues worked around); `@unsafe` not adopted (deny/lint
   don't require it); resolver-completeness assessment. **Closes the 1.2.x arc.**
+
+## Completed (v1.2.5) — Cyrius 6.0.3 + issue-0001 retraction
+
+- Toolchain pin 6.0.1 → 6.0.3 (clean: fmt/lint/vet/deny/doc, 271/0, 18 benches
+  unchanged; pin-drift warning gone).
+- **Retracted the phantom issue-0001 "codegen bug."** Proved there was never a
+  Cyrius `vec_get` miscompile: the nested form passes 271/0 on cycc 6.0.1 *and*
+  6.0.3, and the original reproducer was self-defective (omitted the `store64`
+  the real `detect_cycle_dfs` does, so it returned 0 unconditionally — its
+  bisection table is not reproducible). Reverted the unnecessary de-nesting in
+  `graph`/`resolver`/`recipe`/`sysdb` to the original nested forms and removed
+  every false "miscompile" comment. Issue 0001 closed as not-a-defect; ADR 0003
+  superseded. The genuine project-side bug the narrative obscured —
+  [issue 0002](issues/0002-sysdb-exec-bare-name-path.md) (sysdb bare-`argv[0]`
+  PATH) — stands as fixed.
 
 ## Completed (v1.1.1)
 
@@ -98,12 +114,15 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
 - Package metadata sync
 - Trust integration with sigil (package signing/verification)
 
-## 1.2.x Modernization Arc — COMPLETE (1.2.0 → 1.2.4)
+## 1.2.x Modernization Arc — COMPLETE (1.2.0 → 1.2.5)
 
-All five releases shipped (see the Completed sections above). nous is a clean,
-fully-typed, bundle-shipping Cyrius 6.0.1 library with hardened CI/release,
+All releases shipped (see the Completed sections above). nous is a clean,
+fully-typed, bundle-shipping Cyrius 6.0.3 library with hardened CI/release,
 current docs + ADRs, and a P(-1) closeout audit
 ([docs/audit/2026-05-26-1.2.x-closeout.md](../audit/2026-05-26-1.2.x-closeout.md)).
+1.2.5 retracted the misdiagnosed issue-0001 "codegen bug" and reverted its
+unnecessary workaround — there is no Cyrius defect; the real fix was
+issue 0002 (sysdb PATH).
 
 Deferred from the arc (not arc-blocking, tracked here):
 - **Per-function `#` doc comments** + promoting the CI `doc` gate from the barrel
