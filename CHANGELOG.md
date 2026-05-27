@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2026-05-26
+
+Docs modernization + P(-1) arc closeout — **closes the 1.2.x arc.**
+
+### Changed
+
+- **De-Rust-ified `CLAUDE.md`** — dropped "flat library crate", `MSRV: 1.89`,
+  `#[non_exhaustive]`/`#[must_use]` Rust attributes, and serde framing; replaced
+  with the Cyrius idiom (6.0.1 pin, `#must_use`, exhaustive `match`, manual JSON
+  via `src/json.cyr`, explicit `: i64` returns).
+- **`src/main.cyr` banner fallback is now version-less** (`"nous — package
+  resolver for AGNOS"`) — the runtime read of `VERSION` is unchanged; the
+  fallback no longer needs a per-release bump (cyrius has no compile-time
+  string-from-file templating).
+- **Refreshed `docs/architecture/overview.md`** (bundle/build model, corrected
+  stale test counts, pruned the "future modules" table — P1 modules shipped) and
+  **`docs/development/gaps.md`** header/current-state (was pre-1.0).
+
+### Added
+
+- **`docs/adr/`** — architectural decision records (required by the project's own
+  Documentation Standards): 0001 `Result<T,E>` error handling, 0002 flat modules
+  + `dist/nous.cyr` bundle, 0003 the Cyrius 6.0.1 `vec_get` de-nest workaround.
+- **`docs/guides/getting-started.md`** — build/test/cleanliness/bundle/consume.
+- **`docs/audit/2026-05-26-1.2.x-closeout.md`** — the P(-1) Scaffold Hardening
+  closeout: cleanliness + 271/0 + stable benches confirmed; internal review
+  (zero TODO/unwrap/panic; both filed toolchain issues worked around); `@unsafe`
+  decision (not adopted — deny/lint don't require it); external resolver-
+  completeness assessment (backtracking/SAT is a documented future, not a gap).
+
 ## [1.2.3] - 2026-05-26
 
 Return-type annotation sweep — aligns nous with the modern Cyrius idiom.

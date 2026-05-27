@@ -4,10 +4,11 @@
 
 **Nous** (Greek: νοῦς — intellect) — Package resolver for AGNOS (system, marketplace, Flutter)
 
-- **Type**: Flat library crate
+- **Type**: Flat Cyrius library — `src/*.cyr` modules behind a barrel
+  (`src/nous.cyr`); ships a single-file `dist/nous.cyr` bundle via `cyrius distlib`
 - **License**: GPL-3.0-only
-- **MSRV**: 1.89
-- **Version**: SemVer 0.1.0
+- **Toolchain**: Cyrius 6.0.1 (pinned in `cyrius.cyml`; the single source of truth)
+- **Version**: SemVer (see `VERSION`)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
 - **First-party standards**: [First-Party Application Standards](https://github.com/MacCracken/agnosticos/blob/main/docs/development/applications/first-party-standards.md)
@@ -64,12 +65,15 @@ ark (dependency resolution). Nous is the single source of truth for resolving pa
 ### Key Principles
 
 - Never skip benchmarks
-- `#[non_exhaustive]` on ALL public enums (forward compatibility)
-- `#[must_use]` on all pure functions
-- Every type must be Serialize + Deserialize (serde)
-- Feature-gate optional modules — consumers pull only what they need
-- Zero unwrap/panic in library code
-- All types must have serde roundtrip tests
+- Public enums: handle variants exhaustively at call sites; treat new variants
+  as a forward-compat concern (Cyrius has no `#[non_exhaustive]` — be deliberate)
+- `#must_use` on pure functions whose result must not be silently dropped
+- Every public type has JSON serialize + deserialize (manual, via `src/json.cyr`
+  — nous does not use serde)
+- All functions carry explicit return types (`: i64`) — the Cyrius 6.0.1 idiom
+- Optional modules stay feature-gated — consumers pull only what they need
+- Zero panic/abort paths in library code; surface errors via `Result` (Ok/Err)
+- All public types have JSON roundtrip tests
 - Resolution must be deterministic — same inputs always produce same dependency graph
 - Cycle detection is mandatory — never allow circular dependencies to pass resolution
 - Version conflict reporting must be clear and actionable
@@ -135,22 +139,22 @@ Create an ADR when:
 
 ### Guides and Examples
 
-- **Guides** (`docs/guides/`) — written for consumers of this crate. How to integrate, common patterns, migration between versions.
+- **Guides** (`docs/guides/`) — written for consumers of this library. How to integrate, common patterns, migration between versions.
 - **Examples** (`examples/` or `docs/examples/`) — working code with comments explaining *why*, not just *what*. Every public API should have at least one example.
 
 ### Standards and Compliance
 
-- **Standards** (`docs/standards/`) — reference external specifications this crate implements or conforms to. Link to the spec, note the version, document any deviations.
+- **Standards** (`docs/standards/`) — reference external specifications this library implements or conforms to. Link to the spec, note the version, document any deviations.
 - **Compliance** (`docs/compliance/`) — regulatory, licensing, or security compliance documentation. Audit results, certification status, known limitations.
 
-### Source Citations (Required for Science/Math/Domain Crates)
+### Source Citations (Required for Science/Math/Domain Libraries)
 
-For crates that implement scientific, mathematical, financial, or domain-specific algorithms:
+For projects that implement scientific, mathematical, financial, or domain-specific algorithms:
 
 **In code** — every algorithm, formula, constant, or domain model must cite its source.
 
 **In docs** — maintain a `docs/sources.md` or `docs/references.md` that lists:
-- Every paper, textbook, or specification the crate draws from
+- Every paper, textbook, or specification the project draws from
 - URLs to freely available versions where possible
 - Which module or function uses which source
 - Why a particular source was chosen over alternatives

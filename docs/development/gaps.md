@@ -1,15 +1,22 @@
 # Nous — Known Gaps & Hardening Targets
 
-> **Status**: Active | **Last Updated**: 2026-04-16
+> **Status**: Active | **Last Updated**: 2026-05-26 (1.2.x closeout)
 >
-> Nous is currently a single-package resolver ported to Cyrius 5.1.7.
+> nous resolves transitive dependency **graphs** on Cyrius 6.0.1.
 > This document tracks the gaps between what exists and what a production resolver needs.
+>
+> **The P1 — Dependency Resolution items below (version constraints, transitive
+> resolution, topological sort, cycle detection) all SHIPPED in the 1.x series**
+> and are retained here as a record. Remaining live gaps are the post-P1 sections
+> (caching, mela client) — see `roadmap.md` for the prioritized backlog.
 
 ---
 
 ## Current State
 
-Single library file `src/nous.cyr` (1,276 lines) with manual struct layout.
+14-module `src/` layout behind a barrel (`src/nous.cyr`), shipping a single-file
+`dist/nous.cyr` bundle (`cyrius distlib`). Manual struct layout; all functions
+typed `: i64` (Cyrius 6.0.1 idiom).
 
 **What works:**
 - Single-package resolution across 4 sources (System, Marketplace, FlutterApp, Community)

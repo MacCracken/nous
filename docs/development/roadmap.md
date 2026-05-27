@@ -50,6 +50,18 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
   preserving idiom alignment — 271/0 unchanged; fmt/lint/vet/deny/doc clean;
   codegen verified. Independent of the issue-0001 de-nesting.
 
+## Completed (v1.2.4) — Docs modernization + P(-1) arc closeout
+
+- De-Rust-ified `CLAUDE.md`; version-less `src/main.cyr` banner fallback.
+- Started `docs/adr/` (0001 Result, 0002 modules+bundle, 0003 de-nest workaround);
+  added `docs/guides/getting-started.md`; refreshed `architecture/overview.md`
+  and `development/gaps.md`.
+- P(-1) Scaffold Hardening closeout audit
+  ([docs/audit/2026-05-26-1.2.x-closeout.md](../audit/2026-05-26-1.2.x-closeout.md)):
+  cleanliness + 271/0 + stable benches; internal review (zero TODO/unwrap/panic;
+  both filed toolchain issues worked around); `@unsafe` not adopted (deny/lint
+  don't require it); resolver-completeness assessment. **Closes the 1.2.x arc.**
+
 ## Completed (v1.1.1)
 
 - Single-package and transitive dependency resolution across system, marketplace, Flutter, and community sources
@@ -86,40 +98,18 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
 - Package metadata sync
 - Trust integration with sigil (package signing/verification)
 
-## 1.2.x Modernization Arc
+## 1.2.x Modernization Arc — COMPLETE (1.2.0 → 1.2.4)
 
-Continued alignment to Cyrius 6.0.1 conventions, sequenced after 1.2.0.
-Each is an independent, releasable bite. (1.2.0–1.2.3 shipped — see Completed.)
-Scope re-confirmed 2026-05-26 against sibling **vidya** and the **cyrius**
-stdlib/docs. The final nous-side arc item remains:
+All five releases shipped (see the Completed sections above). nous is a clean,
+fully-typed, bundle-shipping Cyrius 6.0.1 library with hardened CI/release,
+current docs + ADRs, and a P(-1) closeout audit
+([docs/audit/2026-05-26-1.2.x-closeout.md](../audit/2026-05-26-1.2.x-closeout.md)).
 
-### 1.2.4 — Docs modernization + P(-1) arc closeout
-
-Docs / instructions:
-- De-Rust-ify `CLAUDE.md` — "flat library crate", cargo fmt/clippy/audit/deny
-  lineage, and the `#[must_use]` / `#[non_exhaustive]` Rust attributes (map to
-  cyrius `#must_use` and exhaustive `match`).
-- Start `docs/adr/` (vidya has one; nous's own Documentation Standards require
-  ADRs) — record the `Result<T, E>` adoption, the 14-module flat layout, and the
-  issue-0001 de-nest workaround.
-- Add `docs/guides/getting-started.md` (vidya model).
-- Refresh `docs/architecture/overview.md` for the `dist/nous.cyr` bundle model.
-- Add `#`-block doc comments to public functions; once documented, promote the
-  CI doc gate from the barrel to per-module (`cyrius doc --check` exits =
-  undocumented count). Optional doctest examples via `# >>>` / `# ===`.
-- Template the `src/main.cyr` version banner so the hardcoded no-VERSION-file
-  fallback tracks `VERSION` (revisit if cyrius gains compile-time string-from-
-  file templating).
-
-P(-1) Scaffold Hardening closeout (per CLAUDE.md P(-1)) — closes the 1.2.x arc:
-- Full test + benchmark sweep; baseline vs post-review deltas (never skip benches).
-- Cleanliness pass (fmt/lint/vet/deny/doc) + internal deep review (gaps, perf,
-  memory, security, errors/logging) + external research (resolver completeness /
-  world-class accuracy).
-- `@unsafe` audit — the cyrius guide wraps unchecked `load*`/`store*` in
-  `@unsafe { }`; deny/lint don't currently require it for nous, so this is a
-  judgment call to make during the review.
-- Documentation audit; mark the arc complete.
+Deferred from the arc (not arc-blocking, tracked here):
+- **Per-function `#` doc comments** + promoting the CI `doc` gate from the barrel
+  to per-module. The structural docs (ADRs, guide, overview) landed in 1.2.4; the
+  ~206-function doc-comment pass is a larger, lower-priority follow-on.
+- **ark consumer migration** to `modules = ["dist/nous.cyr"]` — see below.
 
 ## Consumer coordination (ark — separate repo, not a nous version)
 

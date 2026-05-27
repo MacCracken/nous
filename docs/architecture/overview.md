@@ -22,11 +22,17 @@ src/
   recipe.cyr          Zugot CYML parsing, recipe DB, recipe-based resolution
 
 tests/
-  nous.tcyr           Test suite (140 assertions, 40 groups)
-  nous.bcyr           Benchmarks (11 benches)
+  nous.tcyr           Test suite (271 assertions)
+  nous.bcyr           Benchmarks (18 benches)
   nous.fcyr           Fuzz harnesses (3 harnesses)
 
+dist/
+  nous.cyr            Consumer-facing single-file bundle (cyrius distlib; ADR-0002)
 ```
+
+All `src/*.cyr` functions carry explicit `: i64` return types (Cyrius 6.0.1
+idiom). `lib/` (stdlib) is gitignored — resolved from the version-pinned
+`~/.cyrius/versions/<v>/lib/` snapshot, not committed.
 
 ## Data Flow
 
@@ -54,6 +60,20 @@ All structs use manual `alloc` + `store64` construction with `load64` accessors.
 Fields are at `field_index * 8` byte offsets. See `src/nous.cyr` header comments for
 the complete layout of all 12 struct types.
 
+## Build & Distribution
+
+- **Library bundle** — `[lib] modules` in `cyrius.cyml` lists the 14 `src/*.cyr`
+  in barrel order; `cyrius distlib` concatenates them into the committed
+  `dist/nous.cyr`. Consumers include that one file and supply their own stdlib
+  (the bundle does not embed stdlib). CI fails if the committed bundle drifts.
+- **Smoke binary** — `[build] entry = src/main.cyr` → `build/nous`; a runtime
+  self-check ("all smoke checks passed"). `modules` lives under `[lib]`, never
+  `[build]` (the latter auto-prepends and bloats the binary).
+- **Toolchain** — pinned to Cyrius 6.0.1 in `cyrius.cyml`. Release ships
+  `nous-<tag>.cyr` (the bundle), the x86_64 binary, a source tarball, and
+  `SHA256SUMS`. The binary is **not** stripped (corrupts a cyrius raw ELF).
+- Rationale: see [ADR-0002](../adr/0002-flat-modules-dist-bundle.md).
+
 ## Consumers
 
 - **ark** — the AGNOS package manager CLI. Nous is the single source of truth for resolving package dependencies.
@@ -70,14 +90,11 @@ the complete layout of all 12 struct types.
 
 ## Future Modules (planned)
 
-See [roadmap.md](../development/roadmap.md) for prioritized backlog.
+Version constraints, the dependency graph, topological sort, cycle/conflict
+detection, and zugot integration are **shipped** (see the module map above). The
+remaining planned work — see [roadmap.md](../development/roadmap.md):
 
 | Module | Purpose |
 |---|---|
-| Version constraints | SemVer parsing, constraint matching (>=, ^, ~, =) |
-| Dependency graph | Graph construction, transitive resolution |
-| Topological sort | Install-order computation via Kahn's algorithm |
-| Cycle/conflict detection | DFS coloring for cycles, constraint intersection for conflicts |
-| Zugot integration | Recipe parsing, build-order awareness |
 | Resolution cache | Persistent cache for resolved dependency graphs |
-| Mela client | Real marketplace API (replaces registry stub) |
+| Mela client | Real marketplace API (replaces the registry stub) |
