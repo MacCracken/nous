@@ -456,14 +456,17 @@ fn test_resolver_missing_marketplace() {
     assert(is_ok(res), "missing dir -> ok resolver");
     var r = payload(res);
     assert(r != 0, "resolver non-null");
-    # Resolving an unknown package against the empty registry must return
-    # cleanly (Ok with a 0 payload via system-first fallthrough), never crash.
-    var rr = resolver_resolve(r, str_from("nginx"));
-    assert(is_err_result(rr) == 0, "unknown pkg resolves without error");
-    assert_eq(payload(rr), 0, "unknown pkg -> none");
-    # Full transitive resolve_all must also survive an unpopulated system.
+    # Use a name guaranteed absent from apt, the (empty) marketplace, and the
+    # recipe DB, so the assertions hold regardless of whether the test host
+    # has apt installed. The regression is that resolution against a resolver
+    # built over a MISSING marketplace dir must not crash.
+    var bogus = str_from("zzznonexistentpkgxyzzy");
+    var rr = resolver_resolve(r, bogus);
+    assert(is_err_result(rr) == 0, "bogus pkg resolves without error");
+    assert_eq(payload(rr), 0, "bogus pkg -> none");
+    # Full transitive resolve_all must also survive the empty-everything case.
     var names = vec_new();
-    vec_push(names, str_from("nginx"));
+    vec_push(names, bogus);
     var ra = resolver_resolve_all_with_recipes(r, names);
     assert(is_err_result(ra) == 0, "resolve_all survives empty everything");
     rm_rf(c);
