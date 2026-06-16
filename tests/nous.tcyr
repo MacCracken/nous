@@ -136,7 +136,10 @@ fn test_registry_new() {
     test_group("registry_new");
     var d = mkdir_test();
     assert(is_ok(registry_new(d)), "valid dir");
-    assert(is_err_result(registry_new(str_from("/nonexistent/path"))), "bad dir");
+    # Missing dir now yields an ok, empty registry (see registry_new)
+    var missing = registry_new(str_from("/nonexistent/path"));
+    assert(is_ok(missing), "missing dir -> ok");
+    assert_eq(vec_len(registry_list(payload(missing))), 0, "missing dir -> empty");
     rm_rf(d);
 }
 
@@ -442,12 +445,27 @@ fn test_check_updates_empty() {
     rm_rf(d); rm_rf(c);
 }
 
-fn test_resolver_fails_nonexistent() {
-    test_group("resolver_fails_nonexistent");
+fn test_resolver_missing_marketplace() {
+    test_group("resolver_missing_marketplace");
+    # A missing marketplace dir must yield a usable empty-registry resolver
+    # (not a hard error). Regression for the SIGSEGV where callers got a
+    # sentinel resolver and then deref'd a non-error payload.
     var c = mkdir_test();
     var bad = str_from("/nonexistent/marketplace/path");
     var res = resolver_new(bad, c);
-    assert(is_err_result(res), "bad dir fails");
+    assert(is_ok(res), "missing dir -> ok resolver");
+    var r = payload(res);
+    assert(r != 0, "resolver non-null");
+    # Resolving an unknown package against the empty registry must return
+    # cleanly (Ok with a 0 payload via system-first fallthrough), never crash.
+    var rr = resolver_resolve(r, str_from("nginx"));
+    assert(is_err_result(rr) == 0, "unknown pkg resolves without error");
+    assert_eq(payload(rr), 0, "unknown pkg -> none");
+    # Full transitive resolve_all must also survive an unpopulated system.
+    var names = vec_new();
+    vec_push(names, str_from("nginx"));
+    var ra = resolver_resolve_all_with_recipes(r, names);
+    assert(is_err_result(ra) == 0, "resolve_all survives empty everything");
     rm_rf(c);
 }
 
@@ -1278,7 +1296,7 @@ fn main() {
     test_json();
     test_sysdb_new();
     test_check_updates_empty();
-    test_resolver_fails_nonexistent();
+    test_resolver_missing_marketplace();
     test_source_serde_roundtrip();
     test_strategy_serde_roundtrip();
     test_search_result_serde();

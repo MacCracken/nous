@@ -5,7 +5,7 @@ description = "nous — package resolver for AGNOS (system, marketplace, Flutter
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/nous"
 language = "cyrius"
-cyrius = "6.2.11"
+cyrius = "6.2.12"
 
 [build]
 entry = "src/main.cyr"

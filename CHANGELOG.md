@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.7] - 2026-06-16
+
+### Fixed
+
+- **SIGSEGV when the marketplace directory is absent.** `registry_new` hard-errored
+  if the marketplace base dir did not exist. On a fresh system (no
+  `/var/lib/agnos/marketplace`), this forced consumers to fall back to a sentinel
+  (null) resolver and then dereference a non-error payload, crashing the process.
+  `registry_new` now treats a missing dir as an **empty registry**, so resolution
+  still falls through to the system layer and the recipe DB. Resolving any package
+  against an unprovisioned system now returns cleanly instead of crashing.
+  Regression covered by `test_registry_new` (missing dir → ok/empty) and
+  `test_resolver_missing_marketplace` (resolve + resolve_all survive empty everything).
+
+### Changed
+
+- **Toolchain pin 6.2.11 → 6.2.12** (`cyrius.cyml`); matches the installed toolchain
+  and ark, clears the pin-drift warning. 276-test suite green; fmt/lint clean.
+
 ## [1.2.6] - 2026-06-15
 
 Cyrius **6.0.3 → 6.2.11** + adoption of the consolidated `bayan` stdlib bundle.
