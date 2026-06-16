@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.6] - 2026-06-15
+
+Cyrius **6.0.3 → 6.2.11** + adoption of the consolidated `bayan` stdlib bundle.
+
+### Changed
+
+- **Toolchain pin 6.0.3 → 6.2.11** (`cyrius.cyml`). Smoke build is clean,
+  pin-drift warning gone; fmt/lint/vet/deny/doc, the 271-test suite, and all 18
+  benchmarks pass unchanged on 6.2.11. No behaviour change for consumers: public
+  API unchanged, resolution remains deterministic, cycle detection unchanged.
+- **Swapped `json` + `toml` for `bayan` in `[deps] stdlib`.** The 6.2.x stdlib
+  slim-down removed the standalone `json.cyr`, `toml.cyr` (plus `base64`,
+  `bigint`, `csv`, `cyml`, `linalg`, `matrix`, `u128`) and folded them into the
+  consolidated `bayan` bundle, which re-exports the old un-namespaced symbols
+  via its `_compat` surface. nous now depends on `bayan` and sources the six
+  `toml_*` section/pair struct constructors/accessors
+  (`toml_section_new`/`toml_section_name`/`toml_section_pairs`,
+  `toml_pair_new`/`toml_pair_key`/`toml_pair_value`) from it rather than
+  hand-rolling them. nous still ships its own manual `src/json.cyr` (domain
+  serializers — no name overlap with bayan) and its own CYML parser.
+
+### Breaking
+
+- **`dist/nous.cyr` consumers must supply `bayan` in their `[deps] stdlib`.**
+  The bundle references the `toml_*` structs but (per the consumer-supplied-stdlib
+  model) does not define them; they now come from `bayan` instead of the removed
+  `toml`. ark must add `"bayan"` (and may drop `"json"`/`"toml"`).
+
+### Fixed
+
+- **Renamed nous's CYML parser `cyml_parse` → `nous_cyml_parse`**
+  (`src/recipe.cyr`, callers in `recipe.cyr`/`tests`). bayan's `_compat` surface
+  exports a `cyml_parse(data, len)` of a different (doc/entry) model, which
+  collided with nous's single-bracket `[section]` parser `cyml_parse(src)`.
+  Renaming keeps nous's parser (it handles `[section]` headers bayan's does not)
+  while letting `bayan` satisfy the `toml_*` structs. A full symbol-collision
+  audit (212 nous fns × 344 bayan fns) confirms these were the only clashes.
+  `recipe_parse` (28µs) and `recipe_db_load` (10.7ms) benchmarks unchanged.
+
+### Notes
+
+- `dist/nous.cyr` regenerated (v1.2.6). `vet`: 14 deps, 0 untrusted, 0 missing;
+  `deny`: 0 violations. DCE note grew (542 → 880 unreachable fns pre-DCE) from
+  bayan's bundle bulk; `CYRIUS_DCE=1` strips it in release builds.
+
 ## [1.2.5] - 2026-05-27
 
 Cyrius 6.0.3 + **retraction of the phantom issue-0001 "codegen bug."**

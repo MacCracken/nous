@@ -63,6 +63,21 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
   both filed toolchain issues worked around); `@unsafe` not adopted (deny/lint
   don't require it); resolver-completeness assessment. **Closes the 1.2.x arc.**
 
+## Completed (v1.2.6) — Cyrius 6.2.11 + bayan adoption
+
+- Toolchain pin 6.0.3 → 6.2.11 (clean: fmt/lint/vet/deny/doc, 271/0, 18 benches
+  unchanged; pin-drift warning gone).
+- Adapted to the 6.2.x stdlib slim-down, which folded `json`/`toml` (and
+  `base64`/`bigint`/`csv`/`cyml`/`linalg`/`matrix`/`u128`) into the consolidated
+  `bayan` bundle. Swapped `json` + `toml` → `bayan` in `[deps] stdlib`; nous now
+  sources the six `toml_*` section/pair structs from bayan's `_compat` surface
+  rather than hand-rolling them. nous keeps its own `src/json.cyr` (domain
+  serializers) and its own CYML parser — renamed `cyml_parse` → `nous_cyml_parse`
+  to dodge bayan's differently-shaped `cyml_parse(data, len)`.
+- **Consumer-facing (breaking):** `dist/nous.cyr` now expects the consumer to
+  supply `bayan` in `[deps] stdlib` (it references the `toml_*` structs without
+  defining them). ark must add `"bayan"` and may drop `"json"`/`"toml"`.
+
 ## Completed (v1.2.5) — Cyrius 6.0.3 + issue-0001 retraction
 
 - Toolchain pin 6.0.1 → 6.0.3 (clean: fmt/lint/vet/deny/doc, 271/0, 18 benches
@@ -114,15 +129,17 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
 - Package metadata sync
 - Trust integration with sigil (package signing/verification)
 
-## 1.2.x Modernization Arc — COMPLETE (1.2.0 → 1.2.5)
+## 1.2.x Modernization Arc — COMPLETE (1.2.0 → 1.2.6)
 
 All releases shipped (see the Completed sections above). nous is a clean,
-fully-typed, bundle-shipping Cyrius 6.0.3 library with hardened CI/release,
+fully-typed, bundle-shipping Cyrius 6.2.11 library with hardened CI/release,
 current docs + ADRs, and a P(-1) closeout audit
 ([docs/audit/2026-05-26-1.2.x-closeout.md](../audit/2026-05-26-1.2.x-closeout.md)).
 1.2.5 retracted the misdiagnosed issue-0001 "codegen bug" and reverted its
 unnecessary workaround — there is no Cyrius defect; the real fix was
-issue 0002 (sysdb PATH).
+issue 0002 (sysdb PATH). 1.2.6 tracked the toolchain to 6.2.11 and absorbed the
+6.2.x stdlib slim-down (vendored the six `toml_*` structs nous used; dropped the
+unused `json`/`toml` stdlib deps).
 
 Deferred from the arc (not arc-blocking, tracked here):
 - **Per-function `#` doc comments** + promoting the CI `doc` gate from the barrel

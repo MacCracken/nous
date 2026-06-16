@@ -65,8 +65,11 @@ fn parse_toml_array(s): i64 {
     return result;
 }
 
-# CYML parser — handles [section] and [[array]] headers (stdlib toml.cyr misses [section])
-fn cyml_parse(src): i64 {
+# CYML parser — handles single-bracket [section] and [[array]] headers. nous
+# keeps its own rather than bayan's `cyml_parse` (a different doc/entry model)
+# or the old stdlib `toml_parse` (missed [section]). The `toml_*` section/pair
+# structs it builds come from bayan's compat surface (`[deps] bayan`).
+fn nous_cyml_parse(src): i64 {
     var sections = vec_new();
     var d = str_data(src);
     var len = str_len(src);
@@ -169,7 +172,7 @@ fn cyml_parse_file(path): i64 {
     var buf = alloc(65536);
     var n = file_read_all(to_cstr(path), buf, 65536);
     if (n <= 0) { return vec_new(); }
-    return cyml_parse(str_new(buf, n));
+    return nous_cyml_parse(str_new(buf, n));
 }
 
 # Get a section's pairs by name from parsed sections

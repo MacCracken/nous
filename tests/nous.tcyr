@@ -1221,7 +1221,7 @@ fn test_integration_apt() {
 fn test_cyml_parse_sections() {
     test_group("cyml_parse_sections");
     var src = str_from("[package]\nname = \"test\"\nversion = \"1.0\"\n\n[depends]\nruntime = [\"glibc\"]\n");
-    var sections = cyml_parse(src);
+    var sections = nous_cyml_parse(src);
     assert(vec_len(sections) >= 2, "2+ sections");
     var pkg = cyml_section_by_name(sections, "package");
     assert(pkg != 0, "has package");
