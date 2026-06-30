@@ -14,6 +14,7 @@ include "src/json.cyr"
 include "src/version.cyr"
 include "src/graph.cyr"
 include "src/recipe.cyr"
+include "src/updates.cyr"
 
 var tc = 0;
 
@@ -1269,6 +1270,52 @@ fn test_sysdb_unavailable() {
     assert_eq(payload(sysdb_info(db, str_from("x"))), 0, "no info");
 }
 
+# 1.3.0 — pluggable multi-source update detection.
+fn t_avail_two(name, src) { return str_from("2.0.0"); }
+fn t_avail_same(name, src) { return str_from("1.0.0"); }
+
+fn updates_has(ups, name) {
+    var i = 0;
+    while (i < vec_len(ups)) {
+        if (str_eq(load64(vec_get(ups, i)), name) == 1) { return 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn test_check_updates_pluggable() {
+    test_group("check_updates_pluggable");
+    # update_is_newer — semver comparison.
+    assert_eq(update_is_newer(str_from("1.4.0"), str_from("1.3.9")), 1, "1.4.0 > 1.3.9");
+    assert_eq(update_is_newer(str_from("2.0.0"), str_from("1.9.9")), 1, "2.0.0 > 1.9.9");
+    assert_eq(update_is_newer(str_from("1.0.0"), str_from("1.0.0")), 0, "equal -> none");
+    assert_eq(update_is_newer(str_from("1.0.0"), str_from("1.2.0")), 0, "older -> none");
+    assert_eq(update_is_newer(str_from(""), str_from("1.0.0")), 0, "empty avail -> none");
+    assert_eq(update_is_newer(0, str_from("1.0.0")), 0, "null avail -> none");
+    # Hardening: an oversized (>i64) component from the untrusted callback is
+    # treated as not-newer rather than crashing (semver_parse returns 0).
+    assert_eq(update_is_newer(str_from("99999999999999999999"), str_from("1.0.0")), 0, "oversized avail -> none");
+    assert_eq(update_is_newer(str_from("1.0.0"), str_from("99999999999999999999")), 0, "oversized installed -> none");
+
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var r = payload(resolver_new(d, c));
+    var inst = vec_new();
+    vec_push(inst, installed_pkg_new(str_from("agent"), str_from("1.0.0"), SOURCE_MARKETPLACE, 0, 0, 0));
+
+    # avail_fn returns a newer version -> the marketplace package shows an update.
+    var ups = payload(resolver_check_updates(r, inst, &t_avail_two));
+    assert_eq(updates_has(ups, str_from("agent")), 1, "newer avail -> update emitted");
+    # avail_fn returns the same version -> no marketplace update.
+    var ups2 = payload(resolver_check_updates(r, inst, &t_avail_same));
+    assert_eq(updates_has(ups2, str_from("agent")), 0, "same avail -> no update");
+    # avail_fn == 0 -> apt-only, no marketplace detection.
+    var ups3 = payload(resolver_check_updates(r, inst, 0));
+    assert_eq(updates_has(ups3, str_from("agent")), 0, "no avail_fn -> apt-only");
+
+    rm_rf(d); rm_rf(c);
+}
+
 fn main() {
     alloc_init();
     args_init();
@@ -1299,6 +1346,7 @@ fn main() {
     test_json();
     test_sysdb_new();
     test_check_updates_empty();
+    test_check_updates_pluggable();
     test_resolver_missing_marketplace();
     test_source_serde_roundtrip();
     test_strategy_serde_roundtrip();

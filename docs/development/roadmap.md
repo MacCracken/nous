@@ -154,9 +154,36 @@ Deferred from the arc (not arc-blocking, tracked here):
   Executed in the ark repo; coordinated from here. Not gating the nous arc
   closeout.
 
+## Sovereign-ark native resolver (ark v2 path — M2; coordinated from ark)
+
+nous's share of the **ark v2 sovereignty path** (de-apt the install layer so
+`agnova install` works on a no-apt box). Orchestration spine:
+[`agnosticos/docs/development/planning/ark-v2-sovereignty-path.md`](https://github.com/MacCracken/agnosticos/blob/main/docs/development/planning/ark-v2-sovereignty-path.md).
+**Host-side Linux work — NOT AGNOS-gated.** Gated only on ark's M0 `system_backend`
+seam (so a native strategy is selectable). Today nous resolves marketplace → flutter
+→ sys; `strategy_default()` is `MARKETPLACE_FIRST` (`STRAT_SYSTEM_FIRST` is injected
+by *ark*, not nous), `src/types.cyr` has `SOURCE_SYSTEM=0`/`SOURCE_COMMUNITY=3` but
+**no `SOURCE_NATIVE`**, and there is no native index / local store / lockfile.
+
+- [ ] **`SOURCE_NATIVE`** source + a native resolver backend that reads a **signed
+      native index** + a **local content-addressed artifact store** (resolve a name →
+      the `.ark` by root-hash, no apt, no mela network).
+- [ ] **Lockfile generation + consumption** (promoted from *Future* below — it's the
+      reproducibility half of M2: deterministic dependency selection, not just bytes).
+- [ ] Native-first strategy selector threaded through `src/sysdb.cyr` +
+      `src/resolver.cyr` so the apt (`SOURCE_SYSTEM`) leg is **mode-gated behind ark's
+      `system_backend`**, not implicit; apt-fallback behind a capability flag.
+- [ ] Replace the **mela registry stub** (`registry.cyr` scans a local dir;
+      `registry_install_package` returns `Ok(0)`) — resolve M2's native index vs the
+      mela path (subsume on agnos, or coexist — open question in the spine doc).
+- [ ] Constraint solving on **recipe-level deps** (today only marketplace-manifest deps
+      feed the solver; recipe deps carry no version constraints).
+
+Acceptance (with ark): apt absent from PATH → nous resolves a name to `SOURCE_NATIVE`
+from the signed index and ark installs from the local store with a committed lock.
+
 ## Future
 
-- Lockfile generation and consumption
 - Parallel resolution across sources
 - Plugin system for additional package sources
 - Resolver constraint language specification

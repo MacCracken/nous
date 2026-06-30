@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-06-29
+
+### Added
+
+- **Multi-source update detection** (`src/updates.cyr`): `resolver_check_updates(r,
+  installed, avail_fn)`. The apt/system leg comes from `sysdb` (which knows both
+  installed and available via `apt list --upgradable`); for every other source the
+  caller supplies the available version through a **pluggable lookup callback**
+  (`fncall2(avail_fn, name, source)`), and nous owns the semver comparison
+  (`update_is_newer`, via `semver_parse`/`semver_cmp`) and normalization into
+  `avail_update` records. This keeps nous free of any remote/transport concern —
+  the marketplace consumer (e.g. ark, via mela's `/latest` endpoint) and a future
+  native index both plug into the one seam. `avail_fn == 0` ⇒ apt-only (equivalent
+  to the legacy `resolver_updates`).
+- Why a callback rather than nous querying directly: nous tracks **installed**
+  packages (apt via dpkg; marketplace via the local registry scan) but has no
+  source of **available**/latest versions for non-apt sources — that data is
+  remote (mela) or a future native index. The seam lets the owner of each source
+  feed availability without nous taking a transport dependency.
+- 1 test group (`check_updates_pluggable`, 287 total): `update_is_newer` semver
+  cases; a marketplace package shows an update when the callback returns a newer
+  version, none when equal, and `avail_fn == 0` stays apt-only.
+- **Hardened** `update_is_newer` against the untrusted callback input
+  (adversarial review): `semver_parse` returns 0 on an oversized (>i64) version
+  component, so both parse results are guarded — a malformed `/latest` response
+  is treated as "not newer" rather than dereferencing a null SemVer.
+
+### Notes
+
+- `resolver_updates(r)` (apt-only) is unchanged and retained for back-compat.
+- Bundled module order: `updates.cyr` comes after `version.cyr` so it can use
+  `semver_*`. `dist/nous.cyr` regenerated via `cyrius distlib`.
+
 ## [1.2.7] - 2026-06-16
 
 ### Fixed
