@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-07-02
+
+### Changed
+
+- **Toolchain: cyrius pin `6.2.12` → `6.3.35`** (current toolchain). Test suite green
+  (287 passed) on 6.3.35; `dist/nous.cyr` re-cut. Consumers must re-resolve the bundle.
+
+### Fixed
+
+- **Stack smash in the `stat` helpers (`src/util.cyr`).** `our_is_dir` / `file_mtime` /
+  `file_stat_size` sized their `struct stat` buffer as `var statbuf[18]` — 18 u64 slots
+  (144 B) under the pre-6.3.13 heap-local model, but an 18-**byte** stack buffer since
+  cyrius 6.3.13 moved function-local `var X[N]` onto the stack. `sys_stat`'s 144-byte
+  write overran it and smashed the return address (SIGSEGV). Latent until a 6.3.x
+  consumer built nous — surfaced when ark exercised the resolver's `registry_new →
+  our_is_dir` path. Sized to `var statbuf[144]` (matches the stdlib `struct stat`).
+
 ## [1.3.0] - 2026-06-29
 
 ### Added
