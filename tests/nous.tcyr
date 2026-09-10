@@ -138,9 +138,9 @@ fn test_registry_new() {
     var d = mkdir_test();
     assert(is_ok(registry_new(d)), "valid dir");
     # Missing dir now yields an ok, empty registry (see registry_new)
-    var missing = registry_new(str_from("/nonexistent/path"));
-    assert(is_ok(missing), "missing dir -> ok");
-    assert_eq(vec_len(registry_list(payload(missing))), 0, "missing dir -> empty");
+    var missing_t, missing = registry_new(str_from("/nonexistent/path"));
+    assert(is_ok(missing_t), "missing dir -> ok");
+    assert_eq(vec_len(registry_list(missing)), 0, "missing dir -> empty");
     rm_rf(d);
 }
 
@@ -148,7 +148,7 @@ fn test_registry_scan() {
     test_group("registry_scan");
     var d = mkdir_test();
     write_manifest(d, "test-scanner", "native");
-    var reg = payload(registry_new(d));
+    var reg_t, reg = registry_new(d);
     var pkg = registry_get(reg, str_from("test-scanner"));
     assert(pkg != 0, "found");
     assert(str_eq(mpkg_name(pkg), str_from("test-scanner")), "name");
@@ -163,7 +163,7 @@ fn test_resolver_new() {
     test_group("resolver_new");
     var d = mkdir_test();
     var c = mkdir_test();
-    var r = payload(resolver_new(d, c));
+    var r_t, r = resolver_new(d, c);
     assert_eq(st_kind(rs_strat(r)), STRAT_MARKETPLACE_FIRST, "default strat");
     rm_rf(d); rm_rf(c);
 }
@@ -172,7 +172,8 @@ fn test_with_strategy() {
     test_group("with_strategy");
     var d = mkdir_test();
     var c = mkdir_test();
-    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_system_first());
+    var r_t, r = resolver_new(d, c);
+    r = resolver_with_strategy(r, strategy_system_first());
     assert_eq(st_kind(rs_strat(r)), STRAT_SYSTEM_FIRST, "changed");
     rm_rf(d); rm_rf(c);
 }
@@ -182,10 +183,10 @@ fn test_resolve_mkt() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "test-scanner", "native");
-    var r = payload(resolver_new(d, c));
-    var res = resolver_resolve(r, str_from("test-scanner"));
-    assert(is_ok(res), "ok");
-    var pkg = payload(res);
+    var r_t, r = resolver_new(d, c);
+    var res_t, res = resolver_resolve(r, str_from("test-scanner"));
+    assert(is_ok(res_t), "ok");
+    var pkg = res;
     assert(pkg != 0, "found");
     assert(str_eq(rp_name(pkg), str_from("test-scanner")), "name");
     assert_eq(rp_src(pkg), SOURCE_MARKETPLACE, "src");
@@ -197,8 +198,10 @@ fn test_resolve_unknown() {
     test_group("resolve_unknown");
     var d = mkdir_test();
     var c = mkdir_test();
-    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_MARKETPLACE));
-    assert_eq(payload(resolver_resolve(r, str_from("nonexistent"))), 0, "none");
+    var r_t, r = resolver_new(d, c);
+    r = resolver_with_strategy(r, strategy_only(SOURCE_MARKETPLACE));
+    var res_t, res = resolver_resolve(r, str_from("nonexistent"));
+    assert_eq(res, 0, "none");
     rm_rf(d); rm_rf(c);
 }
 
@@ -207,8 +210,10 @@ fn test_only_sys_skips_mkt() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "mkt-only", "native");
-    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_SYSTEM));
-    assert_eq(payload(resolver_resolve(r, str_from("mkt-only"))), 0, "not in sys");
+    var r_t, r = resolver_new(d, c);
+    r = resolver_with_strategy(r, strategy_only(SOURCE_SYSTEM));
+    var res_t, res = resolver_resolve(r, str_from("mkt-only"));
+    assert_eq(res, 0, "not in sys");
     rm_rf(d); rm_rf(c);
 }
 
@@ -217,8 +222,9 @@ fn test_only_mkt() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "market-pkg", "native");
-    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_MARKETPLACE));
-    var pkg = payload(resolver_resolve(r, str_from("market-pkg")));
+    var r_t, r = resolver_new(d, c);
+    r = resolver_with_strategy(r, strategy_only(SOURCE_MARKETPLACE));
+    var pkg_t, pkg = resolver_resolve(r, str_from("market-pkg"));
     assert(pkg != 0, "found");
     assert_eq(rp_src(pkg), SOURCE_MARKETPLACE, "mkt");
     rm_rf(d); rm_rf(c);
@@ -229,8 +235,9 @@ fn test_resolve_flutter() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "flutter-pkg", "flutter");
-    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_FLUTTER_APP));
-    var pkg = payload(resolver_resolve(r, str_from("flutter-pkg")));
+    var r_t, r = resolver_new(d, c);
+    r = resolver_with_strategy(r, strategy_only(SOURCE_FLUTTER_APP));
+    var pkg_t, pkg = resolver_resolve(r, str_from("flutter-pkg"));
     assert(pkg != 0, "found");
     assert_eq(rp_src(pkg), SOURCE_FLUTTER_APP, "flutter");
     rm_rf(d); rm_rf(c);
@@ -241,8 +248,10 @@ fn test_non_flutter_rejected() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "native-pkg", "native");
-    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_FLUTTER_APP));
-    assert_eq(payload(resolver_resolve(r, str_from("native-pkg"))), 0, "rejected");
+    var r_t, r = resolver_new(d, c);
+    r = resolver_with_strategy(r, strategy_only(SOURCE_FLUTTER_APP));
+    var res_t, res = resolver_resolve(r, str_from("native-pkg"));
+    assert_eq(res, 0, "rejected");
     rm_rf(d); rm_rf(c);
 }
 
@@ -251,8 +260,9 @@ fn test_sys_first_fallback() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "sf-pkg", "native");
-    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_system_first());
-    var pkg = payload(resolver_resolve(r, str_from("sf-pkg")));
+    var r_t, r = resolver_new(d, c);
+    r = resolver_with_strategy(r, strategy_system_first());
+    var pkg_t, pkg = resolver_resolve(r, str_from("sf-pkg"));
     assert(pkg != 0, "found");
     assert_eq(rp_src(pkg), SOURCE_MARKETPLACE, "fell through");
     rm_rf(d); rm_rf(c);
@@ -263,8 +273,10 @@ fn test_search_all() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "sa-pkg", "native");
-    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_search_all());
-    assert(payload(resolver_resolve(r, str_from("sa-pkg"))) != 0, "found");
+    var r_t, r = resolver_new(d, c);
+    r = resolver_with_strategy(r, strategy_search_all());
+    var pkg_t, pkg = resolver_resolve(r, str_from("sa-pkg"));
+    assert(pkg != 0, "found");
     rm_rf(d); rm_rf(c);
 }
 
@@ -272,8 +284,10 @@ fn test_only_unknown() {
     test_group("only_unknown");
     var d = mkdir_test();
     var c = mkdir_test();
-    var r = resolver_with_strategy(payload(resolver_new(d, c)), strategy_only(SOURCE_UNKNOWN));
-    assert_eq(payload(resolver_resolve(r, str_from("x"))), 0, "none");
+    var r_t, r = resolver_new(d, c);
+    r = resolver_with_strategy(r, strategy_only(SOURCE_UNKNOWN));
+    var res_t, res = resolver_resolve(r, str_from("x"));
+    assert_eq(res, 0, "none");
     rm_rf(d); rm_rf(c);
 }
 
@@ -282,8 +296,8 @@ fn test_search_merges() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "test-tool", "native");
-    var r = payload(resolver_new(d, c));
-    var sr = payload(resolver_search(r, str_from("test")));
+    var r_t, r = resolver_new(d, c);
+    var sr_t, sr = resolver_search(r, str_from("test"));
     assert(sr_total(sr) >= 1, "results");
     var found = 0;
     var res = sr_results(sr);
@@ -301,8 +315,8 @@ fn test_search_dedup() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "dup-pkg", "native");
-    var r = payload(resolver_new(d, c));
-    var sr = payload(resolver_search(r, str_from("dup")));
+    var r_t, r = resolver_new(d, c);
+    var sr_t, sr = resolver_search(r, str_from("dup"));
     var cnt = 0;
     var res = sr_results(sr);
     var i = 0;
@@ -319,8 +333,8 @@ fn test_list_installed() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "installed-agent", "native");
-    var r = payload(resolver_new(d, c));
-    var list = payload(resolver_list(r));
+    var r_t, r = resolver_new(d, c);
+    var list_t, list = resolver_list(r);
     var found = 0;
     var i = 0;
     while (i < vec_len(list)) {
@@ -338,8 +352,8 @@ fn test_deterministic_order() {
     write_manifest(d, "zeta-pkg", "native");
     write_manifest(d, "alpha-pkg", "native");
     write_manifest(d, "mid-pkg", "native");
-    var r = payload(resolver_new(d, c));
-    var list = payload(resolver_list(r));
+    var r_t, r = resolver_new(d, c);
+    var list_t, list = resolver_list(r);
     var names = vec_new();
     var i = 0;
     while (i < vec_len(list)) {
@@ -366,8 +380,8 @@ fn test_multiple() {
         write_manifest(d, to_cstr(str_builder_build(sb)), "native");
         i = i + 1;
     }
-    var r = payload(resolver_new(d, c));
-    var list = payload(resolver_list(r));
+    var r_t, r = resolver_new(d, c);
+    var list_t, list = resolver_list(r);
     var cnt = 0;
     i = 0;
     while (i < vec_len(list)) {
@@ -383,7 +397,7 @@ fn test_is_mkt() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "my-agent", "native");
-    var r = payload(resolver_new(d, c));
+    var r_t, r = resolver_new(d, c);
     assert_eq(resolver_is_mkt(r, str_from("my-agent")), 1, "is mkt");
     assert_eq(resolver_is_mkt(r, str_from("not-installed")), 0, "not mkt");
     rm_rf(d); rm_rf(c);
@@ -403,7 +417,7 @@ fn test_errors() {
     assert(str_contains(msg, str_from("invalid character")), "has reason");
     var d = mkdir_test();
     var c = mkdir_test();
-    var r = payload(resolver_new(d, c));
+    var r_t, r = resolver_new(d, c);
     assert(is_err_result(resolver_resolve(r, str_from(""))), "empty err");
     assert(is_err_result(resolver_resolve(r, str_from(" leading"))), "ws err");
     assert(is_err_result(resolver_resolve(r, str_from("pkg;rm -rf /"))), "inject err");
@@ -413,7 +427,7 @@ fn test_errors() {
 fn test_json() {
     test_group("json");
     var pkg = resolved_pkg_new(str_from("test-pkg"), str_from("1.2.3"),
-    SOURCE_SYSTEM, str_from("A test"), 4096, vec_new(), 1);
+      SOURCE_SYSTEM, str_from("A test"), 4096, vec_new(), 1);
     var json = resolved_to_json(pkg);
     assert(str_contains(json, str_from("test-pkg")), "name");
     assert(str_contains(json, str_from("1.2.3")), "ver");
@@ -437,11 +451,11 @@ fn test_check_updates_empty() {
     test_group("check_updates_empty");
     var d = mkdir_test();
     var c = mkdir_test();
-    var r = payload(resolver_new(d, c));
-    var upd = resolver_updates(r);
-    assert(is_ok(upd), "updates ok");
+    var r_t, r = resolver_new(d, c);
+    var upd_t, upd = resolver_updates(r);
+    assert(is_ok(upd_t), "updates ok");
     # Can't assert exact count (depends on host), just that it works
-    var v = payload(upd);
+    var v = upd;
     assert(vec_len(v) >= 0, "no crash");
     rm_rf(d); rm_rf(c);
 }
@@ -453,23 +467,23 @@ fn test_resolver_missing_marketplace() {
     # sentinel resolver and then deref'd a non-error payload.
     var c = mkdir_test();
     var bad = str_from("/nonexistent/marketplace/path");
-    var res = resolver_new(bad, c);
-    assert(is_ok(res), "missing dir -> ok resolver");
-    var r = payload(res);
+    var res_t, res = resolver_new(bad, c);
+    assert(is_ok(res_t), "missing dir -> ok resolver");
+    var r = res;
     assert(r != 0, "resolver non-null");
     # Use a name guaranteed absent from apt, the (empty) marketplace, and the
     # recipe DB, so the assertions hold regardless of whether the test host
     # has apt installed. The regression is that resolution against a resolver
     # built over a MISSING marketplace dir must not crash.
     var bogus = str_from("zzznonexistentpkgxyzzy");
-    var rr = resolver_resolve(r, bogus);
-    assert(is_err_result(rr) == 0, "bogus pkg resolves without error");
-    assert_eq(payload(rr), 0, "bogus pkg -> none");
+    var rr_t, rr = resolver_resolve(r, bogus);
+    assert(is_err_result(rr_t) == 0, "bogus pkg resolves without error");
+    assert_eq(rr, 0, "bogus pkg -> none");
     # Full transitive resolve_all must also survive the empty-everything case.
     var names = vec_new();
     vec_push(names, bogus);
-    var ra = resolver_resolve_all_with_recipes(r, names);
-    assert(is_err_result(ra) == 0, "resolve_all survives empty everything");
+    var ra_t, ra = resolver_resolve_all_with_recipes(r, names);
+    assert(is_err_result(ra_t) == 0, "resolve_all survives empty everything");
     rm_rf(c);
 }
 
@@ -514,7 +528,7 @@ fn test_search_result_serde() {
     test_group("search_result_serde");
     var results = vec_new();
     vec_push(results, resolved_pkg_new(str_from("test"), str_from("1.0.0"),
-    SOURCE_SYSTEM, str_from("A test"), 1024, vec_new(), 1));
+        SOURCE_SYSTEM, str_from("A test"), 1024, vec_new(), 1));
     var sr = search_result_new(results, vec_new(), 1);
     var json = search_result_to_json(sr);
     assert(str_contains(json, str_from("test")), "has name");
@@ -526,7 +540,7 @@ fn test_manifest_serde_roundtrip() {
     var deps = map_new();
     map_set(deps, "dep-a", str_from(">=1.0"));
     var agent = agent_info_new(str_from("test-agent"), str_from("2.0.0"),
-    str_from("A test agent"));
+      str_from("A test agent"));
     var m = manifest_new(agent, deps, str_from("native"));
     var json = manifest_to_json(m);
     assert(str_contains(json, str_from("test-agent")), "has name");
@@ -579,7 +593,7 @@ fn test_registry_reload() {
     test_group("registry_reload");
     var d = mkdir_test();
     var c = mkdir_test();
-    var reg = payload(registry_new(d));
+    var reg_t, reg = registry_new(d);
     assert_eq(vec_len(registry_list(reg)), 0, "starts empty");
     write_manifest(d, "late-pkg", "native");
     registry_reload(reg);
@@ -603,7 +617,7 @@ fn test_deps_parsing() {
     str_builder_add_cstr(jsb, "\"libbar\":\">=2.0\"},\"runtime\":\"native\"}");
     var json = to_cstr(str_builder_build(jsb));
     file_write_all(to_cstr(mp), json, strlen(json));
-    var reg = payload(registry_new(d));
+    var reg_t, reg = registry_new(d);
     var pkg = registry_get(reg, str_from("dep-test"));
     assert(pkg != 0, "found");
     var deps = mpkg_deps(pkg);
@@ -618,7 +632,7 @@ fn test_resolved_json_roundtrip() {
     vec_push(deps, str_from("libc"));
     vec_push(deps, str_from("libssl"));
     var pkg = resolved_pkg_new(str_from("test-pkg"), str_from("1.2.3"),
-    SOURCE_SYSTEM, str_from("A test package"), 4096, deps, 1);
+      SOURCE_SYSTEM, str_from("A test package"), 4096, deps, 1);
     var json = resolved_to_json(pkg);
     assert(str_contains(json, str_from("libc")), "deps in json");
     assert(str_contains(json, str_from("libssl")), "deps 2 in json");
@@ -632,7 +646,7 @@ fn test_resolved_json_roundtrip() {
 fn test_installed_json_roundtrip() {
     test_group("installed_json");
     var pkg = installed_pkg_new(str_from("my-agent"), str_from("2.0.0"),
-    SOURCE_MARKETPLACE, 1000000, 8192, 0);
+      SOURCE_MARKETPLACE, 1000000, 8192, 0);
     var json = installed_to_json(pkg);
     assert(str_contains(json, str_from("my-agent")), "name");
     assert(str_contains(json, str_from("marketplace")), "src");
@@ -645,7 +659,7 @@ fn test_installed_json_roundtrip() {
 fn test_update_json() {
     test_group("update_json");
     var u = avail_update_new(str_from("openssl"), SOURCE_SYSTEM,
-    str_from("3.0.0"), str_from("3.1.0"), str_from("Security fixes"));
+      str_from("3.0.0"), str_from("3.1.0"), str_from("Security fixes"));
     var json = update_to_json(u);
     assert(str_contains(json, str_from("openssl")), "name");
     assert(str_contains(json, str_from("3.0.0")), "inst ver");
@@ -753,13 +767,13 @@ fn test_dep_graph_basic() {
     vec_push(deps_a, str_from("B"));
     vec_push(deps_a, str_from("C"));
     var a = resolved_pkg_new(str_from("A"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, deps_a, 1);
+      SOURCE_MARKETPLACE, str_from(""), 0, deps_a, 1);
     var b = resolved_pkg_new(str_from("B"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1);
+      SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1);
     var deps_c = vec_new();
     vec_push(deps_c, str_from("B"));
     var c = resolved_pkg_new(str_from("C"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, deps_c, 1);
+      SOURCE_MARKETPLACE, str_from(""), 0, deps_c, 1);
     dep_graph_add(g, a);
     dep_graph_add(g, b);
     dep_graph_add(g, c);
@@ -777,11 +791,11 @@ fn test_topo_sort() {
     var deps_b = vec_new();
     vec_push(deps_b, str_from("C"));
     dep_graph_add(g, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, deps_a, 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, deps_a, 1));
     dep_graph_add(g, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, deps_b, 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, deps_b, 1));
     dep_graph_add(g, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
     var order = dep_graph_topo_sort(g);
     assert_eq(vec_len(order), 3, "3 in order");
     # A should come before B, B before C in topo order
@@ -795,11 +809,11 @@ fn test_cycle_detection() {
     var d1 = vec_new(); vec_push(d1, str_from("B"));
     var d2 = vec_new(); vec_push(d2, str_from("C"));
     dep_graph_add(g1, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, d1, 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, d1, 1));
     dep_graph_add(g1, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, d2, 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, d2, 1));
     dep_graph_add(g1, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
     assert_eq(dep_graph_detect_cycle(g1), 0, "no cycle");
 
     # Cycle: A -> B -> C -> A
@@ -808,11 +822,11 @@ fn test_cycle_detection() {
     var db = vec_new(); vec_push(db, str_from("C"));
     var dc = vec_new(); vec_push(dc, str_from("A"));
     dep_graph_add(g2, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, da, 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, da, 1));
     dep_graph_add(g2, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, db, 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, db, 1));
     dep_graph_add(g2, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, dc, 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, dc, 1));
     var cycle = dep_graph_detect_cycle(g2);
     assert(cycle != 0, "cycle detected");
     assert(vec_len(cycle) >= 3, "cycle has nodes");
@@ -826,13 +840,13 @@ fn test_diamond_deps() {
     var db = vec_new(); vec_push(db, str_from("D"));
     var dc = vec_new(); vec_push(dc, str_from("D"));
     dep_graph_add(g, resolved_pkg_new(str_from("A"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, da, 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, da, 1));
     dep_graph_add(g, resolved_pkg_new(str_from("B"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, db, 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, db, 1));
     dep_graph_add(g, resolved_pkg_new(str_from("C"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, dc, 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, dc, 1));
     dep_graph_add(g, resolved_pkg_new(str_from("D"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
+        SOURCE_MARKETPLACE, str_from(""), 0, vec_new(), 1));
     assert_eq(dep_graph_detect_cycle(g), 0, "no cycle");
     var order = dep_graph_topo_sort(g);
     assert_eq(vec_len(order), 4, "4 in order");
@@ -859,17 +873,17 @@ fn test_resolve_all_basic() {
     write_manifest_deps(d, "pkg-c", "native", "");
     # B depends on C
     write_manifest_deps(d, "pkg-b", "native",
-    "\"pkg-c\":\">=1.0\"");
+      "\"pkg-c\":\">=1.0\"");
     # A depends on B
     write_manifest_deps(d, "pkg-a", "native",
-    "\"pkg-b\":\">=1.0\"");
+      "\"pkg-b\":\">=1.0\"");
 
-    var r = payload(resolver_new(d, c));
+    var r_t, r = resolver_new(d, c);
     var names = vec_new();
     vec_push(names, str_from("pkg-a"));
-    var res = resolver_resolve_all(r, names);
-    assert(is_ok(res), "resolve_all ok");
-    var plan = payload(res);
+    var res_t, res = resolver_resolve_all(r, names);
+    assert(is_ok(res_t), "resolve_all ok");
+    var plan = res;
     var pkgs = pl_packages(plan);
     assert_eq(vec_len(pkgs), 3, "3 packages resolved");
     # Check that C comes before B, and B before A in install order (deps first)
@@ -887,15 +901,15 @@ fn test_resolve_all_cycle_error() {
     mkdir_str(inst);
     # A -> B, B -> A (cycle)
     write_manifest_deps(d, "cyc-a", "native",
-    "\"cyc-b\":\">=1.0\"");
+      "\"cyc-b\":\">=1.0\"");
     write_manifest_deps(d, "cyc-b", "native",
-    "\"cyc-a\":\">=1.0\"");
-    var r = payload(resolver_new(d, c));
+      "\"cyc-a\":\">=1.0\"");
+    var r_t, r = resolver_new(d, c);
     var names = vec_new();
     vec_push(names, str_from("cyc-a"));
-    var res = resolver_resolve_all(r, names);
-    assert(is_err_result(res), "cycle detected");
-    var err = payload(res);
+    var res_t, res = resolver_resolve_all(r, names);
+    assert(is_err_result(res_t), "cycle detected");
+    var err = res;
     assert_eq(ne_kind(err), ERR_DEPENDENCY_CYCLE, "cycle error kind");
     rm_rf(d); rm_rf(c);
 }
@@ -976,7 +990,7 @@ fn test_recipe_to_resolved() {
     vec_push(rt, str_from("openssl"));
     var recipe = recipe_alloc();
     recipe_set_pkg(recipe, str_from("test-recipe"), str_from("1.0.0"),
-    str_from("Test"), str_from("MIT"), str_from("x86_64"));
+      str_from("Test"), str_from("MIT"), str_from("x86_64"));
     recipe_set_meta(recipe, vec_new(), 1, str_from(""), str_from(""), vec_new());
     recipe_set_deps(recipe, rt, vec_new());
     var pkg = recipe_to_resolved(recipe);
@@ -991,19 +1005,19 @@ fn test_resolve_with_recipes() {
     # Create a resolver with marketplace + recipe fallback
     var d = mkdir_test();
     var c = mkdir_test();
-    var r = payload(resolver_new(d, c));
+    var r_t, r = resolver_new(d, c);
     # Create a minimal recipe DB with synthetic recipes
     var recipes = map_new();
     var rt_a = vec_new();
     vec_push(rt_a, str_from("dep-b"));
     var recipe_a = recipe_alloc();
     recipe_set_pkg(recipe_a, str_from("pkg-a"), str_from("1.0.0"),
-    str_from("A"), str_from("MIT"), str_from("x86_64"));
+      str_from("A"), str_from("MIT"), str_from("x86_64"));
     recipe_set_deps(recipe_a, rt_a, vec_new());
     map_set(recipes, "pkg-a", recipe_a);
     var recipe_b = recipe_alloc();
     recipe_set_pkg(recipe_b, str_from("dep-b"), str_from("2.0.0"),
-    str_from("B"), str_from("MIT"), str_from("x86_64"));
+      str_from("B"), str_from("MIT"), str_from("x86_64"));
     recipe_set_deps(recipe_b, vec_new(), vec_new());
     map_set(recipes, "dep-b", recipe_b);
     var rdb = recipe_db_new(str_from("/tmp"), recipes, vec_new());
@@ -1011,9 +1025,9 @@ fn test_resolve_with_recipes() {
     # Resolve with recipe fallback
     var names = vec_new();
     vec_push(names, str_from("pkg-a"));
-    var res = resolver_resolve_all_with_recipes(r, names);
-    assert(is_ok(res), "resolve ok");
-    var plan = payload(res);
+    var res_t, res = resolver_resolve_all_with_recipes(r, names);
+    assert(is_ok(res_t), "resolve ok");
+    var plan = res;
     var pkgs = pl_packages(plan);
     assert_eq(vec_len(pkgs), 2, "2 packages");
     rm_rf(d); rm_rf(c);
@@ -1024,7 +1038,7 @@ fn test_resolution_trace() {
     var d = mkdir_test();
     var c = mkdir_test();
     write_manifest(d, "traced-pkg", "native");
-    var r = payload(resolver_new(d, c));
+    var r_t, r = resolver_new(d, c);
     r = resolver_with_trace(r);
     resolver_resolve(r, str_from("traced-pkg"));
     var trace = resolver_get_trace(r);
@@ -1069,7 +1083,7 @@ fn test_suggestion_engine() {
     write_manifest(d, "nginx", "native");
     write_manifest(d, "curl", "native");
     write_manifest(d, "openssl", "native");
-    var r = payload(resolver_new(d, c));
+    var r_t, r = resolver_new(d, c);
     var names = collect_known_names(r);
     assert(vec_len(names) >= 3, "has names");
     var s1 = suggest_package(str_from("nginx"), names);
@@ -1090,9 +1104,9 @@ fn test_suggestion_engine() {
 fn test_registry_install_stub() {
     test_group("registry_install_stub");
     var d = mkdir_test();
-    var reg = payload(registry_new(d));
-    var r = registry_install_package(reg, str_from("/tmp/fake.tar"), 0);
-    assert(is_ok(r), "stub returns ok");
+    var reg_t, reg = registry_new(d);
+    var r_t, r = registry_install_package(reg, str_from("/tmp/fake.tar"), 0);
+    assert(is_ok(r_t), "stub returns ok");
     rm_rf(d);
 }
 
@@ -1118,12 +1132,12 @@ fn test_constraints_compatible() {
 fn test_nous_error_to_kind() {
     test_group("error_to_kind");
     var e = nous_error_new(ERR_COMMAND_EXEC,
-    str_from("apt-cache"), str_from("not found"));
+      str_from("apt-cache"), str_from("not found"));
     var k = nous_error_to_kind(e);
     assert_eq(ne_kind(k), ERR_COMMAND_EXEC, "kind preserved");
     assert(str_eq(ne_msg(k), str_from("apt-cache")), "msg preserved");
     assert(str_eq(ne_detail(k), str_from("not found")),
-    "detail preserved");
+      "detail preserved");
 }
 
 fn test_semver_eq() {
@@ -1140,22 +1154,22 @@ fn test_caret_zero() {
     # ^0.2.3 means >=0.2.3, <0.3.0
     var c = constraint_parse(str_from("^0.2.3"));
     assert(constraint_matches(c, semver_parse(str_from("0.2.3"))),
-    "0.2.3 in ^0.2.3");
+      "0.2.3 in ^0.2.3");
     assert(constraint_matches(c, semver_parse(str_from("0.2.9"))),
-    "0.2.9 in ^0.2.3");
+      "0.2.9 in ^0.2.3");
     assert(constraint_matches(c,
-    semver_parse(str_from("0.3.0"))) == 0,
-    "0.3.0 not in ^0.2.3");
+        semver_parse(str_from("0.3.0"))) == 0,
+      "0.3.0 not in ^0.2.3");
     assert(constraint_matches(c,
-    semver_parse(str_from("1.0.0"))) == 0,
-    "1.0.0 not in ^0.2.3");
+        semver_parse(str_from("1.0.0"))) == 0,
+      "1.0.0 not in ^0.2.3");
     # ^0.0.3 means >=0.0.3, <0.0.4
     var c2 = constraint_parse(str_from("^0.0.3"));
     assert(constraint_matches(c2, semver_parse(str_from("0.0.3"))),
-    "0.0.3 in ^0.0.3");
+      "0.0.3 in ^0.0.3");
     assert(constraint_matches(c2,
-    semver_parse(str_from("0.0.4"))) == 0,
-    "0.0.4 not in ^0.0.3");
+        semver_parse(str_from("0.0.4"))) == 0,
+      "0.0.4 not in ^0.0.3");
 }
 
 fn test_tilde_zero() {
@@ -1163,12 +1177,12 @@ fn test_tilde_zero() {
     # ~0.2.0 means >=0.2.0, <0.3.0 — same major.minor
     var c = constraint_parse(str_from("~0.2.0"));
     assert(constraint_matches(c, semver_parse(str_from("0.2.0"))),
-    "0.2.0 in ~0.2");
+      "0.2.0 in ~0.2");
     assert(constraint_matches(c, semver_parse(str_from("0.2.9"))),
-    "0.2.9 in ~0.2");
+      "0.2.9 in ~0.2");
     assert(constraint_matches(c,
-    semver_parse(str_from("0.3.0"))) == 0,
-    "0.3.0 not in ~0.2");
+        semver_parse(str_from("0.3.0"))) == 0,
+      "0.3.0 not in ~0.2");
 }
 
 fn test_empty_graph() {
@@ -1183,8 +1197,8 @@ fn test_single_node_graph() {
     test_group("single_node_graph");
     var g = dep_graph_new();
     dep_graph_add(g, resolved_pkg_new(str_from("solo"),
-    str_from("1.0"), SOURCE_MARKETPLACE, str_from(""),
-    0, vec_new(), 1));
+        str_from("1.0"), SOURCE_MARKETPLACE, str_from(""),
+        0, vec_new(), 1));
     assert_eq(dep_graph_detect_cycle(g), 0, "no cycle");
     var order = dep_graph_topo_sort(g);
     assert_eq(vec_len(order), 1, "one node");
@@ -1195,7 +1209,7 @@ fn test_semver_overflow() {
     test_group("semver_overflow");
     # Crafted version with huge numbers should not crash
     var v = semver_parse(
-    str_from("99999999999999999999999.0.0"));
+      str_from("99999999999999999999999.0.0"));
     assert_eq(v, 0, "overflow returns 0");
     # Normal large version should work
     var v2 = semver_parse(str_from("999.999.999"));
@@ -1223,7 +1237,7 @@ fn test_integration_apt() {
     var db = sysdb_new();
     if (sysdb_available(db) == 1) {
         # Test with a package that exists on all Debian/Ubuntu
-        var info = payload(sysdb_info(db, str_from("coreutils")));
+        var info_t, info = sysdb_info(db, str_from("coreutils"));
         if (info != 0) {
             assert(str_len(rp_name(info)) > 0, "has name");
             assert(str_len(rp_ver(info)) > 0, "has version");
@@ -1231,11 +1245,11 @@ fn test_integration_apt() {
             assert_eq(rp_trust(info), 1, "trusted");
         }
         # Search
-        var sr = payload(sysdb_search(db, str_from("coreutils")));
+        var sr_t, sr = sysdb_search(db, str_from("coreutils"));
         assert(vec_len(sr) > 0, "search found results");
         # is_installed
-        var inst = payload(sysdb_is_installed(db,
-        str_from("coreutils")));
+        var inst_t, inst = sysdb_is_installed(db,
+          str_from("coreutils"));
         assert_eq(inst, 1, "coreutils installed");
     }
 }
@@ -1262,12 +1276,18 @@ fn test_sysdb_unavailable() {
     test_group("sysdb_unavailable");
     var db = sysdb_make(0);
     assert_eq(sysdb_available(db), 0, "unavailable");
-    assert_eq(vec_len(payload(sysdb_search(db, str_from("x")))), 0, "search empty");
-    assert_eq(payload(sysdb_is_installed(db, str_from("x"))), 0, "not installed");
-    assert_eq(payload(sysdb_get_installed(db, str_from("x"))), 0, "no get");
-    assert_eq(vec_len(payload(sysdb_list(db))), 0, "list empty");
-    assert_eq(vec_len(payload(sysdb_updates(db))), 0, "no updates");
-    assert_eq(payload(sysdb_info(db, str_from("x"))), 0, "no info");
+    var srch_t, srch = sysdb_search(db, str_from("x"));
+    assert_eq(vec_len(srch), 0, "search empty");
+    var inst_t, inst = sysdb_is_installed(db, str_from("x"));
+    assert_eq(inst, 0, "not installed");
+    var gi_t, gi = sysdb_get_installed(db, str_from("x"));
+    assert_eq(gi, 0, "no get");
+    var lst_t, lst = sysdb_list(db);
+    assert_eq(vec_len(lst), 0, "list empty");
+    var ups_t, ups = sysdb_updates(db);
+    assert_eq(vec_len(ups), 0, "no updates");
+    var info_t, info = sysdb_info(db, str_from("x"));
+    assert_eq(info, 0, "no info");
 }
 
 # 1.3.0 — pluggable multi-source update detection.
@@ -1299,18 +1319,18 @@ fn test_check_updates_pluggable() {
 
     var d = mkdir_test();
     var c = mkdir_test();
-    var r = payload(resolver_new(d, c));
+    var r_t, r = resolver_new(d, c);
     var inst = vec_new();
     vec_push(inst, installed_pkg_new(str_from("agent"), str_from("1.0.0"), SOURCE_MARKETPLACE, 0, 0, 0));
 
     # avail_fn returns a newer version -> the marketplace package shows an update.
-    var ups = payload(resolver_check_updates(r, inst, &t_avail_two));
+    var ups_t, ups = resolver_check_updates(r, inst, &t_avail_two);
     assert_eq(updates_has(ups, str_from("agent")), 1, "newer avail -> update emitted");
     # avail_fn returns the same version -> no marketplace update.
-    var ups2 = payload(resolver_check_updates(r, inst, &t_avail_same));
+    var ups2_t, ups2 = resolver_check_updates(r, inst, &t_avail_same);
     assert_eq(updates_has(ups2, str_from("agent")), 0, "same avail -> no update");
     # avail_fn == 0 -> apt-only, no marketplace detection.
-    var ups3 = payload(resolver_check_updates(r, inst, 0));
+    var ups3_t, ups3 = resolver_check_updates(r, inst, 0);
     assert_eq(updates_has(ups3, str_from("agent")), 0, "no avail_fn -> apt-only");
 
     rm_rf(d); rm_rf(c);

@@ -40,12 +40,11 @@ fn update_is_newer(avail, installed): i64 {
 fn resolver_check_updates(r, installed, avail_fn): i64 {
     var out = vec_new();
     # System/apt leg — sysdb knows installed AND available globally.
-    var sres = sysdb_updates(rs_sys(r));
-    if (is_ok(sres) == 1) {
-        var su = payload(sres);
+    var sres_t, sres = sysdb_updates(rs_sys(r));
+    if (is_ok(sres_t) == 1) {
         var k = 0;
-        while (k < vec_len(su)) {
-            vec_push(out, vec_get(su, k));
+        while (k < vec_len(sres)) {
+            vec_push(out, vec_get(sres, k));
             k = k + 1;
         }
     }

@@ -4,9 +4,9 @@
 # ===================================================================
 
 fn resolver_new(mkt_dir, cache_dir): i64 {
-    var rr = registry_new(mkt_dir);
-    if (is_err_result(rr) == 1) { return rr; }
-    return Ok(resolver_make(strategy_default(), cache_dir, payload(rr), sysdb_new()));
+    var rr_t, rr = registry_new(mkt_dir);
+    if (is_err_result(rr_t) == 1) { return Err(rr); }
+    return Ok(resolver_make(strategy_default(), cache_dir, rr, sysdb_new()));
 }
 
 fn resolver_with_strategy(r, strat): i64 { rs_set_strat(r, strat); return r; }
@@ -33,13 +33,16 @@ fn resolve_mkt(r, name): i64 {
 }
 
 fn resolve_sys(r, name): i64 {
-    var result = sysdb_info(rs_sys(r), name);
-    if (is_ok(result) == 1 && payload(result) != 0) {
+    var result_t, result = sysdb_info(rs_sys(r), name);
+    if (is_ok(result_t) == 1 && result != 0) {
         trace_msg(r, "system: ", name, "hit");
     } else {
         trace_msg(r, "system: ", name, "miss");
     }
-    return result;
+    # Re-emit BOTH halves: a bare `return result;` would hand the caller the
+    # payload as its TAG, so a propagated Err would read as Ok.
+    if (is_err_result(result_t) == 1) { return Err(result); }
+    return Ok(result);
 }
 
 fn resolve_flutter(r, name): i64 {
@@ -57,8 +60,8 @@ fn resolve_flutter(r, name): i64 {
 }
 
 fn resolver_resolve(r, name): i64 {
-    var v = validate_package_name(name);
-    if (is_err_result(v) == 1) { return v; }
+    var v_t, v = validate_package_name(name);
+    if (is_err_result(v_t) == 1) { return Err(v); }
     var k = st_kind(rs_strat(r));
 
     if (k == STRAT_MARKETPLACE_FIRST) {
@@ -69,9 +72,9 @@ fn resolver_resolve(r, name): i64 {
         return resolve_sys(r, name);
     }
     if (k == STRAT_SYSTEM_FIRST) {
-        var sr = resolve_sys(r, name);
-        if (is_err_result(sr) == 1) { return sr; }
-        if (payload(sr) != 0) { return sr; }
+        var sr_t, sr = resolve_sys(r, name);
+        if (is_err_result(sr_t) == 1) { return Err(sr); }
+        if (sr != 0) { return Ok(sr); }
         var mp = resolve_mkt(r, name);
         if (mp != 0) { return Ok(mp); }
         return Ok(resolve_flutter(r, name));
@@ -107,9 +110,9 @@ fn resolver_search(r, query): i64 {
         i = i + 1;
     }
     vec_push(sources, SOURCE_SYSTEM);
-    var sres = sysdb_search(rs_sys(r), query);
-    if (is_ok(sres) == 1) {
-        var sp = payload(sres);
+    var sres_t, sres = sysdb_search(rs_sys(r), query);
+    if (is_ok(sres_t) == 1) {
+        var sp = sres;
         var j = 0;
         while (j < vec_len(sp)) {
             var pkg = vec_get(sp, j);
@@ -131,12 +134,12 @@ fn resolver_list(r): i64 {
     while (i < vec_len(ml)) {
         var mpkg = vec_get(ml, i);
         vec_push(pkgs, installed_pkg_new(mpkg_name(mpkg), mpkg_version(mpkg),
-        SOURCE_MARKETPLACE, mp_at(mpkg), mp_size(mpkg), 0));
+            SOURCE_MARKETPLACE, mp_at(mpkg), mp_size(mpkg), 0));
         i = i + 1;
     }
-    var sres = sysdb_list(rs_sys(r));
-    if (is_ok(sres) == 1) {
-        var sp = payload(sres);
+    var sres_t, sres = sysdb_list(rs_sys(r));
+    if (is_ok(sres_t) == 1) {
+        var sp = sres;
         var j = 0;
         while (j < vec_len(sp)) { vec_push(pkgs, vec_get(sp, j)); j = j + 1; }
     }

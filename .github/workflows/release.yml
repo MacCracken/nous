@@ -70,9 +70,15 @@ jobs:
           echo "$HOME/.cyrius/bin" >> $GITHUB_PATH
           echo "CYRIUS_HOME=$HOME/.cyrius" >> $GITHUB_ENV
 
-      - name: Setup lib symlink
-        # nous de-vendored lib/ at 1.2.0; symlink the installed stdlib.
-        run: ln -sf "$HOME/.cyrius/lib" lib
+      # ⛔ The "Setup lib symlink" step was REMOVED at cyrius 6.6.2.
+      # It did `ln -sf "$HOME/.cyrius/lib" lib`, a directory-level lib symlink —
+      # the pattern CLAUDE.md forbids and that cyrius REFUSES to vendor into since
+      # 6.5.37 ("refusing to vendor into a SYMLINKED directory: lib"), because a
+      # write through it lands in the SHARED stdlib snapshot and corrupts every
+      # project on the machine. The next step (`cyrius deps`) would have hit that
+      # refusal and failed CI. It is also unnecessary: `cyrius deps` populates lib/
+      # from the version-pinned snapshot on its own (verified: 35 declared modules,
+      # byte-identical build, 287/287 tests).
 
       - name: Resolve deps
         run: cyrius deps

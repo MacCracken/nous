@@ -14,8 +14,8 @@ fn sysdb_available(db): i64 { return sd_apt(db); }
 fn sysdb_search(db, query): i64 {
     if (sd_apt(db) == 0) { return Ok(vec_new()); }
     # Validate query to prevent command injection
-    var vr = validate_package_name(query);
-    if (is_err_result(vr) == 1) { return Ok(vec_new()); }
+    var vr_t, vr = validate_package_name(query);
+    if (is_err_result(vr_t) == 1) { return Ok(vec_new()); }
     var args = vec_new();
     vec_push(args, tool_path("apt-cache"));
     vec_push(args, "search");
@@ -46,8 +46,8 @@ fn sysdb_search(db, query): i64 {
 
 fn sysdb_is_installed(db, name): i64 {
     if (sd_apt(db) == 0) { return Ok(0); }
-    var vr = validate_package_name(name);
-    if (is_err_result(vr) == 1) { return Ok(0); }
+    var vr_t, vr = validate_package_name(name);
+    if (is_err_result(vr_t) == 1) { return Ok(0); }
     var args = vec_new();
     vec_push(args, tool_path("dpkg-query"));
     vec_push(args, "-W");
@@ -65,8 +65,8 @@ fn sysdb_is_installed(db, name): i64 {
 
 fn sysdb_get_installed(db, name): i64 {
     if (sd_apt(db) == 0) { return Ok(0); }
-    var vr = validate_package_name(name);
-    if (is_err_result(vr) == 1) { return Ok(0); }
+    var vr_t, vr = validate_package_name(name);
+    if (is_err_result(vr_t) == 1) { return Ok(0); }
     var args = vec_new();
     vec_push(args, tool_path("dpkg-query"));
     vec_push(args, "-W");
@@ -142,8 +142,8 @@ fn sysdb_updates(db): i64 {
 
 fn sysdb_info(db, name): i64 {
     if (sd_apt(db) == 0) { return Ok(0); }
-    var vr = validate_package_name(name);
-    if (is_err_result(vr) == 1) { return Ok(0); }
+    var vr_t, vr = validate_package_name(name);
+    if (is_err_result(vr_t) == 1) { return Ok(0); }
     var args = vec_new();
     vec_push(args, tool_path("apt-cache"));
     vec_push(args, "show");

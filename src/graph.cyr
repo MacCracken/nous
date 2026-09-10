@@ -239,9 +239,9 @@ fn resolver_resolve_all(r, names): i64 {
         if (map_has(visited, cname) == 1) { continue; }
         map_set(visited, cname, 1);
 
-        var res = resolver_resolve(r, name);
-        if (is_err_result(res) == 1) { return res; }
-        var pkg = payload(res);
+        var res_t, res = resolver_resolve(r, name);
+        if (is_err_result(res_t) == 1) { return Err(res); }
+        var pkg = res;
         if (pkg == 0) { continue; }
 
         dep_graph_add(graph, pkg);

@@ -74,7 +74,8 @@ fn setup_resolver(n) {
         file_write_all(to_cstr(mp), to_cstr(json), str_len(json));
         i = i + 1;
     }
-    br = payload(resolver_new(d, c));
+    var rr_t, rr = resolver_new(d, c);
+    br = rr;
 }
 
 fn b_hit() { resolver_resolve(br, str_from("bench-pkg-50")); return 0; }
@@ -158,8 +159,8 @@ fn setup_cycle_bench() {
             vec_push(deps, str_builder_build(dsb));
         }
         dep_graph_add(cycle_graph, resolved_pkg_new(name,
-        str_from("1.0"), SOURCE_MARKETPLACE,
-        str_from(""), 0, deps, 1));
+            str_from("1.0"), SOURCE_MARKETPLACE,
+            str_from(""), 0, deps, 1));
         i = i + 1;
     }
 }
@@ -185,7 +186,7 @@ fn b_recipe_db() {
 # Serde roundtrip benchmark
 fn b_serde() {
     var pkg = resolved_pkg_new(str_from("bench-pkg"), str_from("1.0.0"),
-    SOURCE_MARKETPLACE, str_from("A bench package"), 4096, vec_new(), 1);
+      SOURCE_MARKETPLACE, str_from("A bench package"), 4096, vec_new(), 1);
     var json = resolved_to_json(pkg);
     resolved_from_json(json);
     return 0;

@@ -5,6 +5,62 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-09-10
+
+**cyrius 6.3.35 → 6.6.2 value-form migration**, plus a CI step that would have corrupted the
+shared stdlib. 287 assertions, 0 failures.
+
+### Fixed — ⛔ the error-propagation trap: errors that read as SUCCESS
+
+cyrius 6.6.0 made `Result` a `(tag, payload)` register pair. The pre-flip propagation idiom
+
+    var rr = registry_new(mkt_dir);
+    if (is_err_result(rr) == 1) { return rr; }
+
+migrated naively returns the **payload alone**, so the caller receives the error VALUE as its
+TAG — a propagated `Err(77)` arrives as `tag=77, is_err=0`. Neither spelling is a type error, so
+it survives a green build AND a green test suite. This is the shape that produced **19 silent
+defects in yukti** during its own 6.6.0 migration.
+
+cycc named four functions — `resolver_new`, `resolver_resolve`, `resolver_resolve_all`,
+`resolver_resolve_all_with_recipes`. A full audit of every `Result`-returning function found
+**more than the compiler reported**, including the entire pass-through body of
+`resolve_sys` (`src/resolver.cyr`), whose single `return result;` covered BOTH the Err and Ok
+paths — every system-layer error would have read as success. All now `return Err(x);` / `Ok(x)`.
+
+⚖️ **Honest scope:** of the propagation sites repaired, only the `validate_package_name` one was a
+LIVE defect today — the other callees currently return `Ok` on every path, so those were LATENT
+traps. All are fixed regardless: each callee is `Result`-typed and may grow an `Err` path.
+
+**Zero mixed-return warnings** now, and the detector was confirmed live by reverting one fix and
+watching cycc name the file and line.
+
+### Changed — value form throughout
+
+71 sites: 8 in `src/` (4 files), 63 in `tests/`. `payload(r)` → the second bound variable,
+predicates take the tag, `var r = f();` → `var r_t, r = f();`. nous has no hand-rolled
+`tagged_new` boxes, so no `boxed_*` is used anywhere.
+
+### Fixed — ⛔ CI symlinked `lib/` into the SHARED stdlib snapshot
+
+Two jobs ran `ln -sf "$HOME/.cyrius/lib" lib`. That is a directory-level `lib` symlink into the
+version-pinned snapshot — the pattern CLAUDE.md forbids, because a write through it lands in the
+shared stdlib and corrupts **every project on the machine** (the 2026-09-01 incident: 27 files
+replaced, `lib/alloc.cyr` losing the v6.4.1 information-leak fix, shabda ingesting the corruption
+12 seconds later).
+
+cyrius has REFUSED to vendor into a symlinked `lib/` since 6.5.37, so the following
+`cyrius deps` step would have failed CI outright. Both steps removed — and they were never
+needed: `cyrius deps`, `cyrius build` and `cyrius test` each populate `lib/` from the pinned
+snapshot on their own (verified from an empty tree: 35 declared modules, byte-identical build,
+287/287 tests).
+
+### Changed — stdlib re-synced, formatting
+
+Every stdlib leaf byte-identical to the 6.6.2 snapshot; zero orphans; zero retired-name calls in
+`lib/`. Five files reformatted — pre-existing drift, since cyrfmt only began tracking paren depth
+at v6.5.28 and nous was pinned 6.3.35.
+
 ## [1.3.1] - 2026-07-02
 
 ### Changed
