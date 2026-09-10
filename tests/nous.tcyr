@@ -539,7 +539,7 @@ fn test_manifest_serde_roundtrip() {
     test_group("manifest_serde");
     var deps = map_new();
     map_set(deps, "dep-a", str_from(">=1.0"));
-    var agent = agent_info_new(str_from("test-agent"), str_from("2.0.0"),
+    var agent = nous_agent_info_new(str_from("test-agent"), str_from("2.0.0"),
       str_from("A test agent"));
     var m = manifest_new(agent, deps, str_from("native"));
     var json = manifest_to_json(m);

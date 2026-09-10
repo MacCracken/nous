@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-10
+
+### ⚠ BREAKING — `agent_info_new` renamed to `nous_agent_info_new`
+
+It **collided with agnostik's** `agent_info_new(id, name: Str, atype, status)` — a different
+function, 4 args over a 32-byte {id, name, type, status} struct, where nous's is 3 args over a
+24-byte {name, version, desc} one. Any project vendoring both dists got **"last definition wins",
+so calls to the other arity silently mis-bound their arguments**. ark vendors both and is where it
+surfaced: cyrius 6.6.2 makes an arity-disagreeing duplicate a hard error rather than a warning,
+which is the only reason anyone found out.
+
+⚖️ **nous renamed rather than agnostik**, for a reason and not a coin flip: agnostik is the
+SHARED-types library for AGNOS and agent identity/type/status is squarely its domain, so its names
+are meant to be ecosystem-wide. nous's is package metadata sitting beside `manifest_new`; the
+generic name was the intruder.
+
+⚖️ **Measured blast radius: zero external callers.** Scanned every `src/` under `~/Repos` — the
+only callers of either symbol are the two repos that define them. Three sites changed inside nous
+(`src/types.cyr`, `src/registry.cyr`, `tests/nous.tcyr`). A minor, not a patch, because the public
+surface changed incompatibly.
+
 ## [1.3.2] - 2026-09-10
 
 **cyrius 6.3.35 → 6.6.2 value-form migration**, plus a CI step that would have corrupted the

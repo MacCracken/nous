@@ -75,7 +75,7 @@ fn parse_manifest_file(file_path): i64 {
     if (desc == 0) { desc = str_from(""); }
     if (runtime == 0) { runtime = str_from("native"); }
     var deps = json_extract_deps(content);
-    var agent = agent_info_new(name, version, desc);
+    var agent = nous_agent_info_new(name, version, desc);
     return manifest_new(agent, deps, runtime);
 }
 
