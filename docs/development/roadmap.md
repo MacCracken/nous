@@ -63,6 +63,18 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
   both filed toolchain issues worked around); `@unsafe` not adopted (deny/lint
   don't require it); resolver-completeness assessment. **Closes the 1.2.x arc.**
 
+## Completed (v1.4.1) — Cyrius 6.6.20 + bundled-lib refresh
+
+- Toolchain pin 6.6.2 → 6.6.20; `lib/` re-vendored to the 6.6.20 bundled versions
+  (bayan 1.5.5 → 1.5.12; 39 files, byte-identical to the snapshot); `cyrius.lock`
+  now generated. 287/0, fuzz ok, 18 benches flat apart from `search_100` (+12%,
+  borderline noise; see CHANGELOG). Build warning-free.
+- `dist/nous.cyr` now carries the compile-verified `# Requires` include block and
+  `dist/nous.deps` is the 12-leaf verified set (was the 16-entry `[deps] stdlib`
+  copy). Toolchain-driven; no API change.
+- Follow-up: watch `search_100` on the next toolchain bump. If the +12% holds,
+  profile `resolver_search` against the 6.6.20 stdlib `str` / `vec` changes.
+
 ## Completed (v1.2.6) — Cyrius 6.2.11 + bayan adoption
 
 - Toolchain pin 6.0.3 → 6.2.11 (clean: fmt/lint/vet/deny/doc, 271/0, 18 benches

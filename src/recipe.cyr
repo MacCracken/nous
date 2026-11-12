@@ -228,12 +228,16 @@ fn recipe_parse_file(path): i64 {
 
     # [source] section
     var src = cyml_section_by_name(sections, "source");
-    var url = str_from("");
-    var sha256 = str_from("");
+    # url/sha256 hold cyml_get's i64 (a Str or 0) and default to "" — the same
+    # idiom as name/ver/desc above. Initialising them from str_from("") typed
+    # the locals `Str`, and cyrius 6.6.20 warns "assigning non-pointer to typed
+    # pointer" on each cyml_get assignment. Same values on every path.
+    var url = 0;
+    var sha256 = 0;
     var patches = vec_new();
     if (src != 0) {
-        var u = cyml_get(src, "url");
-        if (u != 0) { url = u; }
+        url = cyml_get(src, "url");
+        if (url == 0) { url = str_from(""); }
         # github_release fallback
         if (str_len(url) == 0) {
             var gh = cyml_get(src, "github_release");
@@ -248,11 +252,12 @@ fn recipe_parse_file(path): i64 {
                 url = str_builder_build(sb);
             }
         }
-        var s = cyml_get(src, "sha256");
-        if (s != 0) { sha256 = s; }
+        sha256 = cyml_get(src, "sha256");
         var pa = cyml_get(src, "patches");
         if (pa != 0) { patches = parse_toml_array(pa); }
     }
+    if (url == 0) { url = str_from(""); }
+    if (sha256 == 0) { sha256 = str_from(""); }
 
     # [depends] section
     var deps = cyml_section_by_name(sections, "depends");

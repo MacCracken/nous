@@ -5,6 +5,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-11-12
+
+**cyrius 6.6.2 → 6.6.20, stdlib re-vendored to the 6.6.20 bundled versions.** 287 assertions,
+0 failures; fuzz ok; no public API change. fmt / lint / vet / deny / doc clean, build
+warning-free.
+
+### Changed — toolchain + bundled libs
+
+- **Pin `6.6.2` → `6.6.20`.**
+- **`lib/` re-vendored from the 6.6.20 snapshot** (`cyrius lib sync`, then `cyrius deps`). All 39
+  files are byte-identical to the snapshot. The one fold nous uses moved **bayan 1.5.5 → 1.5.12**
+  (re-vendored from its tag by cyrius 6.6.18). The transitive closure gained four leaves that the
+  6.6.20 stdlib now includes (`alloc_cx`, `chrono`, `hashmap_fast`, `poison`): 35 → 39 files.
+  `[deps] stdlib` itself is unchanged.
+- **`cyrius.lock` added.** `cyrius deps` now records the sha256 of every vendored leaf (39
+  entries). ark, patra, sigil, daimon, agnostik, bayan and yukti all track theirs.
+
+### Changed — `dist/` bundle shape (consumer-facing; toolchain-driven, no nous source change)
+
+- **`dist/nous.cyr` opens with a compile-verified `# Requires` block**: one
+  `include "lib/<leaf>.cyr"` per sidecar leaf (cyrius 6.6.18), so the bundle compiles when
+  included on its own. Stdlib content is still not bundled. A `cyrius deps` consumer is
+  unaffected: include-once is keyed on the literal path, so ark's own includes of the same leaves
+  dedupe.
+- **`dist/nous.deps` 16 → 12 leaves.** The sidecar is now what distlib's compile-verify proves the
+  bundle needs, instead of a copy of `[deps] stdlib` (cyrius 6.6.18). Dropped: `fmt`, `args`,
+  `assert`, `tagged`, `bench`. Those serve the tests and the smoke binary, and the bundle compiles
+  without them. Added: `result`.
+- ⚖️ A consumer that relied on nous's sidecar to bring in one of the five dropped leaves must now
+  declare it itself. ark declares its own `[deps] stdlib`, and since cyrius 6.6.18 a failed build
+  names the leaf to add.
+
+### Fixed — the three new `assigning non-pointer to typed pointer` warnings
+
+6.6.20 flags three sites. Each local was initialised from `str_from("")`, which types it `Str`,
+and was then assigned an `i64` that holds a `Str` at runtime. None of them hid a bug.
+
+| Site | Local | Assigned from |
+|---|---|---|
+| `src/sysdb.cyr` `sysdb_updates` | `av` | `vec_get(rest, 1)` |
+| `src/recipe.cyr` `recipe_parse_file` | `url` | `cyml_get(src, "url")` |
+| `src/recipe.cyr` `recipe_parse_file` | `sha256` | `cyml_get(src, "sha256")` |
+
+The locals now start as `i64` and fall back to `""`, the same idiom `recipe_parse_file` already
+uses for `name` / `ver` / `desc`. Every path produces the same value as before.
+
+### Performance — flat
+
+Same machine, 1.4.0 on 6.6.2 vs 1.4.1 on 6.6.20, median of 3 alternating runs (`cyrius bench
+tests/nous.bcyr`, each build on its own pinned stdlib):
+
+| Bench | 1.4.0 / 6.6.2 | 1.4.1 / 6.6.20 | Δ |
+|---|---|---|---|
+| `detect_source` | 570 ns | 581 ns | +1.9% |
+| `validate_name` | 509 ns | 499 ns | −2.0% |
+| `resolve_mkt_hit` | 2.19 µs | 2.17 µs | −1.2% |
+| `resolve_mkt_miss` | 4.63 µs | 4.46 µs | −3.8% |
+| `search_100` | 77.92 µs | 87.53 µs | +12.3% |
+| `list_installed_100` | 12.75 µs | 12.65 µs | −0.8% |
+| `strat_mkt_first` | 2.18 µs | 2.16 µs | −0.8% |
+| `strat_sys_first` | 2.21 µs | 2.17 µs | −1.7% |
+| `strat_only_mkt` | 2.19 µs | 2.16 µs | −1.6% |
+| `strat_search_all` | 2.17 µs | 2.18 µs | +0.3% |
+| `graph_resolve` | 8.67 µs | 8.87 µs | +2.3% |
+| `recipe_parse` | 18.31 µs | 19.03 µs | +4.0% |
+| `levenshtein` | 2.21 µs | 2.23 µs | +1.2% |
+| `constraint` | 691 ns | 709 ns | +2.6% |
+| `cycle_detect_20` | 23.20 µs | 22.44 µs | −3.3% |
+| `topo_sort_20` | 35.84 µs | 33.71 µs | −6.0% |
+| `recipe_db_load` | 6.982 ms | 7.007 ms | +0.4% |
+| `serde_roundtrip` | 2.68 µs | 2.77 µs | +3.2% |
+
+- ⚖️ **`search_100` (`resolver_search`) is the one row outside noise, and only just.** Across
+  every clean run, 1.4.0 spanned 76–93 µs (4 runs) and 1.4.1 spanned 84–92 µs (5 runs). It is
+  flagged here, not chased in a patch release.
+- ⚖️ The first 6.6.20 run showed 2–2.6× slowdowns on several rows (`graph_resolve` 22.5 µs,
+  `strat_*` ~5.4 µs). Five later runs did not reproduce it, so it was discarded.
+  `bench-history.csv` carries a clean `1.4.1-local` run.
+- **Binary size:** release build (`CYRIUS_DCE=1`) 56,264 → 58,520 B (+4.0%). The non-DCE dev
+  build grew 555,976 → 631,960 B, which is stdlib growth in unreachable code (1,452 → 1,660
+  unreachable fns).
+
 ## [1.4.0] - 2026-09-10
 
 ### ⚠ BREAKING — `agent_info_new` renamed to `nous_agent_info_new`

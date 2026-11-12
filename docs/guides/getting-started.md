@@ -6,10 +6,11 @@ builds a small smoke binary.
 
 ## Prerequisites
 
-- **Cyrius 6.0.1** (pinned in `cyrius.cyml`; the toolchain is the single source
+- **Cyrius 6.6.20** (pinned in `cyrius.cyml`; the toolchain is the single source
   of truth). Install from the [cyrius releases](https://github.com/MacCracken/cyrius/releases).
-- `lib/` (the stdlib) is **not** vendored — `cyrius` resolves it from the
-  version-pinned snapshot (`~/.cyrius/versions/6.0.1/lib/`). Don't commit `lib/`.
+- `lib/` (the stdlib) is **not** committed — `cyrius deps` (and `build`/`test`)
+  vendor it from the version-pinned snapshot (`~/.cyrius/versions/<pin>/lib/`)
+  and record each file's sha256 in `cyrius.lock`. Don't commit `lib/`.
 
 ## Build & run the smoke binary
 

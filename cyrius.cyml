@@ -5,7 +5,7 @@ description = "nous — package resolver for AGNOS (system, marketplace, Flutter
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/nous"
 language = "cyrius"
-cyrius = "6.6.2"
+cyrius = "6.6.20"
 
 [build]
 entry = "src/main.cyr"
@@ -14,9 +14,13 @@ output = "build/nous"
 # `cyrius distlib` reads this section to build dist/nous.cyr — nous's
 # single-file, consumer-facing artifact (ark consumes it; see roadmap
 # 1.2.3). Order matches src/nous.cyr's barrel includes; each module may
-# reference symbols defined earlier. The bundle is a pure concatenation
-# of these src files — stdlib is NOT bundled (the consumer supplies the
-# `[deps] stdlib` surface below), same shape as patra/sigil.
+# reference symbols defined earlier. The bundle concatenates these src
+# files behind a compile-verified `# Requires` block of
+# `include "lib/<leaf>.cyr"` lines (cyrius 6.6.18+). Stdlib CONTENT is
+# still NOT bundled; the consumer vendors those leaves (`cyrius deps`
+# reads dist/nous.deps). The leaves are whatever distlib's compile-verify
+# proves the bundle needs, NOT the `[deps] stdlib` list below, which also
+# carries the tests'/smoke binary's leaves (assert, bench, args, ...).
 #
 # IMPORTANT: keep `modules` under `[lib]`, NOT `[build]`. 5.7.x+ treats
 # `[build].modules` as an auto-prepend list and inlines every src file

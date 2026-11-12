@@ -96,11 +96,12 @@ Nous uses heuristics to detect package source when no explicit source is provide
 
 ```bash
 cyrius build src/main.cyr build/nous    # compile
-cyrius test tests/nous.tcyr             # 140 tests
-cyrius bench tests/nous.bcyr            # 11 benchmarks
+cyrius test tests/nous.tcyr             # 287 assertions
+cyrius bench tests/nous.bcyr            # 18 benchmarks
 ```
 
-Requires Cyrius 5.1.7. Binary: ~115KB x86_64 ELF.
+Requires Cyrius 6.6.20 (pinned in `cyrius.cyml`). Release binary
+(`CYRIUS_DCE=1`): ~58 KB x86_64 ELF.
 
 ## Related
 

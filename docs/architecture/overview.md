@@ -62,14 +62,16 @@ the complete layout of all 12 struct types.
 
 ## Build & Distribution
 
-- **Library bundle** — `[lib] modules` in `cyrius.cyml` lists the 14 `src/*.cyr`
+- **Library bundle** — `[lib] modules` in `cyrius.cyml` lists the 15 `src/*.cyr`
   in barrel order; `cyrius distlib` concatenates them into the committed
-  `dist/nous.cyr`. Consumers include that one file and supply their own stdlib
-  (the bundle does not embed stdlib). CI fails if the committed bundle drifts.
+  `dist/nous.cyr`, behind a compile-verified `# Requires` block of
+  `include "lib/<leaf>.cyr"` lines (cyrius 6.6.18+). The bundle does not embed
+  stdlib content: consumers vendor the leaves listed in `dist/nous.deps`.
+  CI fails if the committed bundle drifts.
 - **Smoke binary** — `[build] entry = src/main.cyr` → `build/nous`; a runtime
   self-check ("all smoke checks passed"). `modules` lives under `[lib]`, never
   `[build]` (the latter auto-prepends and bloats the binary).
-- **Toolchain** — pinned to Cyrius 6.0.1 in `cyrius.cyml`. Release ships
+- **Toolchain** — pinned to Cyrius 6.6.20 in `cyrius.cyml`. Release ships
   `nous-<tag>.cyr` (the bundle), the x86_64 binary, a source tarball, and
   `SHA256SUMS`. The binary is **not** stripped (corrupts a cyrius raw ELF).
 - Rationale: see [ADR-0002](../adr/0002-flat-modules-dist-bundle.md).

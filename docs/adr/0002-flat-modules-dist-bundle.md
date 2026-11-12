@@ -40,3 +40,7 @@ binary). `lib/` (stdlib) is gitignored, resolved from the version-pinned snapsho
   a CI `distlib`-sync gate enforces this, and the release regenerates it.
 - The bundle is a pure concatenation — stdlib is **not** bundled; the consumer
   supplies its own `[deps] stdlib` surface (same shape as patra/sigil).
+  *Update (1.4.1, cyrius 6.6.20):* distlib now prefixes the concatenation with
+  a compile-verified `# Requires` block, one `include "lib/<leaf>.cyr"` per
+  `dist/nous.deps` leaf, so the bundle is includable on its own. Stdlib content
+  is still not bundled, and the decision above is unchanged.
