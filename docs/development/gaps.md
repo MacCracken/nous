@@ -1,6 +1,6 @@
 # Nous — Known Gaps & Hardening Targets
 
-> **Status**: Active | **Last Updated**: 2026-11-12 (1.6.0, cyrius 6.7.18)
+> **Status**: Active | **Last Updated**: 2026-11-12 (1.6.1, cyrius 6.7.18)
 >
 > This page tracks the gaps between what nous does and what a production
 > resolver needs. The prioritized, versioned plan lives in

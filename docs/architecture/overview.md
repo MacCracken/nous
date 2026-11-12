@@ -23,7 +23,7 @@ src/
   updates.cyr         Update detection: apt leg + a pluggable lookup per source
 
 tests/
-  nous.tcyr           Test suite (493 assertions)
+  nous.tcyr           Test suite (503 assertions)
   nous.bcyr           Benchmarks (23 benches)
   nous.fcyr           Fuzz smoke harness
   fuzz_*.fcyr         Mutation fuzz targets: cyml, json, version, apt (4)

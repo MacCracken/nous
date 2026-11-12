@@ -1,6 +1,6 @@
 # Nous API Reference
 
-> **Version**: 1.6.0 | **Language**: Cyrius 6.7.18 (pinned in `cyrius.cyml`)
+> **Version**: 1.6.1 | **Language**: Cyrius 6.7.18 (pinned in `cyrius.cyml`)
 >
 > **In-tree:** `include "src/nous.cyr"` (the barrel). **As a dependency:** pull
 > `dist/nous.cyr` (see [ADR 0002](adr/0002-flat-modules-dist-bundle.md)), and
@@ -95,10 +95,11 @@ var plan2_t, plan2 = resolver_resolve_all_with_recipes(r, names);
 ### Search, List, Updates
 
 ```cyrius
-# Search across all sources (marketplace entries win on a name clash)
+# Search across all sources (registry entries win on a name clash)
 var sr_t, sr = resolver_search(r, str_from("audio"));
 var results = sr_results(sr);        # vec of ResolvedPkg
 var total = sr_total(sr);            # count
+var srcs = sr_sources(sr);           # [marketplace, flutter-app, system]
 
 # List installed packages (sorted by name)
 var ls_t, list = resolver_list(r);   # vec of InstalledPkg
@@ -114,6 +115,11 @@ detect_source(str_from("nginx"));           # SOURCE_UNKNOWN
 # Is it an installed marketplace package?
 resolver_is_mkt(r, str_from("myapp"));      # 1 or 0
 ```
+
+A registry package whose manifest `runtime` is `"flutter"` is labelled
+`SOURCE_FLUTTER_APP` by resolve, search and list alike; any other registry
+package is `SOURCE_MARKETPLACE` (1.6.1; search and list used to say
+marketplace for both).
 
 Under `strategy_search_all()`, `resolver_resolve` asks every source, and a name
 found in more than one is `Err(NOUS_ERR_AMBIGUOUS_SOURCE)` (1.5.3). Pick a

@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-11-12
+
+**One source label for a Flutter app, whichever call reports it.**
+
+### Fixed
+
+- **Flutter apps in search and list.** `resolver_resolve` labels a
+  Flutter-runtime registry package `SOURCE_FLUTTER_APP` (1.5.3).
+  `resolver_search` and `resolver_list` still labelled it
+  `SOURCE_MARKETPLACE`, so the same package reported two sources depending on
+  the call, and ark showed a Flutter app as a marketplace package in
+  `ark search` and `ark list`. The rule now lives in one private helper,
+  `_nous_mkt_src`, which all four registry sites use (`resolve_mkt`,
+  `resolve_flutter`, `resolver_search`, `resolver_list`). Before, they used
+  three different forms of the test.
+
+### Changed (output)
+
+| Call | Before | Now |
+|---|---|---|
+| `resolver_search`: `rp_src` of a Flutter-runtime registry package | `SOURCE_MARKETPLACE` | `SOURCE_FLUTTER_APP` |
+| `resolver_list`: `ip_src` of a Flutter-runtime registry package | `SOURCE_MARKETPLACE` | `SOURCE_FLUTTER_APP` |
+| `resolver_search`: `sr_sources` | `[marketplace, system]` | `[marketplace, flutter-app, system]`, so every result's source is in the list |
+
+Native (non-Flutter) packages, the system leg and every error are unchanged.
+ark reads only `sr_results` from a search, and builds its update set from its
+own PackageDb rather than `resolver_list`. So nothing in ark breaks; its
+search and list output gains the right label.
+
+### Performance
+
+The label lookup costs about 12 ns per registry package. Medians of 7
+alternating runs of the 1.6.0 and 1.6.1 bench binaries:
+
+| Bench | 1.6.0 | 1.6.1 | Change |
+|---|---|---|---|
+| `list_installed_100` | 12.62 µs | 13.80 µs | +9.3% |
+| `search_100` | 96.18 µs | 94.29 µs | −2.0% (noise) |
+
+A first version, which used `str_eq_cstr`, cost +23.5% on
+`list_installed_100`, because it ran `strlen` on the literal for every
+package. Checking the length first rejects the common `"native"` with one
+compare. The release binary is unchanged at 40,936 B, because the smoke
+binary never reaches search or list.
+
+### Verification
+
+- **Tests:** 503 passed, 0 failed (+10 assertions in `flutter_labels`).
+- **Mutation checks:** each of the four fixes was reverted alone, and every
+  revert fails the suite:
+  - the search label (2 assertions fail);
+  - the list label (2 fail);
+  - the `sr_sources` entry (2 fail);
+  - the helper's Flutter rule (`test_resolve_flutter` fails, then segfaults
+    on the 0 it gets).
+- **Fuzzing:** 5/5 harnesses pass under `--poison=ab`.
+- **Gates:** clean, including the per-module doc gate and `cyrius header`.
+  `cyrius distlib` is in sync.
+
 ## [1.6.0] - 2026-11-12
 
 **Documentation completeness. No behaviour change.** The smoke binary, its

@@ -374,6 +374,59 @@ fn test_list_installed() {
     rm_rf(d); rm_rf(c);
 }
 
+# 1.6.1: a Flutter-runtime registry package reports SOURCE_FLUTTER_APP from
+# search and list, as it does from resolve. Both used to say marketplace.
+fn test_flutter_labels() {
+    test_group("flutter_labels");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "fl-app", "flutter");
+    write_manifest(d, "nat-app", "native");
+    var r_t, r = resolver_new(d, c);
+    var sr_t, sr = resolver_search(r, str_from("app"));
+    assert_eq(is_ok(sr_t), 1, "search ok");
+    var fl_s = 0 - 1;
+    var nat_s = 0 - 1;
+    var all_in = 1;
+    var res = sr_results(sr);
+    var srcs = sr_sources(sr);
+    var i = 0;
+    while (i < vec_len(res)) {
+        var p = vec_get(res, i);
+        if (str_eq_cstr(rp_name(p), "fl-app") == 1) { fl_s = rp_src(p); }
+        if (str_eq_cstr(rp_name(p), "nat-app") == 1) { nat_s = rp_src(p); }
+        var j = 0;
+        var hit = 0;
+        while (j < vec_len(srcs)) { if (vec_get(srcs, j) == rp_src(p)) { hit = 1; } j = j + 1; }
+        if (hit == 0) { all_in = 0; }
+        i = i + 1;
+    }
+    assert_eq(fl_s, SOURCE_FLUTTER_APP, "search labels a Flutter app flutter-app");
+    assert_eq(nat_s, SOURCE_MARKETPLACE, "search labels a native package marketplace");
+    assert_eq(all_in, 1, "every search result's source is in sr_sources");
+    assert_eq(vec_get(srcs, 1), SOURCE_FLUTTER_APP, "sr_sources lists flutter-app");
+    var ls_t, ls = resolver_list(r);
+    var fl_l = 0 - 1;
+    var nat_l = 0 - 1;
+    i = 0;
+    while (i < vec_len(ls)) {
+        var q = vec_get(ls, i);
+        if (str_eq_cstr(ip_name(q), "fl-app") == 1) { fl_l = ip_src(q); }
+        if (str_eq_cstr(ip_name(q), "nat-app") == 1) { nat_l = ip_src(q); }
+        i = i + 1;
+    }
+    assert_eq(fl_l, SOURCE_FLUTTER_APP, "list labels a Flutter app flutter-app");
+    assert_eq(nat_l, SOURCE_MARKETPLACE, "list labels a native package marketplace");
+    var rv_t, rv = resolver_resolve(r, str_from("fl-app"));
+    assert_eq(rp_src(rv), fl_s, "resolve and search agree");
+    assert_eq(rp_src(rv), fl_l, "resolve and list agree");
+    # A manifest with no runtime at all (built in code, runtime 0) is marketplace.
+    var ag = nous_agent_info_new(str_from("bare"), str_from("1.0.0"), str_from(""));
+    var bare = installed_mpkg_new(manifest_new(ag, map_new(), 0), 0, str_from("/x"), 0);
+    assert_eq(_nous_mkt_src(bare), SOURCE_MARKETPLACE, "runtime 0 is marketplace");
+    rm_rf(d); rm_rf(c);
+}
+
 fn test_deterministic_order() {
     test_group("deterministic_order");
     var d = mkdir_test();
@@ -2175,6 +2228,7 @@ fn main() {
     test_search_merges();
     test_search_dedup();
     test_list_installed();
+    test_flutter_labels();
     test_deterministic_order();
     test_determinism_hash_order();
     test_constraint_overflow_is_err();

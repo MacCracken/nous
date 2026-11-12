@@ -3,7 +3,7 @@
 What's next for nous. Shipped work is recorded in [CHANGELOG.md](../../CHANGELOG.md),
 not here.
 
-**Current state (1.6.0, cyrius 6.7.18).**
+**Current state (1.6.1, cyrius 6.7.18).**
 - **Resolution:** transitive resolution across system, marketplace, Flutter and
   community sources, with 4 strategies.
 - **Determinism:** byte-ordered everywhere; results never depend on the hash seed.
@@ -19,18 +19,10 @@ not here.
   apt queries batched per breadth-first wave.
 - **Docs:** a one-line doc comment on every public fn (232), checked per module
   in CI; every Result-returning fn is declared `: Result`.
-- **Size:** 15 modules, 493 assertions, 23 benchmarks, 5 fuzz harnesses
+- **Size:** 15 modules, 503 assertions, 23 benchmarks, 5 fuzz harnesses
   (`--poison=ab`), and a ~41 KB release smoke binary.
 
 ---
-
-## 1.6.x — Follow-ups
-
-- [ ] **Flutter label in search and list.** `resolve_mkt` labels a
-      Flutter-runtime registry package `SOURCE_FLUTTER_APP` (1.5.3), but
-      `resolver_search` and `resolver_list` still label it
-      `SOURCE_MARKETPLACE`, so the same package reports two sources depending
-      on the call. Found while documenting 1.6.0.
 
 ## 1.7.x — Reproducible resolution
 
@@ -136,5 +128,7 @@ with a committed lock (1.7.x).
   - Seven more names are deprecated, but none is called by ark.
 - **ark → nous 1.6.0:** nothing to absorb. The compiled code is byte-identical
   to 1.5.3; only comments and return-type annotations changed.
+- **ark → nous 1.6.1:** nothing breaks. `ark search` and `ark list` now show a
+  Flutter app as flutter-app rather than marketplace.
 - **zugot:** the nous recipe (`marketplace/nous.cyml`) is still at 1.2.6. Bump it
   after each release tag, since it needs the release asset and its checksum.

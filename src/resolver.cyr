@@ -30,7 +30,22 @@ fn mpkg_to_resolved(pkg, src): i64 {
     return resolved_pkg_new(mpkg_name(pkg), mpkg_version(pkg), src, mpkg_desc(pkg), mp_size(pkg), ds, 0);
 }
 
-# ResolvedPkg for `name` from the marketplace registry (Flutter runtime labelled FlutterApp), or 0.
+# The source a registry package reports: SOURCE_FLUTTER_APP when its manifest
+# runtime is "flutter", else SOURCE_MARKETPLACE. 1.6.1: the one rule for
+# resolve, search and list. `resolver_search` and `resolver_list` used to label
+# every registry package marketplace, so a Flutter app that `resolver_resolve`
+# called flutter-app showed up as marketplace in search and list.
+fn _nous_mkt_src(pkg): i64 {
+    var rt = mpkg_runtime(pkg);
+    if (rt == 0) { return SOURCE_MARKETPLACE; }
+    # Length first, so the common "native" is rejected without str_eq_cstr's
+    # strlen of the literal on every package.
+    if (str_len(rt) != 7) { return SOURCE_MARKETPLACE; }
+    if (memeq(str_data(rt), "flutter", 7) == 1) { return SOURCE_FLUTTER_APP; }
+    return SOURCE_MARKETPLACE;
+}
+
+# ResolvedPkg for `name` from the registry, labelled by _nous_mkt_src (marketplace / FlutterApp), or 0.
 fn resolve_mkt(r, name): i64 {
     var pkg = nous_registry_get(rs_reg(r), name);
     if (pkg == 0) {
@@ -42,10 +57,7 @@ fn resolve_mkt(r, name): i64 {
     # returned as SOURCE_MARKETPLACE, so under MarketplaceFirst, SystemFirst and
     # SearchAll `resolve_flutter` was unreachable, and ark used the marketplace
     # install step for a Flutter app.
-    if (str_eq_cstr(mpkg_runtime(pkg), "flutter") == 1) {
-        return mpkg_to_resolved(pkg, SOURCE_FLUTTER_APP);
-    }
-    return mpkg_to_resolved(pkg, SOURCE_MARKETPLACE);
+    return mpkg_to_resolved(pkg, _nous_mkt_src(pkg));
 }
 
 # Ok(ResolvedPkg) for `name` from apt, Ok(0) when apt has none; Err on capture failure.
@@ -69,7 +81,7 @@ fn resolve_flutter(r, name): i64 {
         trace_msg(r, "flutter: ", name, "miss");
         return 0;
     }
-    if (str_eq(mpkg_runtime(pkg), str_from("flutter")) == 1) {
+    if (_nous_mkt_src(pkg) == SOURCE_FLUTTER_APP) {
         trace_msg(r, "flutter: ", name, "hit");
         return mpkg_to_resolved(pkg, SOURCE_FLUTTER_APP);
     }
@@ -124,18 +136,21 @@ fn resolver_resolve(r, name): Result {
     return Ok(0);
 }
 
-# Ok(SearchResult): marketplace then apt matches for Str query, deduped by name, byte-sorted.
+# Ok(SearchResult): registry then apt matches for Str query, deduped by name, byte-sorted.
 fn resolver_search(r, query): Result {
     var results = vec_new();
     var sources = vec_new();
     var seen = map_new();
+    # The registry holds marketplace packages and Flutter apps, so both are
+    # searched sources (1.6.1): every result's source is in `sr_sources`.
     vec_push(sources, SOURCE_MARKETPLACE);
+    vec_push(sources, SOURCE_FLUTTER_APP);
     var mr = registry_search(rs_reg(r), query);
     var i = 0;
     while (i < vec_len(mr)) {
         var mpkg = vec_get(mr, i);
         map_set(seen, _nous_cstr(mpkg_name(mpkg)), 1);
-        vec_push(results, mpkg_to_resolved(mpkg, SOURCE_MARKETPLACE));
+        vec_push(results, mpkg_to_resolved(mpkg, _nous_mkt_src(mpkg)));
         i = i + 1;
     }
     vec_push(sources, SOURCE_SYSTEM);
@@ -158,7 +173,7 @@ fn resolver_search(r, query): Result {
     return Ok(nous_search_result_new(results, sources, vec_len(results)));
 }
 
-# Ok(vec of InstalledPkg): marketplace plus dpkg packages, byte-sorted; Err on capture failure.
+# Ok(vec of InstalledPkg): registry plus dpkg packages, byte-sorted; Err on capture failure.
 fn resolver_list(r): Result {
     var pkgs = vec_new();
     var ml = nous_registry_list(rs_reg(r));
@@ -166,7 +181,7 @@ fn resolver_list(r): Result {
     while (i < vec_len(ml)) {
         var mpkg = vec_get(ml, i);
         vec_push(pkgs, installed_pkg_new(mpkg_name(mpkg), mpkg_version(mpkg),
-            SOURCE_MARKETPLACE, mp_at(mpkg), mp_size(mpkg), 0));
+            _nous_mkt_src(mpkg), mp_at(mpkg), mp_size(mpkg), 0));
         i = i + 1;
     }
     var sres_t, sres = sysdb_list(rs_sys(r));
