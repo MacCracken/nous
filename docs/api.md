@@ -1,6 +1,6 @@
 # Nous API Reference
 
-> **Version**: 1.6.1 | **Language**: Cyrius 6.7.18 (pinned in `cyrius.cyml`)
+> **Version**: 1.7.0 | **Language**: Cyrius 6.7.18 (pinned in `cyrius.cyml`)
 >
 > **In-tree:** `include "src/nous.cyr"` (the barrel). **As a dependency:** pull
 > `dist/nous.cyr` (see [ADR 0002](adr/0002-flat-modules-dist-bundle.md)), and
@@ -302,9 +302,13 @@ str_println(rc_ver(recipe));       # "8.19.0"
 str_println(rc_license(recipe));   # "MIT"
 var rt = rc_rt_deps(recipe);       # vec of Str: ["glibc", "openssl", ...]
 var bd = rc_bd_deps(recipe);       # vec of Str: ["gcc", "make", ...]
-str_println(rc_url(recipe));       # source URL; a github_release placeholder
-                                   # when only `github_release` is set (roadmap 1.7.x)
+str_println(rc_url(recipe));       # source URL; for a github_release recipe, its
+                                   # .../releases page, not the asset
 str_println(rc_sha256(recipe));    # checksum
+# A release-asset source as written (1.7.0; "" when none). The asset URL is
+# takumi's to resolve at fetch time, through the GitHub API; nous does no network.
+str_println(nous_rc_github_release(recipe));   # "owner/repo"
+str_println(nous_rc_release_asset(recipe));    # "name-*-linux-amd64.tar.gz"
 
 # Load the whole recipe database: every category directory, in byte order (1.5.3).
 # On a name collision the first wins (base first, then categories and files in
@@ -335,19 +339,25 @@ cyml_get(sec, "name");             # Str "x", or 0
 SemVer parsing and constraint matching.
 
 ```cyrius
-# Parse versions: "1", "1.2" and "1.2.3" forms. Returns 0 only when a component
-# overflows; a non-digit ends a component.
-var v = semver_parse(str_from("1.2.3"));
-sv_major(v);  # 1
-sv_minor(v);  # 2
-sv_patch(v);  # 3
+# Parse versions: "1", "1.2" and "1.2.3" forms, with an optional "-pre" and
+# "+build" (1.7.0). Returns 0 only when a component overflows; a non-digit ends
+# a component.
+var v = semver_parse(str_from("1.2.3-rc.1+build.5"));
+sv_major(v);        # 1
+sv_minor(v);        # 2
+sv_patch(v);        # 3
+nous_sv_pre(v);     # Str "rc.1"     (0 for a release)
+nous_sv_build(v);   # Str "build.5"  (0 when absent)
 
-# Compare
-semver_cmp(semver_parse(str_from("1.0")), semver_parse(str_from("2.0")));  # -1
-semver_eq(v, v);  # 1
+# Compare by SemVer 2.0.0 precedence (§11): a pre-release sorts before its
+# release; build metadata is ignored (§10).
+semver_cmp(semver_parse(str_from("1.0.0-rc.1")), semver_parse(str_from("1.0.0")));  # -1
+semver_eq(semver_parse(str_from("1.0.0+a")), semver_parse(str_from("1.0.0+b")));    # 1
+# pub_semver order, for Flutter: precedence, then build (none first).
+nous_semver_cmp_pub(semver_parse(str_from("1.0.0+1")), semver_parse(str_from("1.0.0+2")));  # -1
 
 # Display
-semver_to_str(v);  # Str "1.2.3"
+semver_to_str(v);  # Str "1.2.3-rc.1+build.5"
 
 # Parse constraints (a version range; docs/sources.md has the full table)
 var c = constraint_parse(str_from(">=1.2.0"));
@@ -360,20 +370,30 @@ constraint_parse(str_from("^1.0"));   # >=1.0.0, <2.0.0
 constraint_parse(str_from("~1.2"));   # >=1.2.0, <1.3.0
 constraint_parse(str_from("^0"));     # >=0.0.0, <1.0.0   (partials per npm/Cargo)
 constraint_parse(str_from("1.2"));    # >=1.2.0, <1.3.0   (bare partial = X-range)
-constraint_parse(str_from("*"));      # any version
+constraint_parse(str_from("*"));      # any release version
+constraint_parse(str_from(">=1.1.0-rc.1"));  # a pre-release bound (1.7.0, full M.m.p only)
 # Refused (1.5.3; they used to parse silently): "!=1.0", "==1.0", "~>1.2", ">>1",
-# "latest", pre-release / build tags ("1.0.0-beta"), compound ranges (">=1 <2",
-# ">=1, <2", "^1 || ^2"; roadmap 1.7.x). A refused constraint matches nothing.
+# "latest", a pre-release on a partial ("1.2-rc"), a malformed pre-release
+# ("1.0.0-01", "1.0.0-rc..1"), compound ranges (">=1 <2", ">=1, <2",
+# "^1 || ^2"; roadmap 1.7.1). A refused constraint matches nothing. Build
+# metadata in a constraint is accepted and ignored.
 
 # Does a version satisfy a constraint?
 constraint_matches(c, semver_parse(str_from("1.5.0")));  # 1
 constraint_matches(c, semver_parse(str_from("0.9.0")));  # 0
+# A pre-release matches only a constraint that names a pre-release of the same
+# M.m.p (npm / Cargo; ADR 0006), so ">=1.0.0" and "*" take no pre-release:
+constraint_matches(constraint_parse(str_from(">=1.0.0")), semver_parse(str_from("1.1.0-rc.1")));       # 0
+constraint_matches(constraint_parse(str_from(">=1.1.0-rc.1")), semver_parse(str_from("1.1.0-rc.2")));  # 1
 
 # Can two constraints be satisfied at once? A true range intersection (1.5.3).
 constraints_compatible(constraint_parse(str_from(">=1.0")),
                        constraint_parse(str_from("<2.0")));  # 1
 constraints_compatible(constraint_parse(str_from(">1.2.0")),
                        constraint_parse(str_from("<1.3.0")));  # 1 (was 0)
+# 1.7.0: an overlap holding only pre-releases needs both sides to opt in.
+constraints_compatible(constraint_parse(str_from(">1.0.0")),
+                       constraint_parse(str_from("<1.0.1")));  # 0 (only 1.0.1-x lie between)
 
 # Debian version order (deb-version(7)), for apt and community versions
 nous_deb_version_cmp(str_from("2.30-0ubuntu2"), str_from("2.30~rc1-1"));  # > 0

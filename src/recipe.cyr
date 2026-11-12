@@ -3,8 +3,12 @@
 # P2: Zugot Recipe Integration
 # ===================================================================
 
-# Empty Recipe (96 bytes); fill it with the recipe_set_* setters (each takes at most 6 arguments).
-fn recipe_alloc(): i64 { return alloc(96); }
+# Empty Recipe (112 bytes); fill it with the recipe_set_* setters (each takes at most 6 arguments).
+fn recipe_alloc(): i64 {
+    var r = alloc(112);
+    store64(r + 96, 0); store64(r + 104, 0);
+    return r;
+}
 # Recipe setter: name, ver, desc, license, arch (Str each), from [package].
 fn recipe_set_pkg(r, name, ver, desc, license, arch): i64 {
     store64(r, name); store64(r + 8, ver); store64(r + 16, desc);
@@ -18,6 +22,10 @@ fn recipe_set_meta(r, groups, release, url, sha256, patches): i64 {
 # Recipe setter: rt_deps, bd_deps (vec of Str each), from [depends] runtime / build.
 fn recipe_set_deps(r, rt_deps, bd_deps): i64 {
     store64(r + 80, rt_deps); store64(r + 88, bd_deps);
+}
+# Recipe setter: [source] github_release ("owner/repo") and release_asset (a pattern), Str each. 1.7.0.
+fn nous_recipe_set_github(r, repo, asset): i64 {
+    store64(r + 96, repo); store64(r + 104, asset);
 }
 
 # Recipe field: package name (Str).
@@ -34,7 +42,7 @@ fn rc_arch(r): i64 { return load64(r + 32); }
 fn rc_groups(r): i64 { return load64(r + 40); }
 # Recipe field: release number (i64; 1 by default).
 fn rc_release(r): i64 { return load64(r + 48); }
-# Recipe field: source URL (Str; a github_release recipe gets a .../releases placeholder).
+# Recipe field: source URL (Str; a github_release recipe gets its .../releases page, not the asset).
 fn rc_url(r): i64 { return load64(r + 56); }
 # Recipe field: source SHA-256 (Str). nous carries it; the installer verifies it.
 fn rc_sha256(r): i64 { return load64(r + 64); }
@@ -44,6 +52,15 @@ fn rc_patches(r): i64 { return load64(r + 72); }
 fn rc_rt_deps(r): i64 { return load64(r + 80); }
 # Recipe field: build dependency names, a vec of Str.
 fn rc_bd_deps(r): i64 { return load64(r + 88); }
+# 1.7.0: the release-asset source as the recipe writes it. nous does no network
+# access, so it does not turn these into an asset URL; takumi does, at fetch
+# time, through the GitHub API (takumi src/fetch.cyr). Before, the only trace
+# of them was rc_url's ".../releases" page.
+#
+# Recipe field: [source] github_release, "owner/repo" (Str; "" when the recipe has none).
+fn nous_rc_github_release(r): i64 { return load64(r + 96); }
+# Recipe field: [source] release_asset, a pattern such as "x-*-linux.tar.gz" (Str; "" when none).
+fn nous_rc_release_asset(r): i64 { return load64(r + 104); }
 
 # RecipeDb constructor: path (Str), recipes (map), order (vec of Str); no duplicates. 32 bytes.
 fn recipe_db_new(path, recipes, order): i64 {
@@ -320,16 +337,18 @@ fn nous_recipe_parse_file(path): i64 {
     # pointer" on each cyml_get assignment. Same values on every path.
     var url = 0;
     var sha256 = 0;
+    var gh_repo = 0;
+    var gh_asset = 0;
     var patches = vec_new();
     if (src != 0) {
         url = cyml_get(src, "url");
         if (url == 0) { url = str_from(""); }
+        gh_repo = cyml_get(src, "github_release");
+        gh_asset = cyml_get(src, "release_asset");
         # github_release fallback
         if (str_len(url) == 0) {
-            var gh = cyml_get(src, "github_release");
+            var gh = gh_repo;
             if (gh != 0) {
-                var asset = cyml_get(src, "release_asset");
-                if (asset == 0) { asset = str_from(""); }
                 # Build URL placeholder: github.com/owner/repo/releases
                 var sb = str_builder_new();
                 str_builder_add_cstr(sb, "https://github.com/");
@@ -356,10 +375,14 @@ fn nous_recipe_parse_file(path): i64 {
         if (bd != 0) { bd_deps = parse_toml_array(bd); }
     }
 
+    if (gh_repo == 0) { gh_repo = str_from(""); }
+    if (gh_asset == 0) { gh_asset = str_from(""); }
+
     var r = recipe_alloc();
     recipe_set_pkg(r, name, ver, desc, license, arch);
     recipe_set_meta(r, groups, release, url, sha256, patches);
     recipe_set_deps(r, rt_deps, bd_deps);
+    nous_recipe_set_github(r, gh_repo, gh_asset);
     return r;
 }
 
@@ -676,6 +699,22 @@ fn _nous_resolve_closure(r, names, use_recipes): Result {
     return Ok(plan);
 }
 
+# When a SemVer version fails a constraint only because it is a pre-release
+# (it lies in the range, but the constraint names no pre-release of its
+# M.m.p), say so and how to opt in. 1.7.0.
+fn _nous_pre_hint(sb, rg, ver, src): i64 {
+    if (src == SOURCE_SYSTEM || src == SOURCE_COMMUNITY) { return 0; }
+    var v = semver_parse(ver);
+    if (v == 0 || nous_sv_pre(v) == 0) { return 0; }
+    if (_nous_range_contains(rg, v) == 0) { return 0; }
+    str_builder_add_cstr(sb, "; it is a pre-release, which a constraint admits only when it names a pre-release of ");
+    str_builder_add(sb, semver_to_str(semver_new(sv_major(v), sv_minor(v), sv_patch(v))));
+    str_builder_add_cstr(sb, " (for example >=");
+    str_builder_add(sb, semver_to_str(nous_semver_new_full(sv_major(v), sv_minor(v), sv_patch(v), nous_sv_pre(v), 0)));
+    str_builder_add_cstr(sb, ")");
+    return 0;
+}
+
 # Ok(ResPlan) for a closed DepGraph: cycle policy, conflict check, install order; else Err.
 fn finalize_graph(r, graph): Result {
     # Cycles (1.5.3, decision D3; ADR 0005). Debian allows circular dependencies
@@ -717,7 +756,7 @@ fn finalize_graph(r, graph): Result {
     # the version actually chosen must satisfy every range: `>=2.0.0` used to
     # resolve to 1.0.0 without a word. apt and community versions compare as
     # Debian versions (deb-version(7)), the rest as SemVer.
-    var cons = map_new();          # dep cstr -> vec of {range, requirer, text}
+    var cons = map_new();          # dep cstr -> vec of {range, requirer, text, constraint}
     var all_nodes = _nous_sorted_keys(dg_nodes(graph));
     var i = 0;
     while (i < vec_len(all_nodes)) {
@@ -745,8 +784,9 @@ fn finalize_graph(r, graph): Result {
                     return nous_err(NOUS_ERR_INVALID_VERSION_CONSTRAINT, dep, str_builder_build(esb));
                 }
                 if (map_has(cons, cdep) == 0) { map_set(cons, cdep, vec_new()); }
-                var ent = alloc(24);
+                var ent = alloc(32);
                 store64(ent, _nous_range_of(ct)); store64(ent + 8, rp_name(pkg)); store64(ent + 16, text);
+                store64(ent + 24, ct);
                 vec_push(map_get(cons, cdep), ent);
             }
             j = j + 1;
@@ -804,7 +844,7 @@ fn finalize_graph(r, graph): Result {
             ei = 0;
             while (ei < vec_len(ents)) {
                 var e2 = vec_get(ents, ei);
-                if (_nous_range_contains_ver(load64(e2), rp_ver(node), rp_src(node)) == 0) {
+                if (_nous_ct_admits_ver(load64(e2 + 24), rp_ver(node), rp_src(node)) == 0) {
                     var vb = str_builder_new();
                     str_builder_add(vb, load64(e2 + 8));
                     str_builder_add_cstr(vb, " requires ");
@@ -814,6 +854,7 @@ fn finalize_graph(r, graph): Result {
                     str_builder_add_cstr(vb, " (");
                     str_builder_add(vb, source_to_str(rp_src(node)));
                     str_builder_add_cstr(vb, ")");
+                    _nous_pre_hint(vb, load64(e2), rp_ver(node), rp_src(node));
                     return nous_err(NOUS_ERR_VERSION_CONFLICT, str_from(cdep2), str_builder_build(vb));
                 }
                 ei = ei + 1;

@@ -832,7 +832,7 @@ fn test_version_ranges() {
     assert_eq(ct_err(">=1.0, <2.0"), 1, "comma compound refused");
     assert_eq(ct_err("^1.0 || ^2.0"), 1, "|| refused");
     assert_eq(ct_err("latest"), 1, "latest refused");
-    assert_eq(ct_err("1.0.0-beta"), 1, "pre-release constraint refused (1.7.x)");
+    assert_eq(ct_err("1.0.0-beta"), 0, "a pre-release constraint is accepted (1.7.0)");
     assert_eq(ct_ok(">=1.0, <2.0", "5.0.0"), 0, "a refused constraint matches nothing");
     assert_eq(ct_err(">=1.2.3"), 0, "a plain comparator is fine");
     # Compatibility is a true intersection, independent of argument order.
@@ -844,6 +844,179 @@ fn test_version_ranges() {
 }
 
 # 1.5.3 (D2): deb-version(7) comparison, the cases nous got wrong.
+# 1.7.0: SemVer 2.0.0 pre-release and build (§9-§11). The pre-release took no
+# part in ordering, so 1.0.0-rc.1 compared equal to 1.0.0.
+fn sv(s): i64 { return semver_parse(str_from(s)); }
+fn svc(a, b): i64 { return semver_cmp(sv(a), sv(b)); }
+fn svp(a, b): i64 { return nous_semver_cmp_pub(sv(a), sv(b)); }
+fn test_semver_prerelease() {
+    test_group("semver_prerelease");
+    var v = sv("1.2.3-rc.1+build.5");
+    assert_eq(sv_patch(v), 3, "core parsed");
+    assert(str_eq_cstr(nous_sv_pre(v), "rc.1"), "pre-release kept");
+    assert(str_eq_cstr(nous_sv_build(v), "build.5"), "build kept");
+    assert(str_eq_cstr(semver_to_str(v), "1.2.3-rc.1+build.5"), "to_str roundtrips");
+    assert_eq(nous_sv_pre(sv("1.2.3")), 0, "a release has no pre-release");
+    assert_eq(nous_sv_pre(sv("1.2.3-")), 0, "an empty pre-release is dropped");
+    assert(str_eq_cstr(nous_sv_pre(sv("2.0-beta")), "beta"), "after a partial too");
+    assert(str_eq_cstr(nous_sv_pre(sv("1.0.0-rc.1 trailing")), "rc.1"), "stops at other text");
+    # The §11 example chain, every adjacent pair and both directions.
+    var chain = vec_new();
+    vec_push(chain, "1.0.0-alpha"); vec_push(chain, "1.0.0-alpha.1");
+    vec_push(chain, "1.0.0-alpha.beta"); vec_push(chain, "1.0.0-beta");
+    vec_push(chain, "1.0.0-beta.2"); vec_push(chain, "1.0.0-beta.11");
+    vec_push(chain, "1.0.0-rc.1"); vec_push(chain, "1.0.0");
+    var ok = 1;
+    var i = 0;
+    while (i + 1 < vec_len(chain)) {
+        if (svc(vec_get(chain, i), vec_get(chain, i + 1)) >= 0) { ok = 0; }
+        if (svc(vec_get(chain, i + 1), vec_get(chain, i)) <= 0) { ok = 0; }
+        i = i + 1;
+    }
+    assert_eq(ok, 1, "SemVer 2.0.0 §11 example order");
+    assert(svc("1.0.0-rc.1", "1.0.0") < 0, "pre-release before its release");
+    assert(svc("1.0.0-1", "1.0.0-a") < 0, "numeric before alphanumeric");
+    assert(svc("1.0.0-beta.2", "1.0.0-beta.11") < 0, "numeric identifiers by value");
+    assert(svc("1.0.0-99999999999999999999", "1.0.0-100000000000000000000") < 0, "any length");
+    assert_eq(svc("1.0.0+a", "1.0.0+b"), 0, "build ignored for precedence (§10)");
+    assert(semver_eq(sv("1.0.0+a"), sv("1.0.0")), "semver_eq ignores build");
+    assert(svc("1.0.0-rc.1", "0.9.9") > 0, "core first");
+    # pub_semver order (Flutter): build after precedence; none first.
+    assert(svp("1.0.0+1", "1.0.0+2") < 0, "pub: +1 before +2");
+    assert(svp("1.0.0", "1.0.0+1") < 0, "pub: no build before a build");
+    assert(svp("1.0.0+2", "1.0.0+10") < 0, "pub: build numbers by value");
+    assert(svp("1.0.0-rc.1+9", "1.0.0") < 0, "pub: precedence still first");
+}
+
+# 1.7.0: pre-release constraints, and the npm / Cargo rule that a pre-release
+# version matches only a constraint naming a pre-release of the same M.m.p.
+fn test_prerelease_constraints() {
+    test_group("prerelease_constraints");
+    assert_eq(ct_ok(">=1.0.0", "1.1.0-rc.1"), 0, ">=1.0.0 does not take 1.1.0-rc.1");
+    assert_eq(ct_ok("*", "1.0.0-rc.1"), 0, "* takes no pre-release");
+    assert_eq(ct_ok("^1.0.0", "1.2.0-beta"), 0, "^1.0.0 takes no pre-release");
+    assert_eq(ct_ok(">=1.1.0-rc.1", "1.1.0-rc.2"), 1, "opted in on 1.1.0");
+    assert_eq(ct_ok(">=1.1.0-rc.1", "1.1.0-rc.0"), 0, "below the bound");
+    assert_eq(ct_ok(">=1.1.0-rc.1", "1.1.0"), 1, "the release");
+    assert_eq(ct_ok(">=1.1.0-rc.1", "1.2.0-alpha"), 0, "another M.m.p's pre-release");
+    assert_eq(ct_ok(">1.2.3-alpha.3", "1.2.3-alpha.7"), 1, "npm README example");
+    assert_eq(ct_ok(">1.2.3-alpha.3", "3.4.5-alpha.9"), 0, "npm README example, other tuple");
+    assert_eq(ct_ok(">1.2.3-alpha.3", "3.4.5"), 1, "npm README example, a release");
+    assert_eq(ct_ok("^1.2.3-beta.2", "1.2.3-beta.4"), 1, "caret with a pre-release");
+    assert_eq(ct_ok("^1.2.3-beta.2", "1.9.0"), 1, "caret upper bound unchanged");
+    assert_eq(ct_ok("^1.2.3-beta.2", "2.0.0-alpha"), 0, "next major's pre-release");
+    assert_eq(ct_ok("=1.0.0-rc.1", "1.0.0-rc.1"), 1, "exact pre-release");
+    assert_eq(ct_ok("=1.0.0-rc.1", "1.0.0"), 0, "exact pre-release is not the release");
+    assert_eq(ct_ok("<1.0.0-rc.2", "1.0.0-rc.1"), 1, "less than, same tuple");
+    assert_eq(ct_ok(">=1.0.0+build.9", "1.0.0"), 1, "build in a constraint is ignored");
+    assert_eq(ct_ok(">=1.0.0", "1.0.0+anything"), 1, "build in a version is ignored");
+    # Strict syntax in constraints (§9, §10).
+    assert_eq(ct_err("1.2-rc.1"), 1, "pre-release on a partial refused");
+    assert_eq(ct_err("1.x.0-rc"), 1, "pre-release on a wildcard refused");
+    assert_eq(ct_err("1.0.0-"), 1, "empty pre-release refused");
+    assert_eq(ct_err("1.0.0-rc..1"), 1, "empty identifier refused");
+    assert_eq(ct_err("1.0.0-01"), 1, "leading zero in a numeric identifier refused");
+    assert_eq(ct_err("1.0.0-rc_1"), 1, "a character outside [0-9A-Za-z-] refused");
+    assert_eq(ct_err("1.0.0+"), 1, "empty build refused");
+    assert_eq(ct_err("1.0.0+001"), 0, "a build may have leading zeros");
+    assert_eq(ct_err("1.0.0-rc.1 <2"), 1, "still no compound ranges");
+    # Compatibility is exact when only pre-releases overlap.
+    assert_eq(compat("=1.0.0-rc.1", "*"), 0, "* admits no pre-release");
+    assert_eq(compat("=1.0.0-rc.1", ">=1.0.0-rc.0"), 1, "both opt in on 1.0.0");
+    assert_eq(compat(">=1.0.0-rc.1", "<1.0.0"), 0, "only rc of 1.0.0, and <1.0.0 does not opt in");
+    assert_eq(compat(">=1.0.0-rc.1", "<1.0.0-rc.5"), 1, "both opt in");
+    assert_eq(compat("<1.0.0-rc.5", ">=1.0.0-rc.1"), 1, "same, swapped");
+    assert_eq(compat(">=1.0.0-rc.1", "<2.0.0"), 1, "a release lies between");
+    assert_eq(compat(">1.0.0", "<1.0.1"), 0, "only 1.0.1's pre-releases lie between, and neither opts in");
+    assert_eq(compat(">=1.0.0", "<=1.0.0"), 1, "a single release");
+    assert_eq(compat(">1.0.0", "<1.0.1-rc.1"), 0, "<1.0.1-rc.1 opts in, >1.0.0 does not");
+}
+
+# A manifest with a chosen version (the other writers always use 1.0.0).
+fn write_manifest_v(dir, name, version, deps_json) {
+    var installed = path_join(dir, str_from("installed"));
+    mkdir_str(installed);
+    var pd = path_join(installed, str_from(name));
+    mkdir_str(pd);
+    var mp = path_join(pd, str_from("manifest.json"));
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"agent\":{\"name\":\"");
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, "\",\"version\":\"");
+    str_builder_add_cstr(sb, version);
+    str_builder_add_cstr(sb, "\",\"description\":\"d\"},\"dependencies\":{");
+    str_builder_add_cstr(sb, deps_json);
+    str_builder_add_cstr(sb, "},\"runtime\":\"native\"}");
+    var json = str_builder_build(sb);
+    file_write_all(_nous_cstr(mp), _nous_cstr(json), str_len(json));
+}
+
+# 1.7.0: resolution checks a pre-release chosen version by the same rule, and
+# says why it fails and how to opt in.
+fn test_prerelease_resolution() {
+    test_group("prerelease_resolution");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest_v(d, "pr-lib", "1.1.0-rc.1", "");
+    write_manifest_v(d, "pr-app", "1.0.0", "\"pr-lib\":\">=1.0.0\"");
+    write_manifest_v(d, "pr-opt", "1.0.0", "\"pr-lib\":\">=1.1.0-rc.1\"");
+    var r_t, r = resolver_new(d, c);
+    resolver_with_strategy(r, strategy_only(SOURCE_MARKETPLACE));
+    var n1 = vec_new();
+    vec_push(n1, str_from("pr-app"));
+    var t1, e1 = resolver_resolve_all(r, n1);
+    assert_eq(is_err_result(t1), 1, ">=1.0.0 refuses the only candidate, 1.1.0-rc.1");
+    assert_eq(ne_kind(e1), NOUS_ERR_VERSION_CONFLICT, "kind VERSION_CONFLICT");
+    assert(str_contains(ne_detail(e1), str_from("it is a pre-release")), "says it is a pre-release");
+    assert(str_contains(ne_detail(e1), str_from(">=1.1.0-rc.1")), "and how to opt in");
+    var n2 = vec_new();
+    vec_push(n2, str_from("pr-opt"));
+    var t2, p2 = resolver_resolve_all(r, n2);
+    assert_eq(is_ok(t2), 1, "an opted-in constraint accepts it");
+    rm_rf(d); rm_rf(c);
+}
+
+# 1.7.0: update detection orders pre-releases, and Flutter build numbers.
+fn test_prerelease_updates() {
+    test_group("prerelease_updates");
+    assert_eq(update_is_newer(str_from("1.0.0"), str_from("1.0.0-rc.1")), 1, "the release over its rc");
+    assert_eq(update_is_newer(str_from("1.0.0-rc.2"), str_from("1.0.0-rc.1")), 1, "rc.2 over rc.1");
+    assert_eq(update_is_newer(str_from("1.0.0-rc.1"), str_from("1.0.0")), 0, "never back to an rc");
+    assert_eq(update_is_newer(str_from("1.0.0+2"), str_from("1.0.0+1")), 0, "build ignored (marketplace)");
+    assert_eq(nous_update_is_newer_src(str_from("1.0.0+2"), str_from("1.0.0+1"), SOURCE_FLUTTER_APP), 1,
+      "a Flutter build-number bump is an update");
+    assert_eq(nous_update_is_newer_src(str_from("1.0.0+1"), str_from("1.0.0+2"), SOURCE_FLUTTER_APP), 0,
+      "not the other way");
+    assert_eq(nous_update_is_newer_src(str_from("1.0.0+2"), str_from("1.0.0+1"), SOURCE_MARKETPLACE), 0,
+      "marketplace ignores build");
+    assert_eq(nous_update_is_newer_src(str_from("1.0.1"), str_from("1.0.0+9"), SOURCE_FLUTTER_APP), 1,
+      "Flutter precedence first");
+}
+
+# 1.7.0: a github_release recipe exposes its repo and asset pattern.
+fn test_recipe_github_fields() {
+    test_group("recipe_github_fields");
+    var d = mkdir_test();
+    var p = path_join(d, str_from("gh.cyml"));
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "[package]\nname = \"gh\"\nversion = \"1.0.0\"\n[source]\n");
+    str_builder_add_cstr(sb, "github_release = \"Acme/gh\"\nrelease_asset = \"gh-*-linux.tar.gz\"\nsha256 = \"\"\n");
+    var body = str_builder_build(sb);
+    file_write_all(_nous_cstr(p), _nous_cstr(body), str_len(body));
+    var rc = nous_recipe_parse_file(p);
+    assert(rc != 0, "parsed");
+    assert(str_eq_cstr(nous_rc_github_release(rc), "Acme/gh"), "github_release");
+    assert(str_eq_cstr(nous_rc_release_asset(rc), "gh-*-linux.tar.gz"), "release_asset");
+    assert(str_eq_cstr(rc_url(rc), "https://github.com/Acme/gh/releases"), "rc_url unchanged");
+    var p2 = path_join(d, str_from("plain.cyml"));
+    var body2 = "[package]\nname = \"plain\"\nversion = \"1.0\"\n[source]\nurl = \"https://x/y.tar.gz\"\n";
+    file_write_all(_nous_cstr(p2), body2, strlen(body2));
+    var rc2 = nous_recipe_parse_file(p2);
+    assert_eq(str_len(nous_rc_github_release(rc2)), 0, "none: empty");
+    assert_eq(str_len(nous_rc_release_asset(rc2)), 0, "none: empty asset");
+    rm_rf(d);
+}
+
 fn test_deb_versions() {
     test_group("deb_versions");
     assert(deb("7.81.0-1ubuntu1.16", "7.81.0-1ubuntu1.15") > 0, "revision-only security update");
@@ -2239,6 +2412,11 @@ fn main() {
     test_missing_deps_are_errors();
     test_cycle_policy();
     test_version_ranges();
+    test_semver_prerelease();
+    test_prerelease_constraints();
+    test_prerelease_resolution();
+    test_prerelease_updates();
+    test_recipe_github_fields();
     test_deb_versions();
     test_conflicts_sound();
     test_json_roundtrip_all();

@@ -3,7 +3,7 @@
 What's next for nous. Shipped work is recorded in [CHANGELOG.md](../../CHANGELOG.md),
 not here.
 
-**Current state (1.6.1, cyrius 6.7.18).**
+**Current state (1.7.0, cyrius 6.7.18).**
 - **Resolution:** transitive resolution across system, marketplace, Flutter and
   community sources, with 4 strategies.
 - **Determinism:** byte-ordered everywhere; results never depend on the hash seed.
@@ -12,39 +12,40 @@ not here.
 - **Graph:** iterative Tarjan for cycles (apt-only cycles accepted, ADR 0005) and
   for install order.
 - **Versions:** constraints intersected as ranges, plus a check on the version
-  chosen. Debian ordering for apt and community, SemVer for the rest.
+  chosen. Debian ordering for apt and community. SemVer 2.0.0 for the rest,
+  with pre-releases (npm / Cargo matching rule) and pub build ordering for
+  Flutter updates (1.7.0, ADR 0006).
 - **Inputs:** the zugot recipe DB (all categories, duplicates reported), and
   manifests and JSON via bayan's parser.
 - **Plumbing:** complete child-output capture with a default idle deadline, and
   apt queries batched per breadth-first wave.
 - **Docs:** a one-line doc comment on every public fn (232), checked per module
   in CI; every Result-returning fn is declared `: Result`.
-- **Size:** 15 modules, 503 assertions, 23 benchmarks, 5 fuzz harnesses
-  (`--poison=ab`), and a ~41 KB release smoke binary.
+- **Size:** 15 modules, 578 assertions, 23 benchmarks, 5 fuzz harnesses
+  (`--poison=ab`), and a ~45 KB release smoke binary.
 
 ---
 
 ## 1.7.x — Reproducible resolution
 
-- [ ] **Lockfile generation + consumption.** Deterministic dependency selection,
-      the reproducibility half of the ark v2 M2 path below. It is not gated on ark.
-- [ ] **Constraint solving on recipe-level deps.** Today only marketplace-manifest
-      deps feed the solver, because recipe deps carry no version constraints.
-- [ ] **`github_release` URL resolution.** `recipe_parse_file` builds a
-      placeholder (`https://github.com/<owner>/<repo>/releases`), not an asset URL.
-- [ ] **Version selection with backtracking** (PubGrub-style; Dart pub, uv,
-      Cargo). Prefer locked versions, allow several major versions side by side,
-      and explain failures as causal chains. Today each name has one candidate,
-      checked rather than chosen, so a set solvable by an older version is
-      rejected (1.5.3 audit, research #18).
-- [ ] **SemVer pre-release and build ordering** (§9–§11), plus pub_semver build
-      ordering for Flutter (`1.0.0+2`). Today `1.0.0-rc.1` compares as `1.0.0`,
-      and a pre-release tag in a constraint is an error.
-- [ ] **Compound ranges**: npm AND by whitespace, Cargo AND by comma, `||`,
-      hyphen ranges. They are refused with an error today.
-- [ ] **Lockfile integrity.** Every node, transitive ones included, records
-      name, source, exact version and artifact hash; locked mode refuses any
-      unlocked node (pip / Cargo practice).
+One bite per release (CLAUDE.md task sizing). They are ordered by what each
+one builds on.
+
+- [ ] **1.7.1 — Compound ranges**: npm AND by whitespace, Cargo AND by comma,
+      `||`, and hyphen ranges. A constraint becomes a set of ranges, so
+      intersection and the chosen-version check work on sets. The pre-release
+      rule applies per comparator set, as npm does. These are refused with an
+      error today.
+- [ ] **1.7.2 — Lockfile generation + consumption.** Deterministic
+      dependency selection, the reproducibility half of the ark v2 M2 path
+      below. It is not gated on ark. Its format gets an ADR.
+- [ ] **1.7.3 — Lockfile integrity.** Every node, transitive ones included,
+      records name, source, exact version and artifact hash. Locked mode
+      refuses any unlocked node (pip / Cargo practice).
+- [ ] **Constraint solving on recipe-level deps** (gated on zugot). zugot's
+      `[depends]` lists carry names only (0 constrained entries in the tree), so
+      nous has nothing to solve until zugot gains a versioned syntax. That is a
+      zugot change first.
 
 ## 1.8.x — Sovereign native resolver (ark v2 M2)
 
@@ -83,6 +84,18 @@ with a committed lock (1.7.x).
       question in the spine doc.
 - [ ] **Package metadata sync** from mela.
 - [ ] **Trust.** Verify package signatures through sigil during resolution.
+
+## Version selection (gated on a multi-version source)
+
+- [ ] **Version selection with backtracking** (PubGrub-style; Dart pub, uv,
+      Cargo). Prefer locked versions, allow several major versions side by
+      side, and explain failures as causal chains. Today each name has one
+      candidate, checked rather than chosen, so a set solvable by an older
+      version is rejected (1.5.3 audit, research #18).
+  - **Moved out of 1.7.x (1.7.0):** no source offers more than one candidate
+    per name today. The registry holds installed versions, apt is queried with
+    `--no-all-versions`, and a recipe has one version. Selection needs the
+    native index (1.8.x) or mela's metadata (1.9.x) first.
 
 ## 1.10.x — Caching & performance
 
@@ -130,5 +143,10 @@ with a committed lock (1.7.x).
   to 1.5.3; only comments and return-type annotations changed.
 - **ark → nous 1.6.1:** nothing breaks. `ark search` and `ark list` now show a
   Flutter app as flutter-app rather than marketplace.
+- **ark → nous 1.7.0:** a marketplace or Flutter dependency whose only
+  candidate is a pre-release now fails a constraint that does not name a
+  pre-release of that version (npm / Cargo rule; ADR 0006). ark shows nous's
+  message, which says how to opt in. Updates from an rc to its release are now
+  offered.
 - **zugot:** the nous recipe (`marketplace/nous.cyml`) is still at 1.2.6. Bump it
   after each release tag, since it needs the release asset and its checksum.

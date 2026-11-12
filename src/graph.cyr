@@ -289,9 +289,19 @@ fn dep_graph_topo_sort(g): i64 {
 # "<1.3.0" read as a conflict (1.2.1 satisfies both), and swapping the
 # arguments changed the answer.
 #
-# 1 when some version satisfies both Constraints c1 and c2 (range intersection), else 0.
+# 1.7.0: exact with pre-releases. When the intersection holds only
+# pre-releases of one M.m.p (">=1.0.0-rc.1" with "<1.0.0"), both constraints
+# must opt in to that M.m.p's pre-releases (the npm / Cargo rule), so
+# "=1.0.0-rc.1" with "*" is a conflict: "*" admits no pre-release.
+#
+# 1 when some version satisfies both Constraints c1 and c2, else 0.
 fn constraints_compatible(c1, c2): i64 {
-    if (_nous_range_intersect(_nous_range_of(c1), _nous_range_of(c2)) == 0) { return 0; }
+    var rg = _nous_range_intersect(_nous_range_of(c1), _nous_range_of(c2));
+    if (rg == 0) { return 0; }
+    if (_nous_range_has_release(rg) == 1) { return 1; }
+    var t = _nous_range_release_floor(rg);
+    if (_nous_ct_pre_on(c1, sv_major(t), sv_minor(t), sv_patch(t)) == 0) { return 0; }
+    if (_nous_ct_pre_on(c2, sv_major(t), sv_minor(t), sv_patch(t)) == 0) { return 0; }
     return 1;
 }
 

@@ -21,7 +21,9 @@ Deviations from a source are stated, not hidden.
 
 | What | Source | Code | Deviations |
 |---|---|---|---|
-| Version numbers | Semantic Versioning 2.0.0, [semver.org/spec/v2.0.0](https://semver.org/spec/v2.0.0.html) | `src/version.cyr` `semver_parse`, `semver_cmp` | See [Known deviations](#known-deviations). |
+| Version numbers | Semantic Versioning 2.0.0, [semver.org/spec/v2.0.0](https://semver.org/spec/v2.0.0.html): §9 pre-release, §10 build metadata, §11 precedence | `src/version.cyr` `semver_parse`, `semver_cmp`, `_nous_ids_cmp` | §11 precedence including pre-releases (1.7.0); build is ignored (§10). See [Known deviations](#known-deviations). |
+| Pre-release matching | npm node-semver, [Prerelease Tags](https://github.com/npm/node-semver#prerelease-tags); Rust semver, [`VersionReq`](https://docs.rs/semver/latest/semver/struct.VersionReq.html) | `src/version.cyr` `constraint_matches`, `_nous_ct_pre_on`; `src/graph.cyr` `constraints_compatible` | A pre-release matches only a constraint naming a pre-release of the same M.m.p, so `*` takes none ([ADR 0006](adr/0006-semver-prerelease-and-build.md)). |
+| Flutter build ordering | Dart pub_semver, [`Version.compareTo`](https://github.com/dart-lang/tools/blob/main/pkgs/pub_semver/lib/src/version.dart) | `src/version.cyr` `nous_semver_cmp_pub`; `src/updates.cyr` `nous_update_is_newer_src` | Used for Flutter update detection only; constraints ignore build, as npm and Cargo do. |
 | Ranges: `^`, `~`, comparators, partials, X-ranges | npm node-semver, [Ranges](https://github.com/npm/node-semver#ranges) / [Advanced Range Syntax](https://github.com/npm/node-semver#advanced-range-syntax); Cargo, [Specifying Dependencies](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html); semver crate [`Op`](https://docs.rs/semver/latest/semver/enum.Op.html) | `src/version.cyr` `constraint_parse`, `_nous_range_build` | The desugaring table is below. A bare version follows **npm** (exact; partials are X-ranges), not Cargo (where bare means `^`). |
 | apt / dpkg interfaces | `apt-cache(8)` (`--no-all-versions`), `dpkg-query(1)` (`${db:Status-Status}`), `apt-get(8)` (`-s` simulation `Inst` lines), `apt(8)` ("not a stable CLI interface") | `src/sysdb.cyr` | Parses machine-stable output only (1.5.3). The child environment is empty, so the C locale applies. |
 | Debian package names | Debian Policy §5.6.1 ([Source](https://www.debian.org/doc/debian-policy/ch-controlfields.html#source)): lowercase alphanumeric first, then `[a-z0-9+.-]`, ≥ 2 characters | `src/sysdb.cyr` `_sysdb_debian_name` | Only such names ever reach an apt argv (1.5.3). |
@@ -51,16 +53,20 @@ uses Debian comparison against the bound written without trailing zero parts
 
 ## Known deviations
 
-- **SemVer pre-release and build metadata (§9–§11) are not ordered.**
-  `1.0.0-rc.1` compares equal to `1.0.0`, and a pre-release or build tag in a
-  *constraint* is refused with an error. Roadmap 1.7.x.
+- **Lenient version parsing.** `semver_parse` reads the run of
+  `[0-9A-Za-z.-]` after `-` / `+` without checking §9's rules (empty
+  identifiers, leading zeros), since it parses versions nous is handed.
+  Constraints are parsed strictly. Numeric identifiers with leading zeros
+  compare by value.
 - **Compound ranges are refused** with an error: npm AND by whitespace, Cargo
-  AND by comma, `||` OR, hyphen ranges. Roadmap 1.7.x.
+  AND by comma, `||` OR, hyphen ranges. Roadmap 1.7.1.
 - **No version selection or backtracking.** Each name has one candidate (the
   installed or available version), and nous checks it against the constraints
-  rather than choosing among versions (PubGrub-style). Roadmap 1.7.x.
-- **Flutter build numbers** (`1.0.0+2`) are not ordered; pub_semver orders
-  them. Roadmap 1.7.x.
+  rather than choosing among versions (PubGrub-style). It is gated on a source
+  that offers more than one version (roadmap).
+- **Flutter build numbers in constraints** are ignored (npm / Cargo), while
+  pub_semver compares them inside ranges too. Update detection does order
+  them (1.7.0).
 - **Leading zeros** and **fewer than three components** are accepted in
   versions, against SemVer §2. A leading `v` is accepted (as npm does).
 - **`struct stat` offsets** in `src/util.cyr` are x86_64 Linux; aarch64's

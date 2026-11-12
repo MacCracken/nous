@@ -1,6 +1,6 @@
 # Nous — Known Gaps & Hardening Targets
 
-> **Status**: Active | **Last Updated**: 2026-11-12 (1.6.1, cyrius 6.7.18)
+> **Status**: Active | **Last Updated**: 2026-11-12 (1.7.0, cyrius 6.7.18)
 >
 > This page tracks the gaps between what nous does and what a production
 > resolver needs. The prioritized, versioned plan lives in
@@ -55,21 +55,25 @@ suggestions, trace).
 
 | Gap | Why it matters | Roadmap |
 |---|---|---|
-| **No lockfile** | The same inputs always give the same graph, but nothing pins the result across time or machines | 1.7.x |
-| **Recipe deps have no version constraints** | Only marketplace-manifest deps feed the solver; recipe-only graphs cannot detect conflicts | 1.7.x |
-| **`github_release` URLs are placeholders** | `recipe_parse_file` builds `https://github.com/<owner>/<repo>/releases`, not an asset URL | 1.7.x |
+| **No lockfile** | The same inputs always give the same graph, but nothing pins the result across time or machines | 1.7.2 |
+| **Recipe deps have no version constraints** | Only marketplace-manifest deps feed the solver; recipe-only graphs cannot detect conflicts | gated on a zugot syntax |
 | **No native source** | There is no `SOURCE_NATIVE`, signed index or local store, so the apt leg is required on a no-apt box | 1.8.x (gated on ark M0) |
 | **Registry is a stub** | It scans a local directory, and `registry_install_package` returns `Ok(0)` | 1.9.x |
 | **No trust check during resolution** | Package signatures are not verified (sigil) | 1.9.x |
 | **No caching / incremental resolution** | Every resolve re-runs every source query | 1.10.x |
-| **No version selection / backtracking** | One candidate per name, checked rather than chosen; a set solvable by an older version is rejected | 1.7.x (PubGrub-style) |
-| **SemVer pre-release, compound ranges** | `1.0.0-rc.1` orders as `1.0.0`; `>=1 <2` and `\|\|` are refused, not supported | 1.7.x |
+| **No version selection / backtracking** | One candidate per name, checked rather than chosen; a set solvable by an older version is rejected | after 1.8.x / 1.9.x (PubGrub-style; needs a multi-version source) |
+| **Compound ranges** | `>=1 <2` and `\|\|` are refused, not supported. (Pre-releases are supported since 1.7.0.) | 1.7.1 |
 | **System leg re-derived from `Depends`** | apt's own solver (`apt-get -s install`) would handle alternatives and virtual packages; nous records them in `nous_pl_unresolved` | roadmap |
 | **Bare public names** | The namespace is flat. Nine names are deprecated in favour of `nous_*` / stdlib (1.5.2, 1.5.3); the rest of the bare API is a 2.0.0 decision | 2.0.0 |
 
-Not nous's job: **verifying downloaded artifacts against a recipe's SHA256.**
-nous carries the checksum (`rc_sha256`), but nous never downloads anything. The
-installer (ark / takumi) does that check.
+Not nous's job:
+- **Verifying downloaded artifacts against a recipe's SHA256.** nous carries
+  the checksum (`rc_sha256`), but nous never downloads anything. The installer
+  (ark / takumi) does that check.
+- **Resolving a `github_release` asset URL.** That needs the GitHub API, and
+  nous does no network access. takumi resolves it at fetch time
+  (`takumi/src/fetch.cyr`). Since 1.7.0 nous exposes the recipe's
+  `nous_rc_github_release` and `nous_rc_release_asset`.
 
 ---
 

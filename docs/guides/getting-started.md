@@ -30,7 +30,7 @@ CYRIUS_DCE=1 cyrius build src/main.cyr build/nous
 ## Test, fuzz, benchmark
 
 ```sh
-cyrius test tests/nous.tcyr     # 503 assertions, expect "0 failed"
+cyrius test tests/nous.tcyr     # 578 assertions, expect "0 failed"
 cyrius fuzz --poison=ab tests/  # 5 fuzz harnesses, as CI runs them
 sh scripts/bench-history.sh local   # benchmarks (appends to bench-history.csv)
 ```

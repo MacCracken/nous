@@ -5,6 +5,126 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-11-12
+
+**SemVer pre-releases and build metadata, done to spec.** nous dropped
+everything after the patch number, so `1.0.0-rc.1` was `1.0.0`. mela accepts
+pre-release versions for marketplace packages, so this was live. The
+semantics are recorded in
+[ADR 0006](docs/adr/0006-semver-prerelease-and-build.md).
+
+### ⚠ Behaviour changes — read before moving ark to 1.7.0
+
+| Change | Before | Now |
+|---|---|---|
+| Ordering | `1.0.0-rc.1` == `1.0.0`; `rc.1` == `rc.2` | SemVer 2.0.0 §11 precedence: `1.0.0-alpha < 1.0.0-alpha.1 < … < 1.0.0-rc.1 < 1.0.0`. Build metadata is still ignored (§10) |
+| Matching a pre-release | `>=1.0.0` and `*` matched `1.1.0-rc.1` (read as `1.1.0`) | npm / Cargo rule: a pre-release matches only a constraint that names a pre-release of the same M.m.p. `>=1.1.0-rc.1` matches `1.1.0-rc.2`; `>=1.0.0` and `*` do not |
+| Resolution | a marketplace / Flutter dependency at a pre-release passed `>=1.0.0` | `NOUS_ERR_VERSION_CONFLICT`, and the message says it is a pre-release and how to opt in (for example `>=1.1.0-rc.1`) |
+| Pre-release constraints | `1.0.0-beta` refused with an error | accepted on a full M.m.p, strictly per §9. Build metadata is accepted and ignored |
+| `constraints_compatible` | range intersection only | exact: an overlap holding only pre-releases needs both sides to opt in, so `>1.0.0` with `<1.0.1` is a conflict |
+| Updates | `1.0.0` was not offered over `1.0.0-rc.1` | offered. Flutter also orders build numbers (`1.0.0+2` over `1.0.0+1`, pub_semver); marketplace ignores build |
+
+apt and community versions are unaffected: they keep Debian ordering.
+
+### Added
+
+- **SemVer record:** grows from 24 to 40 bytes, with `nous_sv_pre(v)` and
+  `nous_sv_build(v)` (a Str each, or 0). There is a new constructor,
+  `nous_semver_new_full(major, minor, patch, pre, build)`. `semver_new` is
+  unchanged.
+- **`nous_semver_cmp_pub(a, b)`:** pub_semver order, which is precedence, then
+  build (no build first, parts compared like pre-release identifiers).
+- **`semver_to_str`:** writes `-pre` and `+build`.
+- **Recipe fields:** `nous_rc_github_release(r)` and `nous_rc_release_asset(r)`
+  (a Str each, `""` when absent), with `nous_recipe_set_github`. Recipe grows
+  from 96 to 112 bytes. This was the roadmap item "`github_release` URL
+  resolution". Turning those fields into an asset URL needs the GitHub API,
+  and nous does no network access, so takumi resolves it at fetch time
+  (`takumi/src/fetch.cyr`). Before, the only trace of these fields was
+  `rc_url`'s `…/releases` page, which is unchanged.
+
+### Changed
+
+- **`semver_parse`:** keeps the run of `[0-9A-Za-z.-]` after `-` and after
+  `+`, also after a partial (`2.0-beta`). It is still lenient: an empty part is
+  dropped, and other trailing text is still ignored. Constraint parsing is
+  strict, and new errors name what is wrong: a pre-release on a partial, an
+  empty identifier, a leading zero, a character outside `[0-9A-Za-z-]`.
+- **Constraints on apt and community packages:** a SemVer pre-release bound is
+  compared the Debian way, as `~pre`.
+- **Roadmap 1.7.x** is now one bite per release:
+  - 1.7.1: compound ranges;
+  - 1.7.2: the lockfile;
+  - 1.7.3: lockfile integrity.
+- **Two items move** to where their prerequisite lives:
+  - recipe-level constraint solving is gated on a zugot syntax, because zugot
+    deps carry names only (0 constrained entries);
+  - PubGrub-style version selection is gated on a source that offers more than
+    one version per name (the native index or mela). No source does today.
+
+### Performance
+
+Medians of 11 alternating runs of the 1.6.1 and 1.7.0 bench binaries:
+
+| Bench | 1.6.1 | 1.7.0 | Change |
+|---|---|---|---|
+| `constraint` (2 parses, 4 versions, 4 matches) | 1162 ns | 1213 ns | +4.4% |
+| `constraint_range` (2 parses + compatibility) | 596 ns | 622 ns | +4.4% |
+| `graph_resolve` | 8446 ns | 8343 ns | −1.2% (noise) |
+| `manifest_parse` | 5710 ns | 5687 ns | −0.4% (noise) |
+
+The rest of the 23 benches are within ±2% (7 rounds). The first working
+version cost +15% on `constraint` and +10% on `constraint_range`. Three
+changes brought both down to +4.4%:
+
+- the version parser's core is unrolled again, and the record is allocated once;
+- the hot paths read fields in place, because Cyrius does not inline calls;
+- the compatibility check no longer allocates.
+
+What remains is the larger record and the pre-release checks.
+
+The release smoke binary grows from 40,936 to 45,264 B: its `update_is_newer`
+checks now reach the pre-release code.
+
+### Verification
+
+- **Tests:** 578 passed, 0 failed, with 75 new assertions:
+  - the §11 example chain both ways, plus numeric, alphanumeric and
+    any-length identifiers;
+  - pub build order;
+  - the npm README pre-release examples;
+  - §9 / §10 syntax errors;
+  - exact compatibility;
+  - a pre-release refused in resolution with the opt-in hint, and accepted
+    when opted in;
+  - rc and Flutter update cases;
+  - the recipe fields.
+- **Mutation checks:** 11 targeted reversions each fail the suite:
+  - precedence ignores pre-releases;
+  - no opt-in rule;
+  - compatibility by range only;
+  - numeric identifiers sorted after alphanumeric ones;
+  - the longer identifier list sorted first;
+  - numeric identifiers compared as text;
+  - pub ignores build;
+  - no Flutter branch;
+  - `finalize_graph` checks by range only;
+  - no leading-zero check;
+  - the recipe fields unset.
+- **Fuzzing:** `fuzz_version` gains invariants:
+  - total order for both comparisons (reflexive, antisymmetric, transitive);
+  - pub refines precedence;
+  - `semver_to_str` reparses to an equal version;
+  - a pre-release never matches a constraint that does not opt in;
+  - soundness: a version both constraints match implies `constraints_compatible`.
+
+  Its generator builds constraints around the case's own version, so these
+  invariants catch real bugs. The opt-in mutation and a compatibility
+  mutation each fail it (exits 35 and 36). 5/5 harnesses pass under
+  `--poison=ab`.
+- **Gates:** clean (fmt, lint, vet, deny, the per-module doc gate,
+  `cyrius header`). `cyrius distlib` is in sync.
+
 ## [1.6.1] - 2026-11-12
 
 **One source label for a Flutter app, whichever call reports it.**

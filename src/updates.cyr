@@ -13,7 +13,10 @@
 
 # True (1) when `avail` is a strictly newer version than `installed`. semver_parse
 # is lenient (a non-semver suffix compares on its numeric prefix), so e.g.
-# "1.4.0" > "1.3.9" and "2.0.0" > "1.9.9"; equal/older return 0.
+# "1.4.0" > "1.3.9" and "2.0.0" > "1.9.9"; equal/older return 0. 1.7.0: by
+# SemVer precedence with pre-releases, so 1.0.0 is newer than 1.0.0-rc.1
+# (they compared equal, and the release was never offered). Build metadata is
+# ignored (§10).
 #
 # 1 when Str avail is a strictly newer SemVer than Str installed, else 0 (also for 0 or "").
 fn update_is_newer(avail, installed): i64 {
@@ -73,16 +76,28 @@ fn resolver_check_updates(r, installed, avail_fn): Result {
 
 # update_is_newer, per source (1.5.3, decision D2). Community (zugot) versions
 # are Debian-style ("10.3p1", "1.9.17p2", "149.0.2-2"), so they compare by
-# deb-version(7). Marketplace and Flutter versions compare as SemVer. ark sends
-# zugot versions through resolver_check_updates, where the SemVer comparison
-# missed suffix and revision updates and offered epoch downgrades.
+# deb-version(7). Marketplace versions compare as SemVer, and Flutter ones in
+# pub order (1.7.0). ark sends zugot versions through resolver_check_updates,
+# where the SemVer comparison missed suffix and revision updates and offered
+# epoch downgrades.
 #
-# 1 when avail is newer than installed for PackageSource src: Debian order for apt/community, else SemVer.
+# 1 when avail is newer than installed for src: Debian order for apt/community, pub for Flutter, else SemVer.
 fn nous_update_is_newer_src(avail, installed, src): i64 {
     if (src == SOURCE_COMMUNITY || src == SOURCE_SYSTEM) {
         if (avail == 0 || installed == 0) { return 0; }
         if (str_len(avail) == 0) { return 0; }
         return nous_deb_version_cmp(avail, installed) > 0;
+    }
+    # Flutter (1.7.0): pub_semver order, so a build-number bump is an update
+    # (1.0.0+2 over 1.0.0+1). Flutter apps carry their build number there.
+    if (src == SOURCE_FLUTTER_APP) {
+        if (avail == 0 || installed == 0) { return 0; }
+        if (str_len(avail) == 0) { return 0; }
+        var pa = semver_parse(avail);
+        if (pa == 0) { return 0; }
+        var pi = semver_parse(installed);
+        if (pi == 0) { return 0; }
+        return nous_semver_cmp_pub(pa, pi) > 0;
     }
     return update_is_newer(avail, installed);
 }

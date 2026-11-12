@@ -47,13 +47,14 @@ enum ErrKind {
 # Registry:     rg_dir(0) rg_pkgs(8)                       = 16 bytes
 # Strategy:     st_kind(0) st_only(8)                      = 16 bytes
 # Resolver:     rs_strat(0) rs_cache(8) rs_reg(16) rs_sys(24) rs_rdb(32) rs_trace(40) rs_trace_on(48) = 56 bytes
-# SemVer:       sv_major(0) sv_minor(8) sv_patch(16)         = 24 bytes
+# SemVer:       sv_major(0) sv_minor(8) sv_patch(16) sv_pre(24) sv_build(32) = 40 bytes (1.7.0)
 # Constraint:   ct_op(0) ct_ver(8) ct_prec(16) ct_err(24) ct_range(32) = 40 bytes (src/version.cyr)
 # DepGraph:     dg_nodes(0) dg_edges(8) dg_versions(16)      = 24 bytes
 # ResPlan:      pl_packages(0) pl_order(8) pl_unresolved(16)   = 24 bytes
 # Recipe:       rc_name(0) rc_ver(8) rc_desc(16) rc_license(24) rc_arch(32)
 #               rc_groups(40) rc_release(48) rc_url(56) rc_sha256(64)
-#               rc_patches(72) rc_rt_deps(80) rc_bd_deps(88)  = 96 bytes
+#               rc_patches(72) rc_rt_deps(80) rc_bd_deps(88)
+#               rc_github_release(96) rc_release_asset(104) = 112 bytes (1.7.0)
 # RecipeDb:     rdb_path(0) rdb_recipes(8) rdb_order(16) rdb_duplicates(24) = 32 bytes
 
 # ===================================================================

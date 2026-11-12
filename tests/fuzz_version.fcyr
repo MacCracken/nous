@@ -3,7 +3,14 @@
 # strings from manifests; versions from apt, zugot and the marketplace).
 # Invariants (1.5.3): compatibility is symmetric, the Debian comparison is
 # antisymmetric and cmp(a, a) == 0, and a constraint with an error matches
-# nothing.
+# nothing. 1.7.0, with pre-releases and build metadata in the mix:
+#   - semver_cmp and nous_semver_cmp_pub are total orders (reflexive,
+#     antisymmetric, transitive over each random triple);
+#   - pub order refines precedence (it may only break precedence ties);
+#   - semver_to_str reparses to an equal version (pub-equal, so build too);
+#   - a pre-release matches no constraint that names no pre-release;
+#   - compatibility is sound: a version both constraints match means
+#     constraints_compatible says 1.
 include "src/types.cyr"
 include "src/util.cyr"
 include "src/error.cyr"
@@ -41,14 +48,66 @@ fn _sgn(x): i64 {
     return 0;
 }
 
+# A random version near the interesting shapes: "M.m.p[-pre][+build]".
+fn _vr_ver(): i64 {
+    if (fz_one_in(3) == 1) { return _vr_rand("0123456789...v-+rcab"); }
+    var sb = str_builder_new();
+    str_builder_add_int(sb, fz_below(3)); str_builder_putc(sb, 46);
+    str_builder_add_int(sb, fz_below(3)); str_builder_putc(sb, 46);
+    str_builder_add_int(sb, fz_below(3));
+    if (fz_one_in(2) == 1) {
+        str_builder_putc(sb, 45);
+        str_builder_add(sb, _vr_rand("0123abrc.-"));
+    }
+    if (fz_one_in(3) == 1) {
+        str_builder_putc(sb, 43);
+        str_builder_add(sb, _vr_rand("0129ab."));
+    }
+    return str_builder_build(sb);
+}
+
+# A random constraint: an operator, then version text `vt` (or a fresh one
+# when vt is 0). Built around the case's own version a third of the time, so
+# pairs that both admit a pre-release are common enough to test.
+fn _vr_ct(vt): i64 {
+    if (fz_one_in(4) == 1) { return constraint_parse(_vr_rand("0123456789..^~<>=!*xX v-+,| rcab")); }
+    var sb = str_builder_new();
+    var ops = vec_new();
+    vec_push(ops, ""); vec_push(ops, "="); vec_push(ops, ">="); vec_push(ops, ">");
+    vec_push(ops, "<"); vec_push(ops, "<="); vec_push(ops, "^"); vec_push(ops, "~");
+    str_builder_add_cstr(sb, vec_get(ops, fz_below(8)));
+    if (vt != 0 && fz_one_in(3) == 1) { str_builder_add(sb, vt); } else { str_builder_add(sb, _vr_ver()); }
+    return constraint_parse(str_builder_build(sb));
+}
+
 fn _vr_case(k): i64 {
-    var c1 = constraint_parse(_vr_rand("0123456789..^~<>=!*xX v-+,| "));
-    var c2 = constraint_parse(_vr_rand("0123456789..^~<>=*xX "));
-    var v = semver_parse(_vr_rand("0123456789...v"));
+    var vt = _vr_ver();
+    var v = semver_parse(vt);
+    var c1 = _vr_ct(vt);
+    var c2 = _vr_ct(vt);
     var m = constraint_matches(c1, v);
     if (nous_constraint_error(c1) != 0 && m != 0) { syscall(60, 31); }
     if (constraints_compatible(c1, c2) != constraints_compatible(c2, c1)) { syscall(60, 32); }
     fz_mix(m);
+    if (v != 0) {
+        if (nous_sv_pre(v) != 0 && m == 1 && ct_ver(c1) != 0 && nous_sv_pre(ct_ver(c1)) == 0) { syscall(60, 35); }
+        if (m == 1 && constraint_matches(c2, v) == 1 && constraints_compatible(c1, c2) == 0) { syscall(60, 36); }
+        var v2 = semver_parse(semver_to_str(v));
+        if (v2 == 0 || nous_semver_cmp_pub(v, v2) != 0) { syscall(60, 37); }
+    }
+    var x = semver_parse(_vr_ver());
+    var y = semver_parse(_vr_ver());
+    var z = semver_parse(_vr_ver());
+    if (x != 0 && y != 0 && z != 0) {
+        if (semver_cmp(x, x) != 0 || nous_semver_cmp_pub(x, x) != 0) { syscall(60, 38); }
+        if (_sgn(semver_cmp(x, y)) != 0 - _sgn(semver_cmp(y, x))) { syscall(60, 39); }
+        if (_sgn(nous_semver_cmp_pub(x, y)) != 0 - _sgn(nous_semver_cmp_pub(y, x))) { syscall(60, 39); }
+        if (semver_cmp(x, y) <= 0 && semver_cmp(y, z) <= 0 && semver_cmp(x, z) > 0) { syscall(60, 40); }
+        var pxy = nous_semver_cmp_pub(x, y);
+        if (pxy <= 0 && nous_semver_cmp_pub(y, z) <= 0 && nous_semver_cmp_pub(x, z) > 0) { syscall(60, 40); }
+        if (semver_cmp(x, y) != 0 && _sgn(pxy) != _sgn(semver_cmp(x, y))) { syscall(60, 41); }
+        fz_mix(_sgn(pxy) + 1);
+    }
     var a = _vr_rand("0123456789.:~-+abzZ");
     var b = _vr_rand("0123456789.:~-+abzZ");
     var ab = _sgn(nous_deb_version_cmp(a, b));
@@ -65,6 +124,10 @@ fn main(): i64 {
     constraint_parse(str_from(">="));
     constraint_parse(str_from("^99999999999999999999"));
     semver_parse(str_from("9223372036854775808.0.0"));
+    semver_parse(str_from("1.0.0-"));
+    semver_parse(str_from("1.0.0-.+."));
+    constraint_parse(str_from("1.0.0-rc.1+"));
+    constraint_parse(str_from(">=1.0.0-0..1"));
     nous_deb_version_cmp(str_from(""), str_from(":"));
     nous_deb_version_cmp(str_from("1:"), str_from("-"));
     return fz_run("version fuzz", 20000, &_vr_case);
