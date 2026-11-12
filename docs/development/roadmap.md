@@ -63,6 +63,30 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
   both filed toolchain issues worked around); `@unsafe` not adopted (deny/lint
   don't require it); resolver-completeness assessment. **Closes the 1.2.x arc.**
 
+## Completed (v1.5.0) — Cyrius 6.7.9 + bundled-lib refresh
+
+- Toolchain pin 6.6.20 → 6.7.9; `lib/` re-vendored to the 6.7.9 bundled versions
+  (bayan 1.5.12 → 1.5.13; 38 files, byte-identical to the snapshot; `hashmap_fast`
+  left the closure); `cyrius.lock` regenerated. 287/0, fuzz ok, build warning-free,
+  no source or API change.
+- Audited the 6.7.x changes that alter already-compiling code (lone `!`, the unary
+  constant fold, typed-pointer steps, method and generic result types, by-value struct
+  arguments, `fncall8`, the exec child-signal reset): none reaches nous. See CHANGELOG.
+- Benches flat apart from `detect_source` +6.8% (6.7.9 codegen; its stdlib path is
+  unchanged). Closes the 1.4.1 `search_100` watch: flat on re-measure.
+- **Bump procedure:** change the pin, then run `cyrius deps` alone. Running
+  `cyrius lib sync` first leaves the transitive leaves stale in `cyrius.lock`, and
+  `deps` then refuses.
+
+### Open items surfaced by the 1.5.0 audit (pre-existing)
+
+- [ ] **64 KiB capture cap** (`src/command.cyr`, `src/sysdb.cyr`): child output past
+      65,536 bytes is silently dropped. Grow the buffer, or report truncation as an
+      error, so `sysdb_search` / `sysdb_updates` never return partial results.
+- [ ] **`ErrKind` namespacing**: rename `ERR_*` → `NOUS_ERR_*` (cyrius lint's
+      error-enum namespace note). Breaking. No collision exists today, so it can wait
+      for a planned API break.
+
 ## Completed (v1.4.1) — Cyrius 6.6.20 + bundled-lib refresh
 
 - Toolchain pin 6.6.2 → 6.6.20; `lib/` re-vendored to the 6.6.20 bundled versions
@@ -72,8 +96,9 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
 - `dist/nous.cyr` now carries the compile-verified `# Requires` include block and
   `dist/nous.deps` is the 12-leaf verified set (was the 16-entry `[deps] stdlib`
   copy). Toolchain-driven; no API change.
-- Follow-up: watch `search_100` on the next toolchain bump. If the +12% holds,
-  profile `resolver_search` against the 6.6.20 stdlib `str` / `vec` changes.
+- ~~Follow-up: watch `search_100` on the next toolchain bump. If the +12% holds,
+  profile `resolver_search` against the 6.6.20 stdlib `str` / `vec` changes.~~
+  **Closed in 1.5.0:** flat on re-measure (1.4.1 83–88 µs, 1.5.0 81–89 µs).
 
 ## Completed (v1.2.6) — Cyrius 6.2.11 + bayan adoption
 

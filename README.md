@@ -100,7 +100,7 @@ cyrius test tests/nous.tcyr             # 287 assertions
 cyrius bench tests/nous.bcyr            # 18 benchmarks
 ```
 
-Requires Cyrius 6.6.20 (pinned in `cyrius.cyml`). Release binary
+Requires Cyrius 6.7.9 (pinned in `cyrius.cyml`). Release binary
 (`CYRIUS_DCE=1`): ~58 KB x86_64 ELF.
 
 ## Related

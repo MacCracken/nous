@@ -5,6 +5,102 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-11-12
+
+**cyrius 6.6.20 → 6.7.9, stdlib re-vendored to the 6.7.9 bundled versions.** 287 assertions,
+0 failures; fuzz ok. No nous source change and no public API change. fmt / lint / vet / deny / doc
+clean; build warning-free.
+
+### Changed — toolchain + bundled libs
+
+- **Pin `6.6.20` → `6.7.9`.**
+- **`lib/` re-vendored from the 6.7.9 snapshot**: 38 files, each byte-identical to the snapshot.
+  bayan **1.5.12 → 1.5.13**. `hashmap_fast` is no longer in the resolved closure (39 → 38 files),
+  because nothing nous pulls in includes it under 6.7.9. `[deps] stdlib` is unchanged.
+- **`cyrius.lock` regenerated** (38 entries, pin line `6.7.9`). It was generated from an empty
+  `lib/` with `cyrius deps` alone (see *Toolchain findings* below).
+- **`dist/`**: only the bundle's version header changes. `dist/nous.deps` is unchanged (12 leaves).
+
+### Audited — the 6.7.x changes that alter already-compiling code do not reach nous
+
+These changes change what code that already compiles computes, so a green suite proves nothing
+about them. Method: a comment- and string-stripped scan of `src/` and `tests/` (3,637 code lines)
+for each shape, plus reading the affected stdlib path.
+
+| Change | What it changed | What nous has |
+|---|---|---|
+| A lone `!` (6.7.3) | Silently dropped before 6.7.3, so `if (!ok)` ran as `if (ok)` | None. nous spells it `== 0` |
+| Unary `-` / `~` on a constant before a literal operator (bug 6.6.10–6.7.8, fixed 6.7.9) | `-K + 10` was 15, `~5 * 2` was 10 | No unary `-` or `~` anywhere (nous writes `(0 - 1)`), so 1.4.1 on 6.6.20, inside the bug's range, was not affected either |
+| Typed `*T` pointer step leaking through operators (6.6.17–6.7.8, fixed 6.7.9) | `(x == q) + 100` stepped by `sizeof(T)` | No typed pointers |
+| Method-call and generic results typed by their last argument (fixed 6.7.9) | `p.m(1.5) * 2` multiplied bit patterns | No methods, generics or floats |
+| By-value struct argument evaluated after later arguments (fixed 6.7.7) | `rd(b, bump(&b))` saw the bump | No `struct` declarations; layouts are manual `alloc` + `store64` |
+| `fncall8` arguments 7 and 8 swapped (fixed 6.7.6) | — | Only `fncall2` (the `resolver_check_updates` callback) |
+| **The exec family resets child signal state** (`lib/process.cyr`, 6.7.9) | Children start with SIGPIPE / SIGXFSZ at default and (Linux) an empty mask, not the parent's | 5 `exec_capture` sites (`apt-cache`, `dpkg-query`, `/bin/sh -c` for `apt list`). The child's stderr already goes to `/dev/null` and nous discards the exit status, so the captured bytes are the same |
+
+⚖️ The one observable difference is under a parent that ignores SIGPIPE, which a consumer may.
+There, a child whose output overruns nous's 64 KiB capture now dies of SIGPIPE instead of getting
+EPIPE. nous captures the same bytes either way. That cap is a separate, pre-existing limit (see
+*Known*).
+
+### Performance — flat, one small codegen cost
+
+Same machine, 1.4.1 on 6.6.20 vs 1.5.0 on 6.7.9, median of 3 alternating runs:
+
+| Bench | 1.4.1 / 6.6.20 | 1.5.0 / 6.7.9 | Δ |
+|---|---|---|---|
+| `detect_source` | 576 ns | 615 ns | **+6.8%** |
+| `validate_name` | 497 ns | 492 ns | −1.0% |
+| `resolve_mkt_hit` | 2.14 µs | 2.14 µs | +0.2% |
+| `resolve_mkt_miss` | 4.49 µs | 4.43 µs | −1.2% |
+| `search_100` | 83.39 µs | 83.95 µs | +0.7% |
+| `list_installed_100` | 12.43 µs | 12.43 µs | 0.0% |
+| `strat_mkt_first` | 2.16 µs | 2.15 µs | −0.6% |
+| `strat_sys_first` | 2.19 µs | 2.19 µs | −0.1% |
+| `strat_only_mkt` | 2.17 µs | 2.16 µs | −0.3% |
+| `strat_search_all` | 2.17 µs | 2.16 µs | −0.2% |
+| `graph_resolve` | 8.81 µs | 8.89 µs | +0.9% |
+| `recipe_parse` | 17.97 µs | 18.35 µs | +2.1% |
+| `levenshtein` | 2.20 µs | 2.19 µs | −0.3% |
+| `constraint` | 692 ns | 688 ns | −0.6% |
+| `cycle_detect_20` | 24.04 µs | 24.84 µs | +3.3% |
+| `topo_sort_20` | 36.51 µs | 38.24 µs | +4.8% |
+| `recipe_db_load` | 6.831 ms | 6.885 ms | +0.8% |
+| `serde_roundtrip` | 2.77 µs | 2.76 µs | −0.3% |
+
+- ⚖️ **`detect_source` +6.8% is real**: the runs spanned 573–577 ns vs 614–621 ns, with no
+  overlap. Every stdlib function on its path (`str_index_of`, `str_ends_with`, `str_from`,
+  `str_sub`, `str_eq`, `str_len`, `str_data`, plus `alloc` and `vec`) is unchanged apart from
+  comments, so the ~40 ns comes from 6.7.9's codegen or code layout. Not chased: it is a name
+  classifier, not a hot path.
+- `cycle_detect_20` and `topo_sort_20` overlap run to run (22.2–26.7 and 33.4–42.5 µs on 6.7.9),
+  so they count as noise.
+- **Closes the 1.4.1 `search_100` watch.** Re-measured: 1.4.1 83–88 µs, 1.5.0 81–89 µs.
+- **Binary size:** release build (`CYRIUS_DCE=1`) 58,520 → 58,504 B.
+
+### Toolchain findings (not nous defects)
+
+- **Running `cyrius lib sync` before `cyrius deps` after a pin bump breaks the lock.** `lib sync`
+  re-hashes only the 33 declared `[deps] stdlib` leaves but rewrites the lock's pin line to the new
+  pin. The transitive leaves (`atomic`, `boxed`) keep the old pin's hashes. The next `cyrius deps`
+  then refuses both ("cyrius.lock and the pinned stdlib snapshot DISAGREE under an unchanged pin
+  6.7.9"). Reproduced on two scratch copies from the same 6.6.20 lock: `deps` alone re-locks
+  cleanly, while `lib sync` then `deps` fails with 2 errors. **Bump procedure: change the pin, then
+  run `cyrius deps` alone.** 1.4.1 avoided the trap only because no lock existed yet.
+- `cyrius lib sync --dry-run` prints addresses instead of file names (`would sync:
+  140577547063856`). Seen on 6.6.20, 6.7.9 and 6.7.18. Display only.
+
+### Known — pre-existing, surfaced by this audit (tracked in the roadmap)
+
+- **The 64 KiB capture cap silently truncates.** `cmd_run` and every `sysdb` query read child
+  output into one 65,536-byte buffer and drop the rest, with no error. A broad
+  `apt-cache search --names-only` or a long `apt list --upgradable` can exceed that, losing results
+  and leaving a partial last line.
+- **Bare `ERR_*` enum members.** `cyrius lint` notes (a `note`, not a `warn`, so the gate is green;
+  6.6.20 printed the same seven) that `ErrKind`'s `ERR_*` names are reserved for sakshi's base
+  logger. A leaf library should use `NOUS_ERR_*`. No collision exists today: none of the seven
+  names is defined in the 6.7.9 stdlib or in any sibling repo's `src/`. Renaming them is a
+  breaking change.
+
 ## [1.4.1] - 2026-11-12
 
 **cyrius 6.6.2 → 6.6.20, stdlib re-vendored to the 6.6.20 bundled versions.** 287 assertions,

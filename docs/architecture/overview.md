@@ -71,7 +71,7 @@ the complete layout of all 12 struct types.
 - **Smoke binary** — `[build] entry = src/main.cyr` → `build/nous`; a runtime
   self-check ("all smoke checks passed"). `modules` lives under `[lib]`, never
   `[build]` (the latter auto-prepends and bloats the binary).
-- **Toolchain** — pinned to Cyrius 6.6.20 in `cyrius.cyml`. Release ships
+- **Toolchain** — pinned to Cyrius 6.7.9 in `cyrius.cyml`. Release ships
   `nous-<tag>.cyr` (the bundle), the x86_64 binary, a source tarball, and
   `SHA256SUMS`. The binary is **not** stripped (corrupts a cyrius raw ELF).
 - Rationale: see [ADR-0002](../adr/0002-flat-modules-dist-bundle.md).
