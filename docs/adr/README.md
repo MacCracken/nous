@@ -11,6 +11,7 @@ Significant design decisions for nous, in the format required by `CLAUDE.md`
 | [0004](0004-bayan-toml-profile-dependency.md) | bayan's `toml` profile instead of the full stdlib `bayan` fold | Accepted (1.5.1) |
 | [0005](0005-system-only-dependency-cycles.md) | Dependency cycles allowed among system (apt) packages only | Accepted (1.5.3) |
 | [0006](0006-semver-prerelease-and-build.md) | SemVer pre-release and build semantics | Accepted (1.7.0) |
+| [0007](0007-compound-ranges.md) | Compound version ranges | Accepted (1.7.1) |
 
 New ADRs: copy the four-heading shape from any record above, number sequentially
 (`NNNN-short-title.md`), and add a row here. Create one when choosing between

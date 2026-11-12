@@ -23,8 +23,8 @@ src/
   updates.cyr         Update detection: apt leg + a pluggable lookup per source
 
 tests/
-  nous.tcyr           Test suite (578 assertions)
-  nous.bcyr           Benchmarks (23 benches)
+  nous.tcyr           Test suite (651 assertions)
+  nous.bcyr           Benchmarks (24 benches)
   nous.fcyr           Fuzz smoke harness
   fuzz_*.fcyr         Mutation fuzz targets: cyml, json, version, apt (4)
   fz_driver.cyr       Fuzz driver, vendored from sandhi

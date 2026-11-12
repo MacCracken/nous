@@ -829,11 +829,11 @@ fn test_version_ranges() {
     assert_eq(ct_err("!=1.0.0"), 1, "!= refused");
     assert_eq(ct_err("==1.0.0"), 1, "== refused");
     assert_eq(ct_err("~>1.2"), 1, "~> refused");
-    assert_eq(ct_err(">=1.0, <2.0"), 1, "comma compound refused");
-    assert_eq(ct_err("^1.0 || ^2.0"), 1, "|| refused");
+    assert_eq(ct_err(">=1.0, <2.0"), 0, "comma compound accepted (1.7.1)");
+    assert_eq(ct_err("^1.0 || ^2.0"), 0, "|| accepted (1.7.1)");
     assert_eq(ct_err("latest"), 1, "latest refused");
     assert_eq(ct_err("1.0.0-beta"), 0, "a pre-release constraint is accepted (1.7.0)");
-    assert_eq(ct_ok(">=1.0, <2.0", "5.0.0"), 0, "a refused constraint matches nothing");
+    assert_eq(ct_ok("!=1.0", "5.0.0"), 0, "a refused constraint matches nothing");
     assert_eq(ct_err(">=1.2.3"), 0, "a plain comparator is fine");
     # Compatibility is a true intersection, independent of argument order.
     assert_eq(compat(">1.0.0", "<1.1.0"), 1, ">1.0.0 with <1.1.0");
@@ -919,7 +919,7 @@ fn test_prerelease_constraints() {
     assert_eq(ct_err("1.0.0-rc_1"), 1, "a character outside [0-9A-Za-z-] refused");
     assert_eq(ct_err("1.0.0+"), 1, "empty build refused");
     assert_eq(ct_err("1.0.0+001"), 0, "a build may have leading zeros");
-    assert_eq(ct_err("1.0.0-rc.1 <2"), 1, "still no compound ranges");
+    assert_eq(ct_err("1.0.0-rc.1 <2"), 0, "a pre-release inside a compound range (1.7.1)");
     # Compatibility is exact when only pre-releases overlap.
     assert_eq(compat("=1.0.0-rc.1", "*"), 0, "* admits no pre-release");
     assert_eq(compat("=1.0.0-rc.1", ">=1.0.0-rc.0"), 1, "both opt in on 1.0.0");
@@ -1015,6 +1015,130 @@ fn test_recipe_github_fields() {
     assert_eq(str_len(nous_rc_github_release(rc2)), 0, "none: empty");
     assert_eq(str_len(nous_rc_release_asset(rc2)), 0, "none: empty asset");
     rm_rf(d);
+}
+
+# 1.7.1: compound ranges (npm "Range Grammar"; Cargo "Multiple version
+# requirements"). They were refused with an error.
+fn rset_len(c): i64 { return vec_len(_nous_ct_rset(constraint_parse(str_from(c)))); }
+fn test_compound_ranges() {
+    test_group("compound_ranges");
+    # npm README: "1.2.7 || >=1.2.9 <2.0.0".
+    var r1 = "1.2.7 || >=1.2.9 <2.0.0";
+    assert_eq(ct_ok(r1, "1.2.7"), 1, "npm: 1.2.7");
+    assert_eq(ct_ok(r1, "1.2.9"), 1, "npm: 1.2.9");
+    assert_eq(ct_ok(r1, "1.4.6"), 1, "npm: 1.4.6");
+    assert_eq(ct_ok(r1, "1.2.8"), 0, "npm: not 1.2.8");
+    assert_eq(ct_ok(r1, "2.0.0"), 0, "npm: not 2.0.0");
+    assert_eq(ct_ok(">=1.2.7 <1.3.0", "1.2.99"), 1, "AND: 1.2.99");
+    assert_eq(ct_ok(">=1.2.7 <1.3.0", "1.2.6"), 0, "AND: not 1.2.6");
+    assert_eq(ct_ok(">=1.2.7 <1.3.0", "1.3.0"), 0, "AND: not 1.3.0");
+    # Hyphen ranges, partials on either side (npm README).
+    assert_eq(ct_ok("1.2.3 - 2.3.4", "2.3.4"), 1, "hyphen: inclusive top");
+    assert_eq(ct_ok("1.2.3 - 2.3.4", "2.3.5"), 0, "hyphen: above");
+    assert_eq(ct_ok("1.2.3 - 2.3.4", "1.2.2"), 0, "hyphen: below");
+    assert_eq(ct_ok("1.2 - 2.3.4", "1.2.0"), 1, "hyphen: partial low fills zeros");
+    assert_eq(ct_ok("1.2 - 2.3.4", "1.1.9"), 0, "hyphen: partial low, below");
+    assert_eq(ct_ok("1.2.3 - 2.3", "2.3.9"), 1, "hyphen: partial high is an X-range");
+    assert_eq(ct_ok("1.2.3 - 2.3", "2.4.0"), 0, "hyphen: = <2.4.0");
+    assert_eq(ct_ok("1.2.3 - 2", "2.9.9"), 1, "hyphen: 1.2.3 - 2");
+    assert_eq(ct_ok("1.2.3 - 2", "3.0.0"), 0, "hyphen: = <3.0.0");
+    assert_eq(ct_ok("* - 2.0.0", "0.1.0"), 1, "hyphen: open low");
+    assert_eq(ct_ok("1.2.3-alpha - 2.0.0", "1.2.3-beta"), 1, "hyphen: a pre-release low bound opts in");
+    # Cargo: comma AND, spaces around operators.
+    assert_eq(ct_ok(">= 1.2, < 1.5", "1.4.9"), 1, "cargo: 1.4.9");
+    assert_eq(ct_ok(">= 1.2, < 1.5", "1.5.0"), 0, "cargo: not 1.5.0");
+    assert_eq(ct_ok(">=1.2,<1.5", "1.1.9"), 0, "cargo, no spaces: not 1.1.9");
+    assert_eq(ct_ok("^1.0, <1.5 || ^3", "3.2.0"), 1, "comma AND inside an OR");
+    assert_eq(ct_ok("^1.0, <1.5 || ^3", "1.6.0"), 0, "comma AND inside an OR, outside");
+    # An empty side of || is "*", which takes any release and no pre-release.
+    assert_eq(ct_ok("1.x ||", "5.0.0"), 1, "empty alternative is *");
+    assert_eq(ct_ok("1.x ||", "5.0.0-rc.1"), 0, "* takes no pre-release");
+    # Representation: one comparator stays simple; more is OP_SET.
+    assert_eq(ct_op(constraint_parse(str_from(">= 1.2"))), OP_GTE, "an operator standing apart is still simple");
+    assert_eq(nous_ct_sets(constraint_parse(str_from(">= 1.2"))), 0, "a simple constraint has no sets");
+    var cs = constraint_parse(str_from("^1.0 || ^2.0 >=2.1"));
+    assert_eq(ct_op(cs), OP_SET, "compound is OP_SET");
+    assert_eq(vec_len(nous_ct_sets(cs)), 2, "two comparator sets");
+    assert_eq(vec_len(vec_get(nous_ct_sets(cs), 1)), 2, "the second has two comparators");
+    # Range sets are merged.
+    assert_eq(rset_len("^1.0 || ^1.5"), 1, "overlapping alternatives merge");
+    assert_eq(rset_len("^1.0 || ^3.0"), 2, "disjoint ones do not");
+    assert_eq(rset_len("<1.0.0 || >=1.0.0"), 1, "touching ones merge");
+    assert_eq(rset_len("1.0 2.0"), 0, "an empty AND takes nothing");
+    # Pre-releases, per comparator set (npm).
+    assert_eq(ct_ok(">=1.2.3-alpha.3 <1.3.0", "1.2.3-alpha.7"), 1, "set opts in on 1.2.3");
+    assert_eq(ct_ok(">=1.2.3-alpha.3 <1.3.0", "1.2.4-alpha"), 0, "but not on 1.2.4");
+    var r2 = "^1.0.0 || >=2.0.0-beta.1 <3.0.0";
+    assert_eq(ct_ok(r2, "2.0.0-beta.2"), 1, "the second set opts in on 2.0.0");
+    assert_eq(ct_ok(r2, "1.5.0-rc"), 0, "no set opts in on 1.5.0");
+    assert_eq(ct_ok(r2, "2.1.0-rc"), 0, "nor on 2.1.0");
+    assert_eq(ct_ok("<2.0.0-rc.1 || >=3.0.0", "2.0.0-beta"), 1, "an upper pre-release bound opts in");
+    assert_eq(ct_ok(">=1.0.0-rc.1 <2.0.0 || >=1.0.0", "1.5.0-alpha"), 0, "opt-in is per M.m.p");
+    # Errors.
+    assert_eq(ct_err("1.0 | 2.0"), 1, "a single | refused");
+    assert_eq(ct_err(">=1.0,,<2.0"), 1, "empty comparator between commas");
+    assert_eq(ct_err(">=1.0, "), 1, "trailing comma");
+    assert_eq(ct_err(", >=1.0"), 1, "leading comma");
+    assert_eq(ct_err(">= "), 1, "an operator with no version");
+    assert_eq(ct_err(">=1.0 >="), 1, "a trailing operator with no version");
+    assert_eq(ct_err("1.2.3 - "), 1, "a dangling hyphen");
+    assert_eq(ct_err("- 1.2.3"), 1, "a leading hyphen");
+    assert_eq(ct_err("1.2.3 - 2.3.4 - 5"), 1, "two hyphens");
+    assert_eq(ct_err(">=1.0 - 2.0"), 1, "a hyphen range takes plain versions");
+    var ce = constraint_parse(str_from("^1 || !=2"));
+    assert(str_contains(nous_constraint_error(ce), str_from("'!='")), "a comparator's own error comes through");
+    assert_eq(ct_ok("^1 || !=2", "1.5.0"), 0, "and the constraint matches nothing");
+    # Compatibility.
+    assert_eq(compat("^1.0 || ^3.0", "^2.0 || ^3.1"), 1, "3.1 and up is in both");
+    assert_eq(compat("^1.0 || ^3.0", "^2.0"), 0, "no common alternative");
+    assert_eq(compat(">=1.0 <1.5", ">=1.4 <2"), 1, "AND sets overlap");
+    assert_eq(compat(">=1.0 <1.5", ">=1.5"), 0, "AND set ends where the other starts");
+    assert_eq(compat("1.2.3 - 2.0.0", "2.0.0 - 3.0.0"), 1, "hyphen ranges touch at 2.0.0");
+    assert_eq(compat("1.2.3 - 1.9.9", "2.0.0 - 3.0.0"), 0, "hyphen ranges apart");
+    assert_eq(compat(">1.0.0 <1.0.1 || >=5.0.0-rc.1 <5.0.0", ">=5.0.0-rc.2 <5.0.0"), 1,
+      "pre-releases of 5.0.0, both sides opt in");
+    assert_eq(compat(">1.0.0 <1.0.1 || ^9", "<1.0.1-rc.1"), 0, "only 1.0.1-x in common, one side opts in");
+    assert_eq(compat("<1.0.1-rc.1", ">1.0.0 <1.0.1 || ^9"), 0, "same, swapped");
+    assert_eq(compat("^1 || ^2", "=1.5.0"), 1, "compound with simple");
+}
+
+# 1.7.1: resolution intersects range sets and checks the chosen version
+# against every comparator set.
+fn test_compound_resolution() {
+    test_group("compound_resolution");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest_v(d, "cr-lib", "2.3.0", "");
+    write_manifest_v(d, "cr-a1", "1.0.0", "\"cr-lib\":\"^1.0 || ^2.0\"");
+    write_manifest_v(d, "cr-a2", "1.0.0", "\"cr-lib\":\">=1.0, <2.0\"");
+    write_manifest_v(d, "cr-a7", "1.0.0", "\"cr-lib\":\"<2.0.0 || >=9\"");
+    write_manifest_v(d, "cr-a8", "1.0.0", "\"cr-lib\":\">=2.0.0 <3.0.0\"");
+    write_manifest_v(d, "cr-pre", "1.5.0-rc.1", "");
+    write_manifest_v(d, "cr-a9", "1.0.0", "\"cr-pre\":\"^1.0 || ^2.0\"");
+    var r_t, r = resolver_new(d, c);
+    resolver_with_strategy(r, strategy_only(SOURCE_MARKETPLACE));
+    var n1 = vec_new();
+    vec_push(n1, str_from("cr-a1"));
+    var t1, p1 = resolver_resolve_all(r, n1);
+    assert_eq(is_ok(t1), 1, "^1.0 || ^2.0 takes 2.3.0");
+    var n2 = vec_new();
+    vec_push(n2, str_from("cr-a2"));
+    var t2, e2 = resolver_resolve_all(r, n2);
+    assert_eq(is_err_result(t2), 1, ">=1.0, <2.0 refuses 2.3.0");
+    assert(str_contains(ne_detail(e2), str_from("the version available is 2.3.0")), "says which version");
+    var n3 = vec_new();
+    vec_push(n3, str_from("cr-a7")); vec_push(n3, str_from("cr-a8"));
+    var t3, e3 = resolver_resolve_all(r, n3);
+    assert_eq(is_err_result(t3), 1, "disjoint range sets conflict");
+    assert_eq(ne_kind(e3), NOUS_ERR_VERSION_CONFLICT, "kind VERSION_CONFLICT");
+    assert(str_contains(ne_detail(e3), str_from("cr-a7 requires <2.0.0 || >=9")), "names one side");
+    assert(str_contains(ne_detail(e3), str_from("cr-a8 requires >=2.0.0 <3.0.0")), "and the other");
+    var n4 = vec_new();
+    vec_push(n4, str_from("cr-a9"));
+    var t4, e4 = resolver_resolve_all(r, n4);
+    assert_eq(is_err_result(t4), 1, "a pre-release fails a compound that does not opt in");
+    assert(str_contains(ne_detail(e4), str_from("it is a pre-release")), "with the hint");
+    rm_rf(d); rm_rf(c);
 }
 
 fn test_deb_versions() {
@@ -2417,6 +2541,8 @@ fn main() {
     test_prerelease_resolution();
     test_prerelease_updates();
     test_recipe_github_fields();
+    test_compound_ranges();
+    test_compound_resolution();
     test_deb_versions();
     test_conflicts_sound();
     test_json_roundtrip_all();

@@ -22,6 +22,7 @@ Deviations from a source are stated, not hidden.
 | What | Source | Code | Deviations |
 |---|---|---|---|
 | Version numbers | Semantic Versioning 2.0.0, [semver.org/spec/v2.0.0](https://semver.org/spec/v2.0.0.html): §9 pre-release, §10 build metadata, §11 precedence | `src/version.cyr` `semver_parse`, `semver_cmp`, `_nous_ids_cmp` | §11 precedence including pre-releases (1.7.0); build is ignored (§10). See [Known deviations](#known-deviations). |
+| Compound ranges | npm node-semver, [Ranges](https://github.com/npm/node-semver#ranges), [Hyphen Ranges](https://github.com/npm/node-semver#hyphen-ranges-xyz---abc), [Range Grammar](https://github.com/npm/node-semver#range-grammar); Cargo, [Multiple version requirements](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#multiple-version-requirements); semver crate [`VersionReq`](https://docs.rs/semver/latest/semver/struct.VersionReq.html) | `src/version.cyr` `constraint_parse`, `_nous_ct_parse_set`, `_nous_set_matches`, `_nous_ct_rset`; `src/graph.cyr` `_nous_compat_sets` | npm's `\|\|`, whitespace AND and `A - B`, plus Cargo's comma AND, in one grammar (1.7.1, [ADR 0007](adr/0007-compound-ranges.md)). A bare version is npm's exact, not Cargo's caret. |
 | Pre-release matching | npm node-semver, [Prerelease Tags](https://github.com/npm/node-semver#prerelease-tags); Rust semver, [`VersionReq`](https://docs.rs/semver/latest/semver/struct.VersionReq.html) | `src/version.cyr` `constraint_matches`, `_nous_ct_pre_on`; `src/graph.cyr` `constraints_compatible` | A pre-release matches only a constraint naming a pre-release of the same M.m.p, so `*` takes none ([ADR 0006](adr/0006-semver-prerelease-and-build.md)). |
 | Flutter build ordering | Dart pub_semver, [`Version.compareTo`](https://github.com/dart-lang/tools/blob/main/pkgs/pub_semver/lib/src/version.dart) | `src/version.cyr` `nous_semver_cmp_pub`; `src/updates.cyr` `nous_update_is_newer_src` | Used for Flutter update detection only; constraints ignore build, as npm and Cargo do. |
 | Ranges: `^`, `~`, comparators, partials, X-ranges | npm node-semver, [Ranges](https://github.com/npm/node-semver#ranges) / [Advanced Range Syntax](https://github.com/npm/node-semver#advanced-range-syntax); Cargo, [Specifying Dependencies](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html); semver crate [`Op`](https://docs.rs/semver/latest/semver/enum.Op.html) | `src/version.cyr` `constraint_parse`, `_nous_range_build` | The desugaring table is below. A bare version follows **npm** (exact; partials are X-ranges), not Cargo (where bare means `^`). |
@@ -46,8 +47,19 @@ Deviations from a source are stated, not hidden.
 | `~V` | `[V, M.(m+1).0)` | `[V, M.(m+1).0)` | `[V, (M+1).0.0)` |
 | `*`, `x`, `""` | any | | |
 
-Conflict detection intersects every constraint on a dependency and then checks
-the chosen version against each one. For apt and community packages the check
+Compound forms (1.7.1) combine those rows:
+
+| Form | Meaning |
+|---|---|
+| `A B` / `A, B` | both: the intersection of A's and B's ranges (one comparator set) |
+| `S1 \|\| S2` | either set; an empty side is `*` |
+| `A - B` | `>=A <=B`: a partial A fills zeros, a partial B is an X-range (`1.2.3 - 2.3` = `[1.2.3, 2.4.0)`) |
+
+A pre-release version must be opted in to by a comparator of the set that
+takes it (ADR 0006, per set as npm does).
+
+Conflict detection intersects every constraint on a dependency (as unions of
+ranges, since 1.7.1) and then checks the chosen version against each one. For apt and community packages the check
 uses Debian comparison against the bound written without trailing zero parts
 (`2.36.0` → `2.36`, so `2.36-9` satisfies `>=2.36`).
 
@@ -58,8 +70,9 @@ uses Debian comparison against the bound written without trailing zero parts
   identifiers, leading zeros), since it parses versions nous is handed.
   Constraints are parsed strictly. Numeric identifiers with leading zeros
   compare by value.
-- **Compound ranges are refused** with an error: npm AND by whitespace, Cargo
-  AND by comma, `||` OR, hyphen ranges. Roadmap 1.7.1.
+- **Both AND styles are accepted together** (1.7.1): whitespace (npm) and
+  commas (Cargo), even mixed in one set. Neither tool takes the other's form.
+  A bare version is exact (npm); in Cargo it means `^`.
 - **No version selection or backtracking.** Each name has one candidate (the
   installed or available version), and nous checks it against the constraints
   rather than choosing among versions (PubGrub-style). It is gated on a source

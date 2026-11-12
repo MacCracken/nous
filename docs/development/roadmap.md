@@ -3,7 +3,7 @@
 What's next for nous. Shipped work is recorded in [CHANGELOG.md](../../CHANGELOG.md),
 not here.
 
-**Current state (1.7.0, cyrius 6.7.18).**
+**Current state (1.7.1, cyrius 6.7.18).**
 - **Resolution:** transitive resolution across system, marketplace, Flutter and
   community sources, with 4 strategies.
 - **Determinism:** byte-ordered everywhere; results never depend on the hash seed.
@@ -14,14 +14,15 @@ not here.
 - **Versions:** constraints intersected as ranges, plus a check on the version
   chosen. Debian ordering for apt and community. SemVer 2.0.0 for the rest,
   with pre-releases (npm / Cargo matching rule) and pub build ordering for
-  Flutter updates (1.7.0, ADR 0006).
+  Flutter updates (1.7.0, ADR 0006). Compound ranges, npm and Cargo forms
+  (1.7.1, ADR 0007).
 - **Inputs:** the zugot recipe DB (all categories, duplicates reported), and
   manifests and JSON via bayan's parser.
 - **Plumbing:** complete child-output capture with a default idle deadline, and
   apt queries batched per breadth-first wave.
 - **Docs:** a one-line doc comment on every public fn (232), checked per module
   in CI; every Result-returning fn is declared `: Result`.
-- **Size:** 15 modules, 578 assertions, 23 benchmarks, 5 fuzz harnesses
+- **Size:** 15 modules, 651 assertions, 24 benchmarks, 5 fuzz harnesses
   (`--poison=ab`), and a ~45 KB release smoke binary.
 
 ---
@@ -31,11 +32,6 @@ not here.
 One bite per release (CLAUDE.md task sizing). They are ordered by what each
 one builds on.
 
-- [ ] **1.7.1 — Compound ranges**: npm AND by whitespace, Cargo AND by comma,
-      `||`, and hyphen ranges. A constraint becomes a set of ranges, so
-      intersection and the chosen-version check work on sets. The pre-release
-      rule applies per comparator set, as npm does. These are refused with an
-      error today.
 - [ ] **1.7.2 — Lockfile generation + consumption.** Deterministic
       dependency selection, the reproducibility half of the ark v2 M2 path
       below. It is not gated on ark. Its format gets an ADR.
@@ -148,5 +144,8 @@ with a committed lock (1.7.x).
   pre-release of that version (npm / Cargo rule; ADR 0006). ark shows nous's
   message, which says how to opt in. Updates from an rc to its release are now
   offered.
+- **ark → nous 1.7.1:** nothing breaks. Manifests with compound constraints
+  (`^1 || ^2`, `>=1.2, <1.5`, `1.2 - 2.0`) now resolve instead of failing with
+  `NOUS_ERR_INVALID_VERSION_CONSTRAINT`.
 - **zugot:** the nous recipe (`marketplace/nous.cyml`) is still at 1.2.6. Bump it
   after each release tag, since it needs the release asset and its checksum.

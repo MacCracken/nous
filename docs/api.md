@@ -1,6 +1,6 @@
 # Nous API Reference
 
-> **Version**: 1.7.0 | **Language**: Cyrius 6.7.18 (pinned in `cyrius.cyml`)
+> **Version**: 1.7.1 | **Language**: Cyrius 6.7.18 (pinned in `cyrius.cyml`)
 >
 > **In-tree:** `include "src/nous.cyr"` (the barrel). **As a dependency:** pull
 > `dist/nous.cyr` (see [ADR 0002](adr/0002-flat-modules-dist-bundle.md)), and
@@ -372,11 +372,18 @@ constraint_parse(str_from("^0"));     # >=0.0.0, <1.0.0   (partials per npm/Carg
 constraint_parse(str_from("1.2"));    # >=1.2.0, <1.3.0   (bare partial = X-range)
 constraint_parse(str_from("*"));      # any release version
 constraint_parse(str_from(">=1.1.0-rc.1"));  # a pre-release bound (1.7.0, full M.m.p only)
+# Compound ranges (1.7.1): npm and Cargo forms, in one grammar (ADR 0007).
+constraint_parse(str_from(">=1.2 <2.0"));            # AND, npm (whitespace)
+constraint_parse(str_from(">= 1.2, < 1.5"));         # AND, Cargo (commas)
+constraint_parse(str_from("1.2.7 || >=1.2.9 <2"));   # OR of comparator sets
+constraint_parse(str_from("1.2.3 - 2.3"));           # hyphen: >=1.2.3 <2.4.0
+# One comparator stays a simple constraint; more is ct_op == OP_SET, with the
+# comparator sets in nous_ct_sets(c): a vec (OR) of vecs (AND) of simple ones.
 # Refused (1.5.3; they used to parse silently): "!=1.0", "==1.0", "~>1.2", ">>1",
 # "latest", a pre-release on a partial ("1.2-rc"), a malformed pre-release
-# ("1.0.0-01", "1.0.0-rc..1"), compound ranges (">=1 <2", ">=1, <2",
-# "^1 || ^2"; roadmap 1.7.1). A refused constraint matches nothing. Build
-# metadata in a constraint is accepted and ignored.
+# ("1.0.0-01", "1.0.0-rc..1"), a single "|", a stray ",", an operator with no
+# version, a hyphen range that is not "A - B". A refused constraint matches
+# nothing. Build metadata in a constraint is accepted and ignored.
 
 # Does a version satisfy a constraint?
 constraint_matches(c, semver_parse(str_from("1.5.0")));  # 1

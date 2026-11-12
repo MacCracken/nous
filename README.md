@@ -96,8 +96,8 @@ Nous uses heuristics to detect package source when no explicit source is provide
 
 ```bash
 cyrius build src/main.cyr build/nous    # compile
-cyrius test tests/nous.tcyr             # 578 assertions
-cyrius bench tests/nous.bcyr            # 23 benchmarks
+cyrius test tests/nous.tcyr             # 651 assertions
+cyrius bench tests/nous.bcyr            # 24 benchmarks
 cyrius fuzz --poison=ab tests/          # 5 fuzz harnesses
 ```
 

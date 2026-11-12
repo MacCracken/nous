@@ -211,6 +211,15 @@ fn b_range() {
 }
 var bench_manifest = 0;
 fn b_manifest() { manifest_from_json(bench_manifest); return 0; }
+# 1.7.1: a compound range: parse two OR'd sets, match two versions, and check
+# compatibility with a Cargo-style AND.
+fn b_compound() {
+    var c = constraint_parse(str_from("^1.2 || >=2.0.0 <3.0.0"));
+    constraint_matches(c, semver_parse(str_from("2.5.0")));
+    constraint_matches(c, semver_parse(str_from("1.9.0")));
+    constraints_compatible(c, constraint_parse(str_from(">=2.4, <2.6")));
+    return 0;
+}
 
 # Serde roundtrip benchmark
 fn b_serde() {
@@ -327,6 +336,9 @@ fn main() {
     var bm3 = bench_new("manifest_parse");
     bench_run(bm3, &b_manifest, 20000);
     vec_push(benches, bm3);
+    var bm4 = bench_new("constraint_compound");
+    bench_run(bm4, &b_compound, 20000);
+    vec_push(benches, bm4);
 
     # Sort 2,000 installed packages (1.5.3)
     sort_src = vec_new();

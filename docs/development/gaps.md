@@ -1,6 +1,6 @@
 # Nous — Known Gaps & Hardening Targets
 
-> **Status**: Active | **Last Updated**: 2026-11-12 (1.7.0, cyrius 6.7.18)
+> **Status**: Active | **Last Updated**: 2026-11-12 (1.7.1, cyrius 6.7.18)
 >
 > This page tracks the gaps between what nous does and what a production
 > resolver needs. The prioritized, versioned plan lives in
@@ -20,8 +20,9 @@ and every public function has a doc comment that CI checks (1.6.0).
 **Works today:**
 - Transitive resolution across 4 sources (System, Marketplace, FlutterApp,
   Community), with 4 strategies.
-- Version constraints: 8 operators, intersected as ranges. Tarjan SCC for
-  cycles and install order (apt-only cycles allowed), and conflict reporting.
+- Version constraints: 8 operators plus compound ranges (1.7.1), intersected
+  as range sets. Tarjan SCC for cycles and install order (apt-only cycles
+  allowed), and conflict reporting.
 - Zugot recipe parsing, a recipe DB, `build-order.txt`, and recipe fallback in
   resolution.
 - Cross-source search with marketplace-priority dedup, and installed-package
@@ -62,7 +63,6 @@ suggestions, trace).
 | **No trust check during resolution** | Package signatures are not verified (sigil) | 1.9.x |
 | **No caching / incremental resolution** | Every resolve re-runs every source query | 1.10.x |
 | **No version selection / backtracking** | One candidate per name, checked rather than chosen; a set solvable by an older version is rejected | after 1.8.x / 1.9.x (PubGrub-style; needs a multi-version source) |
-| **Compound ranges** | `>=1 <2` and `\|\|` are refused, not supported. (Pre-releases are supported since 1.7.0.) | 1.7.1 |
 | **System leg re-derived from `Depends`** | apt's own solver (`apt-get -s install`) would handle alternatives and virtual packages; nous records them in `nous_pl_unresolved` | roadmap |
 | **Bare public names** | The namespace is flat. Nine names are deprecated in favour of `nous_*` / stdlib (1.5.2, 1.5.3); the rest of the bare API is a 2.0.0 decision | 2.0.0 |
 

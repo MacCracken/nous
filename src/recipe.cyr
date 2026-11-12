@@ -702,11 +702,11 @@ fn _nous_resolve_closure(r, names, use_recipes): Result {
 # When a SemVer version fails a constraint only because it is a pre-release
 # (it lies in the range, but the constraint names no pre-release of its
 # M.m.p), say so and how to opt in. 1.7.0.
-fn _nous_pre_hint(sb, rg, ver, src): i64 {
+fn _nous_pre_hint(sb, rs, ver, src): i64 {
     if (src == SOURCE_SYSTEM || src == SOURCE_COMMUNITY) { return 0; }
     var v = semver_parse(ver);
     if (v == 0 || nous_sv_pre(v) == 0) { return 0; }
-    if (_nous_range_contains(rg, v) == 0) { return 0; }
+    if (_nous_rset_contains(rs, v) == 0) { return 0; }
     str_builder_add_cstr(sb, "; it is a pre-release, which a constraint admits only when it names a pre-release of ");
     str_builder_add(sb, semver_to_str(semver_new(sv_major(v), sv_minor(v), sv_patch(v))));
     str_builder_add_cstr(sb, " (for example >=");
@@ -756,7 +756,7 @@ fn finalize_graph(r, graph): Result {
     # the version actually chosen must satisfy every range: `>=2.0.0` used to
     # resolve to 1.0.0 without a word. apt and community versions compare as
     # Debian versions (deb-version(7)), the rest as SemVer.
-    var cons = map_new();          # dep cstr -> vec of {range, requirer, text, constraint}
+    var cons = map_new();          # dep cstr -> vec of {range set, requirer, text, constraint}
     var all_nodes = _nous_sorted_keys(dg_nodes(graph));
     var i = 0;
     while (i < vec_len(all_nodes)) {
@@ -785,7 +785,7 @@ fn finalize_graph(r, graph): Result {
                 }
                 if (map_has(cons, cdep) == 0) { map_set(cons, cdep, vec_new()); }
                 var ent = alloc(32);
-                store64(ent, _nous_range_of(ct)); store64(ent + 8, rp_name(pkg)); store64(ent + 16, text);
+                store64(ent, _nous_ct_rset(ct)); store64(ent + 8, rp_name(pkg)); store64(ent + 16, text);
                 store64(ent + 24, ct);
                 vec_push(map_get(cons, cdep), ent);
             }
@@ -802,8 +802,9 @@ fn finalize_graph(r, graph): Result {
         var ei = 1;
         while (ei < vec_len(ents)) {
             var cur = vec_get(ents, ei);
-            var nxt = _nous_range_intersect(acc, load64(cur));
-            if (nxt == 0) {
+            # 1.7.1: range sets (a union of ranges per constraint, for "||").
+            var nxt = _nous_rset_intersect(acc, load64(cur));
+            if (vec_len(nxt) == 0) {
                 # Name a pair that cannot both hold when there is one, else every
                 # requirement so far.
                 var sb = str_builder_new();
@@ -811,7 +812,7 @@ fn finalize_graph(r, graph): Result {
                 var found = 0;
                 while (pj < ei && found == 0) {
                     var prev = vec_get(ents, pj);
-                    if (_nous_range_intersect(load64(prev), load64(cur)) == 0) {
+                    if (vec_len(_nous_rset_intersect(load64(prev), load64(cur))) == 0) {
                         str_builder_add(sb, load64(prev + 8));
                         str_builder_add_cstr(sb, " requires ");
                         str_builder_add(sb, load64(prev + 16));
@@ -854,7 +855,7 @@ fn finalize_graph(r, graph): Result {
                     str_builder_add_cstr(vb, " (");
                     str_builder_add(vb, source_to_str(rp_src(node)));
                     str_builder_add_cstr(vb, ")");
-                    _nous_pre_hint(vb, load64(e2), rp_ver(node), rp_src(node));
+                    _nous_pre_hint(vb, load64(e2), rp_ver(node), rp_src(node));     # e2+0: the range set
                     return nous_err(NOUS_ERR_VERSION_CONFLICT, str_from(cdep2), str_builder_build(vb));
                 }
                 ei = ei + 1;

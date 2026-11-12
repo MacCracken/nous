@@ -289,13 +289,46 @@ fn dep_graph_topo_sort(g): i64 {
 # "<1.3.0" read as a conflict (1.2.1 satisfies both), and swapping the
 # arguments changed the answer.
 #
+# constraints_compatible for compound constraints (1.7.1): see there.
+fn _nous_compat_sets(c1, c2): i64 {
+    if (nous_constraint_error(c1) != 0 || nous_constraint_error(c2) != 0) { return 0; }
+    var rs = _nous_rset_intersect(_nous_ct_rset(c1), _nous_ct_rset(c2));
+    if (vec_len(rs) == 0) { return 0; }
+    if (_nous_rset_has_release(rs) == 1) { return 1; }
+    var sets = _nous_ct_sets_of(c1);
+    var i = 0;
+    while (i < vec_len(sets)) {
+        var set = vec_get(sets, i);
+        var j = 0;
+        while (j < vec_len(set)) {
+            var w = ct_ver(vec_get(set, j));
+            if (w != 0 && nous_sv_pre(w) != 0) {
+                var M = sv_major(w);
+                var m = sv_minor(w);
+                var p = sv_patch(w);
+                var both = _nous_rset_intersect(_nous_ct_pre_band(c1, M, m, p), _nous_ct_pre_band(c2, M, m, p));
+                if (vec_len(both) > 0) { return 1; }
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
 # 1.7.0: exact with pre-releases. When the intersection holds only
 # pre-releases of one M.m.p (">=1.0.0-rc.1" with "<1.0.0"), both constraints
 # must opt in to that M.m.p's pre-releases (the npm / Cargo rule), so
 # "=1.0.0-rc.1" with "*" is a conflict: "*" admits no pre-release.
 #
+# 1.7.1: compound constraints. The two range sets are intersected; a release
+# version in common settles it. Otherwise only pre-releases are in common, and
+# for each M.m.p whose pre-releases c1 opts in to, the pre-releases each side
+# takes (per comparator set) must meet.
+#
 # 1 when some version satisfies both Constraints c1 and c2, else 0.
 fn constraints_compatible(c1, c2): i64 {
+    if (load64(c1) == OP_SET || load64(c2) == OP_SET) { return _nous_compat_sets(c1, c2); }    # ct_op, in place
     var rg = _nous_range_intersect(_nous_range_of(c1), _nous_range_of(c2));
     if (rg == 0) { return 0; }
     if (_nous_range_has_release(rg) == 1) { return 1; }

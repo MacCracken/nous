@@ -11,6 +11,10 @@
 #   - a pre-release matches no constraint that names no pre-release;
 #   - compatibility is sound: a version both constraints match means
 #     constraints_compatible says 1.
+# 1.7.1, compound ranges in the mix:
+#   - OR: "A || B" matches exactly when A or B does (and errs when either does);
+#   - AND: for a release version, "A B" matches exactly when A and B both do;
+#   - hyphen: "A - B" matches exactly what ">=A <=B" does (npm's desugaring).
 include "src/types.cyr"
 include "src/util.cyr"
 include "src/error.cyr"
@@ -66,18 +70,112 @@ fn _vr_ver(): i64 {
     return str_builder_build(sb);
 }
 
-# A random constraint: an operator, then version text `vt` (or a fresh one
+# One comparator's text: an operator, then version text `vt` (or a fresh one
 # when vt is 0). Built around the case's own version a third of the time, so
 # pairs that both admit a pre-release are common enough to test.
-fn _vr_ct(vt): i64 {
-    if (fz_one_in(4) == 1) { return constraint_parse(_vr_rand("0123456789..^~<>=!*xX v-+,| rcab")); }
-    var sb = str_builder_new();
+fn _vr_cmp_text(sb, vt): i64 {
     var ops = vec_new();
     vec_push(ops, ""); vec_push(ops, "="); vec_push(ops, ">="); vec_push(ops, ">");
     vec_push(ops, "<"); vec_push(ops, "<="); vec_push(ops, "^"); vec_push(ops, "~");
     str_builder_add_cstr(sb, vec_get(ops, fz_below(8)));
+    if (fz_one_in(8) == 1) { str_builder_putc(sb, 32); }
     if (vt != 0 && fz_one_in(3) == 1) { str_builder_add(sb, vt); } else { str_builder_add(sb, _vr_ver()); }
-    return constraint_parse(str_builder_build(sb));
+    return 0;
+}
+
+# One comparator set's text: one or two comparators (joined by a space or a
+# comma), or now and then a hyphen range.
+fn _vr_set_text(vt): i64 {
+    var sb = str_builder_new();
+    if (fz_one_in(6) == 1) {
+        str_builder_add(sb, _vr_ver());
+        str_builder_add_cstr(sb, " - ");
+        if (vt != 0 && fz_one_in(2) == 1) { str_builder_add(sb, vt); } else { str_builder_add(sb, _vr_ver()); }
+        return str_builder_build(sb);
+    }
+    _vr_cmp_text(sb, vt);
+    if (fz_one_in(2) == 1) {
+        if (fz_one_in(2) == 1) { str_builder_putc(sb, 32); } else { str_builder_add_cstr(sb, ", "); }
+        _vr_cmp_text(sb, vt);
+    }
+    return str_builder_build(sb);
+}
+
+# A random constraint: garbage a quarter of the time, else one comparator set
+# or an OR of two.
+fn _vr_ct(vt): i64 {
+    if (fz_one_in(4) == 1) { return constraint_parse(_vr_rand("0123456789..^~<>=!*xX v-+,| rcab")); }
+    var t = _vr_set_text(vt);
+    if (fz_one_in(3) == 1) {
+        var sb = str_builder_new();
+        str_builder_add(sb, t);
+        str_builder_add_cstr(sb, " || ");
+        str_builder_add(sb, _vr_set_text(vt));
+        t = str_builder_build(sb);
+    }
+    return constraint_parse(t);
+}
+
+# OR and AND are what they say (1.7.1).
+fn _vr_logic(vt, v): i64 {
+    var ta = _vr_set_text(vt);
+    var tb = _vr_set_text(vt);
+    var ca = constraint_parse(ta);
+    var cb = constraint_parse(tb);
+    var sb = str_builder_new();
+    str_builder_add(sb, ta);
+    str_builder_add_cstr(sb, " || ");
+    str_builder_add(sb, tb);
+    var cor = constraint_parse(str_builder_build(sb));
+    var bad = 0;
+    if (nous_constraint_error(ca) != 0 || nous_constraint_error(cb) != 0) { bad = 1; }
+    if (bad == 1 && nous_constraint_error(cor) == 0) { syscall(60, 42); }
+    if (bad == 0 && v != 0) {
+        var ma = constraint_matches(ca, v);
+        var mb = constraint_matches(cb, v);
+        var want = 0;
+        if (ma == 1 || mb == 1) { want = 1; }
+        if (constraint_matches(cor, v) != want) { syscall(60, 43); }
+        # AND of two single comparators, for a release version.
+        var sa = str_builder_new();
+        _vr_cmp_text(sa, vt);
+        var t1 = str_builder_build(sa);
+        var sb2 = str_builder_new();
+        _vr_cmp_text(sb2, vt);
+        var t2 = str_builder_build(sb2);
+        var c1 = constraint_parse(t1);
+        var c2 = constraint_parse(t2);
+        var sj = str_builder_new();
+        str_builder_add(sj, t1);
+        str_builder_putc(sj, 32);
+        str_builder_add(sj, t2);
+        var cand = constraint_parse(str_builder_build(sj));
+        if (nous_constraint_error(c1) == 0 && nous_constraint_error(c2) == 0 && nous_sv_pre(v) == 0) {
+            var w = 0;
+            if (constraint_matches(c1, v) == 1 && constraint_matches(c2, v) == 1) { w = 1; }
+            if (constraint_matches(cand, v) != w) { syscall(60, 44); }
+        }
+        # A hyphen range is >=A <=B.
+        var ha = _vr_ver();
+        var hb = vt;
+        if (fz_one_in(2) == 1) { hb = _vr_ver(); }
+        var sh = str_builder_new();
+        str_builder_add(sh, ha);
+        str_builder_add_cstr(sh, " - ");
+        str_builder_add(sh, hb);
+        var chy = constraint_parse(str_builder_build(sh));
+        var sd = str_builder_new();
+        str_builder_add_cstr(sd, ">=");
+        str_builder_add(sd, ha);
+        str_builder_add_cstr(sd, " <=");
+        str_builder_add(sd, hb);
+        var cde = constraint_parse(str_builder_build(sd));
+        if (nous_constraint_error(chy) == 0 && nous_constraint_error(cde) == 0) {
+            if (constraint_matches(chy, v) != constraint_matches(cde, v)) { syscall(60, 45); }
+        }
+        fz_mix(want);
+    }
+    return 0;
 }
 
 fn _vr_case(k): i64 {
@@ -95,6 +193,7 @@ fn _vr_case(k): i64 {
         var v2 = semver_parse(semver_to_str(v));
         if (v2 == 0 || nous_semver_cmp_pub(v, v2) != 0) { syscall(60, 37); }
     }
+    _vr_logic(vt, v);
     var x = semver_parse(_vr_ver());
     var y = semver_parse(_vr_ver());
     var z = semver_parse(_vr_ver());
@@ -128,6 +227,10 @@ fn main(): i64 {
     semver_parse(str_from("1.0.0-.+."));
     constraint_parse(str_from("1.0.0-rc.1+"));
     constraint_parse(str_from(">=1.0.0-0..1"));
+    constraint_parse(str_from("||"));
+    constraint_parse(str_from(" - "));
+    constraint_parse(str_from(",,"));
+    constraint_parse(str_from("1 - 2 - 3 || >= , <"));
     nous_deb_version_cmp(str_from(""), str_from(":"));
     nous_deb_version_cmp(str_from("1:"), str_from("-"));
     return fz_run("version fuzz", 20000, &_vr_case);

@@ -5,6 +5,118 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] - 2026-11-12
+
+**Compound version ranges, npm and Cargo forms.** Since 1.5.3 nous refused
+them with an error, so a manifest written as `^1 || ^2` or `>=1.2, <1.5`
+failed to resolve. The design is in
+[ADR 0007](docs/adr/0007-compound-ranges.md).
+
+### Added
+
+- **The forms accepted** (npm "Range Grammar"; Cargo "Multiple version
+  requirements"):
+
+| Form | Example | Meaning |
+|---|---|---|
+| AND, npm | `>=1.2.7 <1.3.0` | every comparator holds (one comparator set) |
+| AND, Cargo | `>= 1.2, < 1.5` | the same; an operator may stand apart from its version |
+| OR | `1.2.7 \|\| >=1.2.9 <2.0.0` | any comparator set holds; an empty side is `*` |
+| Hyphen | `1.2.3 - 2.3` | `>=1.2.3 <=2.3`, which is `[1.2.3, 2.4.0)`; a partial low end fills zeros |
+
+- **`OP_SET` (8):** a new `ConstraintOp` variant for a compound constraint.
+  `nous_ct_sets(c)` reads its comparator sets: a vec (OR) of vecs (AND) of
+  simple constraints. A text that is one comparator, `>= 1.2` included, is
+  the same simple constraint as before.
+- **The pre-release rule applies per comparator set**, as npm does.
+  `^1.0.0 || >=2.0.0-beta.1 <3.0.0` takes `2.0.0-beta.2`, but not `1.5.0-rc`.
+- **Errors for malformed compounds:**
+  - a single `|`;
+  - a stray comma (`>=1,,<2`, `>=1,`, `, >=1`);
+  - an operator with no version;
+  - a hyphen range that is not exactly `A - B` with plain versions.
+
+  A refused comparator's own error comes through: `^1 || !=2` reports `'!='`.
+
+### Changed
+
+- **Range sets:**
+  - `finalize_graph` intersects each dependency's constraints as range sets
+    (unions of ranges);
+  - it checks the chosen version against every comparator set;
+  - the pre-release hint works for compound constraints too.
+- **`constraints_compatible` stays exact.** A release in common settles it.
+  Otherwise the pre-releases each side admits, per set and per `M.m.p`,
+  must meet.
+- **Constraint grows from 40 to 56 bytes** (`ct_sets`, `ct_rset`).
+
+Nothing that parsed before changes meaning. The single-comparator parser runs
+first, and only a text it refuses that holds a separator (`|`, `,`, inner
+whitespace) goes to the compound parser.
+
+### Performance
+
+Medians of 11 alternating runs of the 1.7.0 and 1.7.1 bench binaries:
+
+| Bench | 1.7.0 | 1.7.1 | Change |
+|---|---|---|---|
+| `constraint` (simple) | 1085 ns | 1128 ns | +4.0% |
+| `constraint_range` (simple) | 556 ns | 583 ns | +4.9% |
+| `graph_resolve` | 7606 ns | 7752 ns | +1.9% |
+| `constraint_compound` (new: parse 2 sets, 2 matches, compatibility) | — | ~4.4 µs | — |
+
+The other 20 benches are within ±2.5% (9 rounds; `capture_200k` +3.8% and
+`deb_version_cmp` −5.1%, code neither touches).
+
+Where the simple-constraint cost comes from:
+
+- **A pre-scan pass, now gone.** The first version scanned every constraint
+  for separators before parsing it, and cost +7.4% and +11%. Now the
+  one-comparator parse runs first, so a simple constraint is read in one
+  pass.
+- **The record size: 0.4–2% of what remains.** A 3-way run built 1.7.0 with
+  only the allocation changed to 56 bytes. The rest is the routing between
+  the simple and compound paths. Overloading fields to stay at 40 bytes was
+  not worth it.
+
+The release smoke binary grows from 45,264 to 45,392 B.
+
+### Verification
+
+- **Tests:** 651 passed, 0 failed (+73 assertions), covering:
+  - the npm README examples, both AND forms, and OR with an empty side;
+  - every hyphen-partial example in the README;
+  - representation and range-set merging;
+  - per-set pre-releases;
+  - all the new errors;
+  - compatibility, including pre-release-only overlaps;
+  - resolution: a pass, a refused chosen version, and disjoint range sets
+    naming both requirers, plus the pre-release hint for a compound.
+- **Mutation checks:** 12 targeted reversions each fail the suite:
+  - no per-set pre-release rule;
+  - only the first set matched;
+  - no pre-release band in compatibility;
+  - no release fast path;
+  - no merging;
+  - touching ranges not merged;
+  - range-set intersection ignoring one side;
+  - an exclusive hyphen top;
+  - stray commas allowed;
+  - no operator join;
+  - no opt-in check in the band;
+  - `finalize_graph` skipping the intersection.
+- **Fuzzing:** `fuzz_version` now generates compound constraints (sets of 1–2
+  comparators, either AND style, `||`, hyphen ranges). New invariants:
+  - `A || B` matches exactly when A or B does, and errs when either does;
+  - `A B` matches a release exactly when both do;
+  - `A - B` matches exactly what `>=A <=B` does.
+
+  The first-set-only, no-pre-rule, merge-drop and exclusive-hyphen mutations
+  each fail it (exits 43, 43, 36, 45). 5/5 harnesses pass under
+  `--poison=ab`.
+- **Gates:** clean (fmt, lint, vet, deny, the per-module doc gate,
+  `cyrius header`). `cyrius distlib` is in sync.
+
 ## [1.7.0] - 2026-11-12
 
 **SemVer pre-releases and build metadata, done to spec.** nous dropped
