@@ -5,6 +5,104 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] - 2026-11-12
+
+**Quick fixes batched from the 1.5.0 / 1.5.1 audits and the doc backlog.** No toolchain change
+(cyrius 6.7.18) and no breaking change. 314 assertions (was 310), 0 failures; fuzz ok. fmt / lint
+/ vet / deny / doc clean; build warning-free.
+
+### Deprecated — two bare names that collide in cyrius's flat namespace
+
+| Deprecated | Use instead | Collides with |
+|---|---|---|
+| `which_exists(name)` | `nous_which_exists(name)` (new) | kavach's `which_exists(name)`: same arity, but it checks four fixed directories rather than PATH |
+| `cmd_run(cmd)`, which returns Str or 0 | `nous_cmd_capture(cmd)`, which returns a Result (1.5.1) | thoth's `cmd_run(line)` |
+
+- Both still work. `#deprecated` warns at every call site with the replacement's name; for
+  example, `'which_exists' is deprecated: use nous_which_exists; …`. Both go in 2.0.0.
+- nous itself no longer calls either. `sysdb_new` uses `nous_which_exists`, and the 1.5.1
+  aliasing test uses `nous_cmd_capture`.
+- The collisions are latent: no consumer vendors nous next to kavach or thoth today.
+
+### Fixed — `updates.cyr` was outside the vet / deny gates
+
+`src/main.cyr` included 14 of the 15 modules, so `cyrius vet src/main.cyr` and `cyrius deny
+src/main.cyr` never saw `src/updates.cyr` (1.3.0's update detection). It is now included, and both
+gates report 15 deps. Two smoke checks of `update_is_newer` were added, and the barrel's header
+comment now lists the module.
+
+- The smoke binary grows from 32,688 to 36,848 B (DCE), because the semver code it now exercises
+  is live. The library bundle is unaffected.
+
+### Added — tests
+
+- **`integration_apt`** now pins 1.5.1's Err propagation. With `NOUS_CAPTURE_MAX` forced to
+  16 bytes, `resolver_list` and `resolver_search` must return `Err(NOUS_ERR_COMMAND_EXEC)`.
+  - It runs only where apt exists, i.e. CI's apt job.
+  - **Verified on Debian 12 in docker**: it passes there, and a mutant restoring the old
+    skip-the-Err behaviour fails exactly these four assertions.
+- **`which_exists`** (2): `nous_which_exists` finds `sh` and rejects a missing tool.
+- **`capture_complete`** now runs through `nous_cmd_capture`, with 2 new tag assertions.
+
+### Docs
+
+- **`docs/api.md` rewritten to the current API:**
+  - value-form Results throughout (was `payload(..)`), plus the propagation rule
+  - `resolver_check_updates` (undocumented since 1.3.0)
+  - the error-kind table, capture, and the deprecated names
+  - the consumer note: the bundle, plus how to supply `bayan_toml_*`
+
+  Every function name was checked against `src/` and the stdlib. `resolver_is_sys` (it never
+  existed) is removed, and `resolver_strategy` is now `rs_strat`, the real name.
+- **`docs/development/gaps.md` refreshed.** It had been stale since 1.2.x.
+  - The closed P1 / P2 / P5 work is collapsed into one line.
+  - The open gaps are a table that points at roadmap versions.
+  - The Cyrius notes were re-verified on 6.7.18. The stdlib `is_dir` now works (1 / 0 / 0 for a
+    directory / file / missing path), so nous's hand-rolled `our_is_dir` is a 1.5.3 retirement
+    candidate.
+- **`docs/development/roadmap.md` restructured.**
+  - Completed sections are removed; CHANGELOG holds the history.
+  - Order: 1.5.2 → 1.5.3 P(-1) sweep → 1.6.0 docs → 1.7.x reproducible resolution → 1.8.x native
+    resolver → 1.9.x mela → 1.10.x caching → 2.0.0 backlog, plus ecosystem coordination (ark,
+    zugot).
+  - Dropped the "migrate ark to `dist/nous.cyr`" item: ark already pins
+    `modules = ["dist/nous.cyr"]`.
+- **`CLAUDE.md`**: the toolchain line no longer restates a version (it said 6.0.1), and the
+  obsolete "smoke string is hardcoded" note is gone (the banner has read `VERSION` since 1.2.4).
+
+### Performance — flat
+
+Same toolchain, 1.5.1 vs 1.5.2, median of 3 alternating runs:
+
+| Bench | 1.5.1 | 1.5.2 | Δ |
+|---|---|---|---|
+| `detect_source` | 556 ns | 591 ns | +6.3% |
+| `validate_name` | 513 ns | 521 ns | +1.6% |
+| `resolve_mkt_hit` | 2.18 µs | 2.17 µs | −0.5% |
+| `resolve_mkt_miss` | 4.53 µs | 4.45 µs | −1.9% |
+| `search_100` | 83.77 µs | 83.57 µs | −0.2% |
+| `list_installed_100` | 13.12 µs | 12.48 µs | −4.9% |
+| `strat_mkt_first` | 2.16 µs | 2.18 µs | +0.7% |
+| `strat_sys_first` | 2.19 µs | 2.20 µs | +0.4% |
+| `strat_only_mkt` | 2.17 µs | 2.19 µs | +0.7% |
+| `strat_search_all` | 2.16 µs | 2.18 µs | +1.0% |
+| `graph_resolve` | 8.81 µs | 8.75 µs | −0.7% |
+| `recipe_parse` | 17.63 µs | 17.51 µs | −0.7% |
+| `levenshtein` | 2.21 µs | 2.21 µs | +0.4% |
+| `constraint` | 696 ns | 693 ns | −0.4% |
+| `cycle_detect_20` | 21.23 µs | 23.44 µs | +10.4% |
+| `topo_sort_20` | 32.14 µs | 36.30 µs | +13.0% |
+| `recipe_db_load` | 6.781 ms | 7.051 ms | +4.0% |
+| `serde_roundtrip` | 2.69 µs | 2.75 µs | +2.0% |
+| `capture_200k` | 1.999 ms | 1.835 ms | −8.2% |
+
+- ⚖️ **`detect_source` is about 25 ns (~4%) slower**, and that held over six alternating rounds
+  (545–568 vs 567–602 ns). Nothing on its path changed: `source.cyr` and the stdlib `str`
+  functions are byte-identical. That fits a code-layout effect from the two functions added ahead
+  of the bench harness. Not chased.
+- `cycle_detect_20`, `topo_sort_20` and `recipe_db_load` overlap run to run (20.7–25.7 vs
+  20.7–27.7 µs; 31.9–38.9 vs 31.5–42.7 µs), so they are noise. `graph.cyr` is unchanged.
+
 ## [1.5.1] - 2026-11-12
 
 **cyrius 6.7.9 → 6.7.18, bayan moved from the stdlib fold to its slim `toml` profile, and the

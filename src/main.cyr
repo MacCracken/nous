@@ -15,6 +15,9 @@ include "src/json.cyr"
 include "src/version.cyr"
 include "src/graph.cyr"
 include "src/recipe.cyr"
+# 1.5.2: every module, so `cyrius vet` / `cyrius deny src/main.cyr` cover them
+# all (before this, updates.cyr was outside both gates).
+include "src/updates.cyr"
 
 fn main(): i64 {
     alloc_init();
@@ -55,6 +58,14 @@ fn main(): i64 {
     }
     if (is_err_result(validate_package_name(str_from(""))) == 0) {
         println("FAIL: validate empty name");
+        return 1;
+    }
+    if (update_is_newer(str_from("1.4.0"), str_from("1.3.9")) != 1) {
+        println("FAIL: update_is_newer newer");
+        return 1;
+    }
+    if (update_is_newer(str_from("1.4.0"), str_from("1.4.0")) != 0) {
+        println("FAIL: update_is_newer equal");
         return 1;
     }
 

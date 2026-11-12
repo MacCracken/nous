@@ -5,7 +5,7 @@
 
 fn sysdb_new(): i64 {
     var ok = 0;
-    if (which_exists("apt-cache") == 1 && which_exists("dpkg-query") == 1) { ok = 1; }
+    if (nous_which_exists("apt-cache") == 1 && nous_which_exists("dpkg-query") == 1) { ok = 1; }
     return sysdb_make(ok);
 }
 

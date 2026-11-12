@@ -1166,11 +1166,14 @@ fn head_args(nbytes): i64 {
 
 # 1.5.1 capture fix. Before it, the 200,000-byte capture came back as 65,536
 # bytes, and the first cmd_run result read "WORLD\n" once the second ran.
+# (1.5.2: through nous_cmd_capture; cmd_run is deprecated.)
 fn test_capture_complete() {
     test_group("capture_complete");
     # Aliasing: each result is an owned copy, not a view of a shared buffer.
-    var a = cmd_run(str_from("echo hello"));
-    var b = cmd_run(str_from("echo WORLD"));
+    var a_t, a = nous_cmd_capture(str_from("echo hello"));
+    var b_t, b = nous_cmd_capture(str_from("echo WORLD"));
+    assert_eq(is_ok(a_t), 1, "first capture Ok");
+    assert_eq(is_ok(b_t), 1, "second capture Ok");
     assert(str_eq(a, str_from("hello\n")), "first capture survives the second");
     assert(str_eq(b, str_from("WORLD\n")), "second capture intact");
     # Truncation: more than the old 64 KiB, at the default limits.
@@ -1210,6 +1213,14 @@ fn test_capture_deadline() {
     assert_eq(is_err_result(d_t), 1, "deadline cut is Err");
     assert(str_contains(ne_detail(d), str_from("idle deadline")),
       "deadline Err says why");
+}
+
+# 1.5.2: nous_which_exists replaces the deprecated bare which_exists.
+fn test_which_exists() {
+    test_group("which_exists");
+    assert_eq(nous_which_exists("sh"), 1, "sh is on PATH");
+    assert_eq(nous_which_exists("nous-no-such-tool-1f3a"), 0,
+      "a missing tool is 0");
 }
 
 fn test_semver_eq() {
@@ -1323,6 +1334,25 @@ fn test_integration_apt() {
         var inst_t, inst = sysdb_is_installed(db,
           str_from("coreutils"));
         assert_eq(inst, 1, "coreutils installed");
+        # 1.5.2: pins 1.5.1's Err propagation. With the capture limit forced to
+        # 16 bytes the system leg cannot fit, so the resolver must return Err,
+        # not Ok with the system results missing. (`dpkg-query -W` over every
+        # package and `apt-cache search coreutils` are both over 16 bytes.
+        # `apt list --upgradable` is left out: with nothing to upgrade it can
+        # fit.)
+        var d = mkdir_test();
+        var c = mkdir_test();
+        var r_t, r = resolver_new(d, c);
+        var prev_max = NOUS_CAPTURE_MAX;
+        NOUS_CAPTURE_MAX = 16;
+        var l_t, l = resolver_list(r);
+        var s_t, s = resolver_search(r, str_from("coreutils"));
+        NOUS_CAPTURE_MAX = prev_max;
+        assert_eq(is_err_result(l_t), 1, "resolver_list surfaces an overflow");
+        assert_eq(ne_kind(l), NOUS_ERR_COMMAND_EXEC, "list overflow kind");
+        assert_eq(is_err_result(s_t), 1, "resolver_search surfaces an overflow");
+        assert_eq(ne_kind(s), NOUS_ERR_COMMAND_EXEC, "search overflow kind");
+        rm_rf(d); rm_rf(c);
     }
 }
 
@@ -1477,6 +1507,7 @@ fn main() {
     test_err_kind_values();
     test_capture_complete();
     test_capture_deadline();
+    test_which_exists();
     test_semver_eq();
     test_caret_zero();
     test_tilde_zero();

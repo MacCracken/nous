@@ -7,7 +7,7 @@
 - **Type**: Flat Cyrius library — `src/*.cyr` modules behind a barrel
   (`src/nous.cyr`); ships a single-file `dist/nous.cyr` bundle via `cyrius distlib`
 - **License**: GPL-3.0-only
-- **Toolchain**: Cyrius 6.0.1 (pinned in `cyrius.cyml`; the single source of truth)
+- **Toolchain**: Cyrius, pinned in `cyrius.cyml` (the single source of truth, so the version is not restated here). To bump it, change the pin, then run `cyrius deps` alone.
 - **Version**: SemVer (see `VERSION`)
 - **Genesis repo**: [agnosticos](https://github.com/MacCracken/agnosticos)
 - **Philosophy**: [AGNOS Philosophy & Intention](https://github.com/MacCracken/agnosticos/blob/main/docs/philosophy.md)
@@ -46,7 +46,7 @@ ark (dependency resolution). Nous is the single source of truth for resolving pa
 8. Run benchmarks again — prove the wins
 9. If review heavy → return to step 5
 10. Documentation — update CHANGELOG, roadmap, docs, ADRs, source citations (see [Documentation Standards](#documentation-standards))
-11. Version check — `VERSION`, `cyrius.cyml` (auto-pulled via `${file:VERSION}`), recipe (in zugot) all in sync. The `src/main.cyr` smoke string is currently hardcoded — flagged on the roadmap for templating.
+11. Version check — `VERSION`, `cyrius.cyml` (auto-pulled via `${file:VERSION}`), recipe (in zugot) all in sync. The `src/main.cyr` banner reads `VERSION` at runtime, so it needs no bump.
 12. Return to step 1
 
 ### Task Sizing
@@ -70,7 +70,7 @@ ark (dependency resolution). Nous is the single source of truth for resolving pa
 - `#must_use` on pure functions whose result must not be silently dropped
 - Every public type has JSON serialize + deserialize (manual, via `src/json.cyr`
   — nous does not use serde)
-- All functions carry explicit return types (`: i64`) — the Cyrius 6.0.1 idiom
+- All functions carry explicit return types (`: i64`)
 - Optional modules stay feature-gated — consumers pull only what they need
 - Zero panic/abort paths in library code; surface errors via `Result` (Ok/Err)
 - All public types have JSON roundtrip tests
