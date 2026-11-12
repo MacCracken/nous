@@ -3,6 +3,11 @@
 > **Version**: 1.0.0 | **Language**: Cyrius 5.1.7
 >
 > Include via `include "src/nous.cyr"` — requires `alloc_init()` before use.
+>
+> ⚠ **Partly stale.** Most examples predate cyrius 6.6.0's value-form `Result`:
+> read `payload(f())` as `var t, v = f();` (CHANGELOG 1.3.2). The error kinds,
+> the System Package DB notes and the Child-output capture section are current
+> as of 1.5.1.
 
 ---
 
@@ -175,6 +180,36 @@ if (sysdb_available(db) == 1) {
 }
 ```
 
+Since 1.5.1 every `sysdb_*` query captures the tool's **complete** output (see
+Child-output capture below). A query whose output does not fit is
+`Err(NOUS_ERR_COMMAND_EXEC)`, never a partial result, and `resolver_search`,
+`resolver_list` and `resolver_check_updates` pass that Err up rather than
+returning Ok with the system results missing.
+
+### Child-output capture (1.5.1)
+
+```cyrius
+# argv is a vec of cstr; args[0] is an absolute path (the child gets an empty env).
+var args = vec_new();
+vec_push(args, "/usr/bin/dpkg-query");
+vec_push(args, "-W");
+var t, out = nous_capture(args);        # default limits: 64 KiB start, 16 MiB max
+# Ok(Str): the complete output, an owned copy that later captures cannot change
+# Ok(0):   no output (or the command could not start)
+# Err(e):  NOUS_ERR_COMMAND_EXEC: over the limit, or cut by the idle deadline
+
+var t2, out2 = nous_capture_n(args, 1024, 4096);   # explicit start/max bytes
+var t3, out3 = nous_cmd_capture(str_from("apt list --upgradable 2>/dev/null"));  # via /bin/sh -c
+
+# Kept for compatibility: Str or 0, where 0 also covers any failure.
+var s = cmd_run(str_from("echo hi"));
+```
+
+Limits: `NOUS_CAPTURE_INIT` (65,536) and `NOUS_CAPTURE_MAX` (16,777,216). Each
+run reads up to `cap + 1` bytes. When the output does not fit, the command
+re-runs with double the buffer, up to the max. nous only runs read-only
+queries this way, so a re-run is safe.
+
 ---
 
 ## Zugot Recipes
@@ -284,7 +319,7 @@ All fallible functions return `Ok(value)` or `Err(NousError)`.
 var result = resolver_resolve(r, str_from(""));
 if (is_err_result(result) == 1) {
     var err = payload(result);
-    var kind = ne_kind(err);     # ERR_INVALID_PACKAGE_NAME
+    var kind = ne_kind(err);     # NOUS_ERR_INVALID_PACKAGE_NAME
     var msg = ne_msg(err);       # the package name
     var detail = ne_detail(err); # "package name cannot be empty"
 
@@ -293,10 +328,10 @@ if (is_err_result(result) == 1) {
     # "invalid package name ``: package name cannot be empty"
 }
 
-# Error kinds: ERR_COMMAND_EXEC, ERR_REGISTRY_IO,
-# ERR_INVALID_MANIFEST, ERR_INVALID_PACKAGE_NAME,
-# ERR_INVALID_VERSION_CONSTRAINT, ERR_DEPENDENCY_CYCLE,
-# ERR_VERSION_CONFLICT
+# Error kinds: NOUS_ERR_COMMAND_EXEC, NOUS_ERR_REGISTRY_IO,
+# NOUS_ERR_INVALID_MANIFEST, NOUS_ERR_INVALID_PACKAGE_NAME,
+# NOUS_ERR_INVALID_VERSION_CONSTRAINT, NOUS_ERR_DEPENDENCY_CYCLE,
+# NOUS_ERR_VERSION_CONFLICT
 
 # Validate names before use
 var vr = validate_package_name(str_from("valid-pkg"));  # Ok(1)

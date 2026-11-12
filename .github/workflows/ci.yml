@@ -70,8 +70,9 @@ jobs:
       # byte-identical build, 287/287 tests).
 
       - name: Resolve dependencies
-        # No-op today (no [deps.NAME] git blocks; stdlib comes from the
-        # snapshot above), but kept so a future external dep is picked up.
+        # Vendors the stdlib leaves from the pinned snapshot, plus (since 1.5.1)
+        # the one git dep: `[deps.bayan]` → lib/bayan-toml.cyr, fetched over
+        # https at tag 1.11.1 and checked against the commit in cyrius.lock.
         run: cyrius deps
 
       - name: Lint

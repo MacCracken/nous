@@ -6,14 +6,17 @@ builds a small smoke binary.
 
 ## Prerequisites
 
-- **Cyrius 6.7.9** (pinned in `cyrius.cyml`; the toolchain is the single source
+- **Cyrius 6.7.18** (pinned in `cyrius.cyml`; the toolchain is the single source
   of truth). Install from the [cyrius releases](https://github.com/MacCracken/cyrius/releases).
 - `lib/` (the stdlib) is **not** committed — `cyrius deps` (and `build`/`test`)
   vendor it from the version-pinned snapshot (`~/.cyrius/versions/<pin>/lib/`)
   and record each file's sha256 in `cyrius.lock`. Don't commit `lib/`.
-- After changing the pin, run `cyrius deps` on its own. Running `cyrius lib sync`
-  first leaves the transitive leaves stale in `cyrius.lock`, and `deps` then
-  refuses them (see CHANGELOG 1.5.0).
+- `cyrius deps` also fetches nous's one git dependency, bayan's
+  `dist/bayan-toml.cyr` (tag pinned in `[deps.bayan]`, commit in `cyrius.lock`).
+  It needs network access the first time.
+- After changing the pin, run `cyrius deps` on its own. On 6.7.9, running
+  `cyrius lib sync` first broke the lock. Since 6.7.13 it refuses safely, but
+  `deps` alone is still the procedure (CHANGELOG 1.5.0, 1.5.1).
 
 ## Build & run the smoke binary
 

@@ -3,17 +3,128 @@
 # Command execution
 # ===================================================================
 
-var cmd_buf = 0;
+# Child-output capture (1.5.1). The pre-1.5.1 capture had two defects, both
+# reproduced before this fix:
+#
+#   TRUNCATION. Every capture read into one fixed 65,536-byte buffer. The
+#   stdlib's `exec_capture` stops at its buffer length, and a full buffer reads
+#   the same as EOF, so longer output was cut with no error: a 200,000-byte
+#   output came back as 65,536 bytes. `sysdb_list` runs `dpkg-query -W` over
+#   the whole system, which passes 64 KiB at roughly 1,500 packages.
+#
+#   ALIASING. The result was `str_new(cmd_buf, n)`, and `str_new` / `str_sub` /
+#   `str_trim` / `str_split` make VIEWS, not copies. So every Str a capture
+#   returned (package names, versions, descriptions) pointed into the one
+#   shared buffer, and the next capture overwrote it: after
+#   `a = cmd_run("echo hello"); b = cmd_run("echo WORLD");`, `a` read "WORLD".
+#
+# Now each run reads up to `cap + 1` bytes. Reading more than `cap` means the
+# output did not fit, so the command re-runs with double the room, up to
+# `max`. Output that still does not fit, or a run the stdlib's idle deadline
+# cut short (`proc_set_timeout_ms`), is an `Err` and never a partial result.
+# A complete capture is copied out (`str_clone`), so later captures cannot
+# change it. A re-run is safe because nous captures read-only queries only
+# (apt-cache, dpkg-query, `apt list`).
 
-fn cmd_run(cmd_str): i64 {
-    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
+var NOUS_CAPTURE_INIT = 65536;
+var NOUS_CAPTURE_MAX = 16777216;
+
+# Scratch buffer, shared by every capture. Grown, never shrunk. Results are
+# copied out of it, so reusing it is safe.
+var _nous_cap_buf = 0;
+var _nous_cap_size = 0;
+
+fn _nous_cap_reserve(n): i64 {
+    if (_nous_cap_size < n) {
+        var b = alloc(n);
+        if (b == 0) { return 0; }
+        _nous_cap_buf = b;
+        _nous_cap_size = n;
+    }
+    return _nous_cap_buf;
+}
+
+# The command as one line ("apt-cache search --names-only foo") for the error.
+fn _nous_cap_cmdline(args): i64 {
+    var sb = str_builder_new();
+    var i = 0;
+    while (i < vec_len(args)) {
+        if (i > 0) { str_builder_add_cstr(sb, " "); }
+        str_builder_add_cstr(sb, vec_get(args, i));
+        i = i + 1;
+    }
+    return str_builder_build(sb);
+}
+
+fn _nous_cap_fail(args, detail): i64 {
+    return nous_err(NOUS_ERR_COMMAND_EXEC, _nous_cap_cmdline(args), str_from(detail));
+}
+
+fn _nous_cap_overflow(args, max): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "output exceeds the ");
+    str_builder_add_int(sb, max);
+    str_builder_add_cstr(sb, "-byte capture limit");
+    return nous_err(NOUS_ERR_COMMAND_EXEC, _nous_cap_cmdline(args), str_builder_build(sb));
+}
+
+# Run `args` (a vec of cstr; args[0] an absolute path, since the child gets an
+# empty environment) and capture all of stdout. The buffer starts at `init`
+# bytes and doubles up to `max`.
+#   Ok(Str)  the complete output, an owned copy
+#   Ok(0)    no output (including a command that could not start: the
+#            pre-1.5.1 contract, which callers read as "nothing found")
+#   Err(e)   NOUS_ERR_COMMAND_EXEC: the output did not fit in `max` bytes, or
+#            the idle deadline cut the run short
+fn nous_capture_n(args, init, max): i64 {
+    var st[16];
+    var cap = init;
+    if (cap > max) { cap = max; }
+    if (cap < 1) { cap = 1; }
+    while (cap <= max) {
+        var buf = _nous_cap_reserve(cap + 1);
+        if (buf == 0) { return _nous_cap_fail(args, "out of memory for the capture buffer"); }
+        var n = exec_capture_status(args, buf, cap + 1, &st);
+        if (load64(&st) == 0 - 2) {
+            return _nous_cap_fail(args, "cut short by the idle deadline (proc_set_timeout_ms)");
+        }
+        if (n <= cap) {
+            if (n <= 0) { return Ok(0); }
+            return Ok(str_clone(str_new(buf, n)));
+        }
+        if (cap >= max) { return _nous_cap_overflow(args, max); }
+        cap = cap * 2;
+        if (cap > max) { cap = max; }
+    }
+    return _nous_cap_overflow(args, max);
+}
+
+# nous_capture_n with the default limits. It starts from the scratch buffer's
+# current size, so a command that once needed more room does not re-run next
+# time.
+fn nous_capture(args): i64 {
+    var init = NOUS_CAPTURE_INIT;
+    if (_nous_cap_size - 1 > init) { init = _nous_cap_size - 1; }
+    return nous_capture_n(args, init, NOUS_CAPTURE_MAX);
+}
+
+# Run a shell command line (`/bin/sh -c`) and capture all of stdout: same
+# results as `nous_capture`.
+fn nous_cmd_capture(cmd_str): i64 {
     var args = vec_new();
     vec_push(args, "/bin/sh");
     vec_push(args, "-c");
     vec_push(args, to_cstr(cmd_str));
-    var n = exec_capture(args, cmd_buf, 65536);
-    if (n <= 0) { return 0; }
-    return str_new(cmd_buf, n);
+    return nous_capture(args);
+}
+
+# Kept for compatibility: the output Str, or 0 for no output OR any failure.
+# Since 1.5.1 it never truncates and the Str is an owned copy, but it still
+# cannot tell "failed" from "said nothing". nous itself uses nous_cmd_capture.
+fn cmd_run(cmd_str): i64 {
+    var r_t, r = nous_cmd_capture(cmd_str);
+    if (is_err_result(r_t) == 1) { return 0; }
+    return r;
 }
 
 fn which_exists(name): i64 {

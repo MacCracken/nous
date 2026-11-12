@@ -111,17 +111,19 @@ fn resolver_search(r, query): i64 {
     }
     vec_push(sources, SOURCE_SYSTEM);
     var sres_t, sres = sysdb_search(rs_sys(r), query);
-    if (is_ok(sres_t) == 1) {
-        var sp = sres;
-        var j = 0;
-        while (j < vec_len(sp)) {
-            var pkg = vec_get(sp, j);
-            if (map_has(seen, to_cstr(rp_name(pkg))) == 0) {
-                map_set(seen, to_cstr(rp_name(pkg)), 1);
-                vec_push(results, pkg);
-            }
-            j = j + 1;
+    # 1.5.1: a system-leg Err (a capture past NOUS_CAPTURE_MAX, or cut by the
+    # idle deadline) is surfaced, not skipped. Skipping returned Ok with the
+    # system results silently missing.
+    if (is_err_result(sres_t) == 1) { return Err(sres); }
+    var sp = sres;
+    var j = 0;
+    while (j < vec_len(sp)) {
+        var pkg = vec_get(sp, j);
+        if (map_has(seen, to_cstr(rp_name(pkg))) == 0) {
+            map_set(seen, to_cstr(rp_name(pkg)), 1);
+            vec_push(results, pkg);
         }
+        j = j + 1;
     }
     sort_resolved(results);
     return Ok(search_result_new(results, sources, vec_len(results)));
@@ -138,11 +140,11 @@ fn resolver_list(r): i64 {
         i = i + 1;
     }
     var sres_t, sres = sysdb_list(rs_sys(r));
-    if (is_ok(sres_t) == 1) {
-        var sp = sres;
-        var j = 0;
-        while (j < vec_len(sp)) { vec_push(pkgs, vec_get(sp, j)); j = j + 1; }
-    }
+    # 1.5.1: surfaced, not skipped (see resolver_search).
+    if (is_err_result(sres_t) == 1) { return Err(sres); }
+    var sp = sres;
+    var j = 0;
+    while (j < vec_len(sp)) { vec_push(pkgs, vec_get(sp, j)); j = j + 1; }
     sort_installed(pkgs);
     return Ok(pkgs);
 }

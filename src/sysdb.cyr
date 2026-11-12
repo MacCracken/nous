@@ -21,10 +21,8 @@ fn sysdb_search(db, query): i64 {
     vec_push(args, "search");
     vec_push(args, "--names-only");
     vec_push(args, to_cstr(query));
-    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
-    var n = exec_capture(args, cmd_buf, 65536);
-    var output = 0;
-    if (n > 0) { output = str_new(cmd_buf, n); }
+    var out_t, output = nous_capture(args);
+    if (is_err_result(out_t) == 1) { return Err(output); }
     if (output == 0) { return Ok(vec_new()); }
     var lines = str_split(output, 10);
     var results = vec_new();
@@ -54,10 +52,8 @@ fn sysdb_is_installed(db, name): i64 {
     vec_push(args, "-f");
     vec_push(args, "${Status}");
     vec_push(args, to_cstr(name));
-    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
-    var n = exec_capture(args, cmd_buf, 65536);
-    var output = 0;
-    if (n > 0) { output = str_new(cmd_buf, n); }
+    var out_t, output = nous_capture(args);
+    if (is_err_result(out_t) == 1) { return Err(output); }
     if (output == 0) { return Ok(0); }
     if (str_contains(output, str_from("install ok installed")) == 1) { return Ok(1); }
     return Ok(0);
@@ -73,10 +69,8 @@ fn sysdb_get_installed(db, name): i64 {
     vec_push(args, "-f");
     vec_push(args, "${Package}\t${Version}\t${Installed-Size}\n");
     vec_push(args, to_cstr(name));
-    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
-    var n = exec_capture(args, cmd_buf, 65536);
-    var output = 0;
-    if (n > 0) { output = str_new(cmd_buf, n); }
+    var out_t, output = nous_capture(args);
+    if (is_err_result(out_t) == 1) { return Err(output); }
     if (output == 0) { return Ok(0); }
     var lines = str_split(output, 10);
     if (vec_len(lines) == 0) { return Ok(0); }
@@ -88,7 +82,10 @@ fn sysdb_get_installed(db, name): i64 {
 
 fn sysdb_list(db): i64 {
     if (sd_apt(db) == 0) { return Ok(vec_new()); }
-    var output = cmd_run(str_from("dpkg-query -W -f '${Package}\t${Version}\t${Installed-Size}\t${Status}\n'"));
+    # Every installed package: past the pre-1.5.1 64 KiB buffer at ~1,500.
+    var q = str_from("dpkg-query -W -f '${Package}\t${Version}\t${Installed-Size}\t${Status}\n'");
+    var out_t, output = nous_cmd_capture(q);
+    if (is_err_result(out_t) == 1) { return Err(output); }
     if (output == 0) { return Ok(vec_new()); }
     var lines = str_split(output, 10);
     var pkgs = vec_new();
@@ -111,7 +108,8 @@ fn sysdb_list(db): i64 {
 
 fn sysdb_updates(db): i64 {
     if (sd_apt(db) == 0) { return Ok(vec_new()); }
-    var output = cmd_run(str_from("apt list --upgradable 2>/dev/null"));
+    var out_t, output = nous_cmd_capture(str_from("apt list --upgradable 2>/dev/null"));
+    if (is_err_result(out_t) == 1) { return Err(output); }
     if (output == 0) { return Ok(vec_new()); }
     var lines = str_split(output, 10);
     var upd = vec_new();
@@ -151,10 +149,8 @@ fn sysdb_info(db, name): i64 {
     vec_push(args, tool_path("apt-cache"));
     vec_push(args, "show");
     vec_push(args, to_cstr(name));
-    if (cmd_buf == 0) { cmd_buf = alloc(65536); }
-    var n = exec_capture(args, cmd_buf, 65536);
-    var output = 0;
-    if (n > 0) { output = str_new(cmd_buf, n); }
+    var out_t, output = nous_capture(args);
+    if (is_err_result(out_t) == 1) { return Err(output); }
     if (output == 0) { return Ok(0); }
     var version = str_from("");
     var desc = str_from("");

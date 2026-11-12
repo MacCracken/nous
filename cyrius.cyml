@@ -5,7 +5,7 @@ description = "nous — package resolver for AGNOS (system, marketplace, Flutter
 license = "GPL-3.0-only"
 repository = "https://github.com/MacCracken/nous"
 language = "cyrius"
-cyrius = "6.7.9"
+cyrius = "6.7.18"
 
 [build]
 entry = "src/main.cyr"
@@ -63,8 +63,20 @@ stdlib = [
     "process",
     "bench",
     "fnptr",
-    "bayan",
 ]
+
+# bayan's flat-TOML profile alone, not the whole stdlib `bayan` fold. nous
+# uses only bayan's section/pair records (`bayan_toml_section_*`,
+# `bayan_toml_pair_*`), which nous's own CYML parser builds. The full fold
+# (bayan 1.11.1, folded into cyrius 6.7.18) carries every format plus ~330 KB
+# of Unicode tables that DCE cannot drop, taking the release binary from
+# 58,504 to 406,296 B (1.5.1). bayan-toml needs only alloc/str/vec/hashseed/
+# string/io/result/syscalls (its dist/bayan-toml.deps). Same shape as
+# samay/shravan/mihi pulling `dist/bayan-json.cyr`.
+[deps.bayan]
+git = "https://github.com/MacCracken/bayan.git"
+tag = "1.11.1"
+modules = ["dist/bayan-toml.cyr"]
 
 # Distribution manifest. Single binary today (`nous`); release.yml
 # packages the x86_64 build. Kept declarative so future tooling

@@ -67,8 +67,10 @@ fn parse_toml_array(s): i64 {
 
 # CYML parser — handles single-bracket [section] and [[array]] headers. nous
 # keeps its own rather than bayan's `cyml_parse` (a different doc/entry model)
-# or the old stdlib `toml_parse` (missed [section]). The `toml_*` section/pair
-# structs it builds come from bayan's compat surface (`[deps] bayan`).
+# or the old stdlib `toml_parse` (missed [section]). The section/pair records
+# it builds are bayan's (`bayan_toml_section_*` / `bayan_toml_pair_*`), from
+# the slim `dist/bayan-toml.cyr` profile (`[deps.bayan]`). The unprefixed
+# `toml_*` compat aliases exist only in the full bayan fold (1.5.1).
 fn nous_cyml_parse(src): i64 {
     var sections = vec_new();
     var d = str_data(src);
@@ -86,7 +88,7 @@ fn nous_cyml_parse(src): i64 {
         elif (c == 91) {
             # Save current section
             if (vec_len(cur_pairs) > 0 || str_len(cur_name) > 0) {
-                vec_push(sections, toml_section_new(cur_name, cur_pairs));
+                vec_push(sections, bayan_toml_section_new(cur_name, cur_pairs));
             }
             pos = pos + 1;
             # Skip second [ for [[array]]
@@ -157,13 +159,13 @@ fn nous_cyml_parse(src): i64 {
                         value = str_new(d + ustart, uend - ustart);
                     }
                 }
-                vec_push(cur_pairs, toml_pair_new(key, value));
+                vec_push(cur_pairs, bayan_toml_pair_new(key, value));
             }
             while (pos < len && load8(d + pos) != 10) { pos = pos + 1; }
         }
     }
     if (vec_len(cur_pairs) > 0 || str_len(cur_name) > 0) {
-        vec_push(sections, toml_section_new(cur_name, cur_pairs));
+        vec_push(sections, bayan_toml_section_new(cur_name, cur_pairs));
     }
     return sections;
 }
@@ -180,8 +182,8 @@ fn cyml_section_by_name(sections, name): i64 {
     var i = 0;
     while (i < vec_len(sections)) {
         var sec = vec_get(sections, i);
-        if (str_eq(toml_section_name(sec), str_from(name)) == 1) {
-            return toml_section_pairs(sec);
+        if (str_eq(bayan_toml_section_name(sec), str_from(name)) == 1) {
+            return bayan_toml_section_pairs(sec);
         }
         i = i + 1;
     }
@@ -193,8 +195,8 @@ fn cyml_get(pairs, key): i64 {
     var i = 0;
     while (i < vec_len(pairs)) {
         var p = vec_get(pairs, i);
-        if (str_eq(toml_pair_key(p), skey) == 1) {
-            return toml_pair_value(p);
+        if (str_eq(bayan_toml_pair_key(p), skey) == 1) {
+            return bayan_toml_pair_value(p);
         }
         i = i + 1;
     }
@@ -457,7 +459,7 @@ fn resolver_resolve_all_with_recipes(r, names): i64 {
 fn finalize_graph(r, graph): i64 {
     var cycle = dep_graph_detect_cycle(graph);
     if (cycle != 0) {
-        return nous_err(ERR_DEPENDENCY_CYCLE, format_cycle(cycle), 0);
+        return nous_err(NOUS_ERR_DEPENDENCY_CYCLE, format_cycle(cycle), 0);
     }
 
     # Conflict detection with detailed explanation
@@ -497,7 +499,7 @@ fn finalize_graph(r, graph): i64 {
                         str_builder_add(sb, rp_name(pkg));
                         str_builder_add_cstr(sb, " requires ");
                         str_builder_add(sb, constraint_str);
-                        return nous_err(ERR_VERSION_CONFLICT, dep,
+                        return nous_err(NOUS_ERR_VERSION_CONFLICT, dep,
                           str_builder_build(sb));
                     }
                 } else {

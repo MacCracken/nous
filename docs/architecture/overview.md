@@ -68,10 +68,19 @@ the complete layout of all 12 struct types.
   `include "lib/<leaf>.cyr"` lines (cyrius 6.6.18+). The bundle does not embed
   stdlib content: consumers vendor the leaves listed in `dist/nous.deps`.
   CI fails if the committed bundle drifts.
+- **bayan** — nous's one git dependency, `[deps.bayan]` → `dist/bayan-toml.cyr`,
+  for the CYML parser's `bayan_toml_section_*` / `bayan_toml_pair_*` records
+  ([ADR-0004](../adr/0004-bayan-toml-profile-dependency.md)). A consumer of
+  `dist/nous.cyr` supplies those functions, from the same profile or the full
+  stdlib `bayan` fold, never both.
+- **Child processes** — every apt/dpkg query goes through `nous_capture*`
+  (`src/command.cyr`), which captures the complete output as an owned Str. It
+  returns `Err(NOUS_ERR_COMMAND_EXEC)` past 16 MiB or on an idle-deadline cut,
+  never a partial result.
 - **Smoke binary** — `[build] entry = src/main.cyr` → `build/nous`; a runtime
   self-check ("all smoke checks passed"). `modules` lives under `[lib]`, never
   `[build]` (the latter auto-prepends and bloats the binary).
-- **Toolchain** — pinned to Cyrius 6.7.9 in `cyrius.cyml`. Release ships
+- **Toolchain** — pinned to Cyrius 6.7.18 in `cyrius.cyml`. Release ships
   `nous-<tag>.cyr` (the bundle), the x86_64 binary, a source tarball, and
   `SHA256SUMS`. The binary is **not** stripped (corrupts a cyrius raw ELF).
 - Rationale: see [ADR-0002](../adr/0002-flat-modules-dist-bundle.md).

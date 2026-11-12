@@ -63,6 +63,34 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
   both filed toolchain issues worked around); `@unsafe` not adopted (deny/lint
   don't require it); resolver-completeness assessment. **Closes the 1.2.x arc.**
 
+## Completed (v1.5.1) — Cyrius 6.7.18, slim bayan, audit fixes
+
+- Toolchain pin 6.7.9 → 6.7.18 (`cyrius deps` alone; 38 files byte-identical).
+- bayan moved from the stdlib fold to `[deps.bayan]` → `dist/bayan-toml.cyr`
+  ([ADR 0004](../adr/0004-bayan-toml-profile-dependency.md)). The fold's Unicode
+  tables had taken the release binary to 406 KB; it is now 32.7 KB (−44% vs 1.5.0).
+- **Breaking:** `ErrKind` `ERR_*` → `NOUS_ERR_*` (values unchanged; ark's two
+  `ERR_INVALID_PACKAGE_NAME` sites need the rename when it moves to 1.5.1).
+- Fixed the 64 KiB capture truncation (`nous_capture*`, Err past 16 MiB or on a
+  deadline cut, propagated by the resolver), plus the shared-buffer aliasing found
+  while fixing it. 310/0; new `capture_200k` bench.
+- Audited 6.7.10–6.7.18 for changes that alter already-compiling code: none reaches
+  nous. Benches flat to −10%.
+
+### Open items surfaced by the 1.5.1 audit (pre-existing)
+
+- [ ] **Bare-name fn collisions**: `which_exists` (kavach, same arity) and `cmd_run`
+      (thoth, same arity) live in the flat namespace too. They are latent: no consumer
+      vendors nous with either. Prefix them (`nous_*`) at the next planned API break.
+- [ ] **Capture copy cost**: the owned copy goes through the stdlib's byte-wise
+      `memcpy`, about 2 ns a byte (+~120 µs per 60 KB). Options: a word-wise copy in
+      nous, or a faster stdlib `memcpy` upstream. That is a user decision, since the
+      first hand-rolls a stdlib primitive. Not urgent: real apt/dpkg runs take tens
+      to hundreds of ms.
+- [ ] **`docs/api.md` refresh**: most examples predate the 6.6.0 value-form
+      `Result` (`payload(..)`). A banner says so; the capture and error-kind sections
+      are current.
+
 ## Completed (v1.5.0) — Cyrius 6.7.9 + bundled-lib refresh
 
 - Toolchain pin 6.6.20 → 6.7.9; `lib/` re-vendored to the 6.7.9 bundled versions
@@ -80,12 +108,13 @@ already adopted by sibling AGNOS libraries (patra 1.9.5, sigil 3.4.3).
 
 ### Open items surfaced by the 1.5.0 audit (pre-existing)
 
-- [ ] **64 KiB capture cap** (`src/command.cyr`, `src/sysdb.cyr`): child output past
+- [x] **64 KiB capture cap** (`src/command.cyr`, `src/sysdb.cyr`): child output past
       65,536 bytes is silently dropped. Grow the buffer, or report truncation as an
       error, so `sysdb_search` / `sysdb_updates` never return partial results.
-- [ ] **`ErrKind` namespacing**: rename `ERR_*` → `NOUS_ERR_*` (cyrius lint's
+      **Fixed in 1.5.1** (and `sysdb_list` turned out to be the worst site).
+- [x] **`ErrKind` namespacing**: rename `ERR_*` → `NOUS_ERR_*` (cyrius lint's
       error-enum namespace note). Breaking. No collision exists today, so it can wait
-      for a planned API break.
+      for a planned API break. **Done in 1.5.1.**
 
 ## Completed (v1.4.1) — Cyrius 6.6.20 + bundled-lib refresh
 

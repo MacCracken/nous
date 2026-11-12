@@ -6,8 +6,8 @@
 fn nous_err(kind, msg, detail): i64 {
     return Err(nous_error_new(kind, msg, detail));
 }
-fn err_registry_io(path, detail): i64 { return nous_err(ERR_REGISTRY_IO, path, detail); }
-fn err_invalid_name(name, reason): i64 { return nous_err(ERR_INVALID_PACKAGE_NAME, name, reason); }
+fn err_registry_io(path, detail): i64 { return nous_err(NOUS_ERR_REGISTRY_IO, path, detail); }
+fn err_invalid_name(name, reason): i64 { return nous_err(NOUS_ERR_INVALID_PACKAGE_NAME, name, reason); }
 
 fn format_cycle(cycle): i64 {
     var sb = str_builder_new();
@@ -25,35 +25,35 @@ fn nous_error_msg(e): i64 {
     var msg = ne_msg(e);
     var detail = ne_detail(e);
     var sb = str_builder_new();
-    if (kind == ERR_COMMAND_EXEC) {
+    if (kind == NOUS_ERR_COMMAND_EXEC) {
         str_builder_add_cstr(sb, "failed to run `");
         str_builder_add(sb, msg);
         str_builder_add_cstr(sb, "`: ");
         if (detail != 0) { str_builder_add(sb, detail); }
-    } elif (kind == ERR_REGISTRY_IO) {
+    } elif (kind == NOUS_ERR_REGISTRY_IO) {
         str_builder_add_cstr(sb, "registry I/O error at `");
         str_builder_add(sb, msg);
         str_builder_add_cstr(sb, "`: ");
         if (detail != 0) { str_builder_add(sb, detail); }
-    } elif (kind == ERR_INVALID_MANIFEST) {
+    } elif (kind == NOUS_ERR_INVALID_MANIFEST) {
         str_builder_add_cstr(sb, "invalid manifest at `");
         str_builder_add(sb, msg);
         str_builder_add_cstr(sb, "`: ");
         if (detail != 0) { str_builder_add(sb, detail); }
-    } elif (kind == ERR_INVALID_PACKAGE_NAME) {
+    } elif (kind == NOUS_ERR_INVALID_PACKAGE_NAME) {
         str_builder_add_cstr(sb, "invalid package name `");
         str_builder_add(sb, msg);
         str_builder_add_cstr(sb, "`: ");
         if (detail != 0) { str_builder_add(sb, detail); }
-    } elif (kind == ERR_INVALID_VERSION_CONSTRAINT) {
+    } elif (kind == NOUS_ERR_INVALID_VERSION_CONSTRAINT) {
         str_builder_add_cstr(sb, "invalid version constraint `");
         str_builder_add(sb, msg);
         str_builder_add_cstr(sb, "`: ");
         if (detail != 0) { str_builder_add(sb, detail); }
-    } elif (kind == ERR_DEPENDENCY_CYCLE) {
+    } elif (kind == NOUS_ERR_DEPENDENCY_CYCLE) {
         str_builder_add_cstr(sb, "dependency cycle detected: ");
         str_builder_add(sb, msg);
-    } elif (kind == ERR_VERSION_CONFLICT) {
+    } elif (kind == NOUS_ERR_VERSION_CONFLICT) {
         str_builder_add_cstr(sb, "version conflict for `");
         str_builder_add(sb, msg);
         str_builder_add_cstr(sb, "`: ");

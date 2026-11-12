@@ -5,6 +5,194 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-11-12
+
+**cyrius 6.7.9 → 6.7.18, bayan moved from the stdlib fold to its slim `toml` profile, and the
+two issues the 1.5.0 audit found are fixed.** Fixing the first exposed a third defect, also fixed:
+capture results aliased one shared buffer. 310 assertions (was 287), 0 failures; fuzz ok. fmt /
+lint / vet / deny / doc clean, and lint now prints no `note` lines either. Build warning-free.
+
+### ⚠ BREAKING — `ErrKind`'s bare `ERR_*` members are now `NOUS_ERR_*`
+
+| Before | After | Value |
+|---|---|---|
+| `ERR_COMMAND_EXEC` | `NOUS_ERR_COMMAND_EXEC` | 0 |
+| `ERR_REGISTRY_IO` | `NOUS_ERR_REGISTRY_IO` | 1 |
+| `ERR_INVALID_MANIFEST` | `NOUS_ERR_INVALID_MANIFEST` | 2 |
+| `ERR_INVALID_PACKAGE_NAME` | `NOUS_ERR_INVALID_PACKAGE_NAME` | 3 |
+| `ERR_INVALID_VERSION_CONSTRAINT` | `NOUS_ERR_INVALID_VERSION_CONSTRAINT` | 4 |
+| `ERR_DEPENDENCY_CYCLE` | `NOUS_ERR_DEPENDENCY_CYCLE` | 5 |
+| `ERR_VERSION_CONFLICT` | `NOUS_ERR_VERSION_CONFLICT` | 6 |
+
+Enum members are flat global constants, and bare `ERR_*` names are reserved for sakshi's base
+logger. cyrius lint has said so in a `note` since 6.4.51 (a leaf library must use `<LIB>_ERR_*`).
+This is the same cross-library collision class as 1.4.0's `agent_info_new`. No collision existed
+yet (none of the seven names is defined in the 6.7.18 stdlib or any sibling repo's `src/`), so the
+rename removes a latent hazard rather than a live one.
+
+- **Values are unchanged**, so the JSON wire format (`{"kind":N}`) is unchanged. A new test,
+  `err_kind_values`, pins all seven.
+- ⚖️ **Measured blast radius: one consumer, two sites.** `ark/src/engine.cyr:41` and `:514`
+  compare against `ERR_INVALID_PACKAGE_NAME`. ark pins nous 1.4.0, so nothing breaks until it
+  moves to 1.5.1.
+- ⚖️ **SemVer:** this is an incompatible public-API change shipped as a patch. CLAUDE.md asks for
+  a major bump for a breaking change, and 1.4.0 used a minor for its rename. **Kept at 1.5.1 by
+  the maintainer's decision** (2026-11-12), with the one known consumer migration above.
+
+**Migration** (idempotent; `\b` does not match inside `NOUS_ERR_`):
+
+```bash
+sed -i -E 's/\bERR_(COMMAND_EXEC|REGISTRY_IO|INVALID_MANIFEST|INVALID_PACKAGE_NAME|INVALID_VERSION_CONSTRAINT|DEPENDENCY_CYCLE|VERSION_CONFLICT)\b/NOUS_ERR_\1/g' src/*.cyr
+```
+
+### Changed — bayan comes from its `toml` profile, not the stdlib fold ([ADR 0004](docs/adr/0004-bayan-toml-profile-dependency.md))
+
+cyrius 6.7.18 folds bayan 1.11.1. Its `# Requires` pulls `math`, `slice`, `fmt` and seven
+`unicode/*` files, about 330 KB of tables that DCE cannot drop, and that took nous's release
+binary from **58,504 to 406,296 B**. nous uses six 16-byte record helpers from bayan.
+
+- `"bayan"` is dropped from `[deps] stdlib`, replaced by `[deps.bayan]` (git, https, tag `1.11.1`,
+  `modules = ["dist/bayan-toml.cyr"]`, commit `965298d` in `cyrius.lock`). This is the same shape as
+  samay, shravan and mihi.
+- `src/recipe.cyr` calls bayan's canonical `bayan_toml_section_new` / `_name` / `_pairs` and
+  `bayan_toml_pair_new` / `_key` / `_value`. The unprefixed `toml_*` aliases exist only in the
+  full fold's `_compat` module.
+- **Release binary: 32,528 B** with this change alone (32,688 B with the capture fix); −44% against
+  1.5.0. lib/ stays at 38 files.
+- ⚠ **Consumer-facing.** `dist/nous.cyr` now needs those six `bayan_toml_*` functions.
+  `dist/nous.deps` went 12 → 4 leaves (`hashmap`, `fs`, `process`, `syscalls`): since 6.7.12/6.7.13
+  distlib credits leaves to the named dep that brings them, and a sidecar never lists named deps.
+  A consumer supplies the functions either with the same profile or with the full stdlib `bayan`
+  fold, which defines them too, but not both. **ark needs no change here**: it already lists
+  stdlib `bayan`.
+- CI's `cyrius deps` step now fetches that one git dep; its comment says so.
+
+### Fixed — ⛔ child-output capture silently truncated at 64 KiB
+
+Every capture read into one fixed 65,536-byte buffer. `exec_capture` stops at its buffer length,
+and a full buffer reads the same as EOF, so longer output was cut with no error. The last line
+could also be cut mid-record. Reproduced before the fix: a 200,000-byte output came back as
+65,536 bytes.
+
+- **Worst site: `sysdb_list`**, which runs `dpkg-query -W` over *every* installed package. At
+  ~45 B a line it passes 64 KiB at ~1,500 packages, so on most real Debian/Ubuntu systems
+  `resolver_list` silently dropped installed system packages.
+- **Also affected:** `sysdb_search` (a broad `apt-cache search`) and `sysdb_updates` (a long
+  `apt list --upgradable`).
+- **Now:** `nous_capture_n(args, init, max)` reads up to `cap + 1` bytes. If the output did not
+  fit, it re-runs with double the room, up to `NOUS_CAPTURE_MAX` (16 MiB). Past that, or when the
+  stdlib's idle deadline cut the run (`proc_set_timeout_ms`), the result is
+  `Err(NOUS_ERR_COMMAND_EXEC)` with the command line and the limit. It is never a partial `Ok`. The
+  re-run is safe because nous captures only read-only queries.
+- **New API, all `nous_`-prefixed:** `nous_capture_n`, `nous_capture(args)` (default limits) and
+  `nous_cmd_capture(cmd)` (via `/bin/sh -c`). ai-hwaccel already defines a 4-arg `cmd_capture`.
+- **The system-leg error now surfaces.** `resolver_search`, `resolver_list` and
+  `resolver_check_updates` pass a `sysdb` Err up instead of skipping it. Skipping returned `Ok`
+  with the system results missing. `resolve_sys` and `resolver_updates` already propagated.
+  ⚖️ These can now return Err in the two cases above, where they used to return a partial Ok.
+- **`cmd_run` is kept for compatibility** (returns a Str or 0). It no longer truncates and returns
+  an owned copy, but it still cannot tell failure from no output. nous no longer calls it.
+- **The bare `cmd_buf` global is removed.** No user was found in any repo.
+
+### Fixed — ⛔ capture results aliased one shared buffer (found while fixing the above)
+
+`str_new` / `str_sub` / `str_trim` / `str_split` make **views**, not copies. Every Str a capture
+returned (package names, versions, descriptions, deps) pointed into the one global `cmd_buf`, and
+the next capture overwrote it.
+
+- **Reproduced before the fix:** after `a = cmd_run("echo hello"); b = cmd_run("echo WORLD");`,
+  `a` read `WORLD`.
+- **In real use:** `installed = resolver_list(r)` followed by
+  `resolver_check_updates(r, installed, f)` had the `apt list` capture rewrite the system entries'
+  names in `installed`.
+- **Now:** a complete capture is copied out (`str_clone`), and only the scratch buffer is reused.
+
+**Tests.** `capture_complete` (14 assertions) covers aliasing, the 200,000-byte capture, growth
+1024 → 4096, output exactly at max, and overflow as an Err naming the command and the limit, plus
+no-output `Ok(0)`. `capture_deadline` (2) covers a deadline cut as an Err. Mutation-checked:
+dropping the copy-out fails "first capture survives the second", and returning a partial capture
+instead of growing fails five assertions.
+
+### Changed — toolchain + libs
+
+- **Pin `6.7.9` → `6.7.18`**, re-vendored with `cyrius deps` alone. The 38 stdlib files are
+  byte-identical to the 6.7.18 snapshot, and `bayan-toml.cyr` is byte-identical to bayan 1.11.1's
+  `dist/`.
+
+### Audited — the 6.7.10–6.7.18 changes that alter already-compiling code do not reach nous
+
+Method: three parallel reads of the 45,800-line changelog range, then a comment- and
+string-stripped scan of nous for every flagged shape.
+
+| Change | What nous has |
+|---|---|
+| Wrapped pair calls `(f(x))` refused, transparent to pair checks (6.7.13 MV-8, 6.7.14 RC-21) | None |
+| A zone constant global no longer reset after an earlier call initialiser (6.7.14 FE-15) | Nothing after `var exit_code = main();` |
+| Zone global redeclared / conflicting value (6.7.15 FE-13, 6.7.12 FX-6) | No duplicate top-level `var` |
+| `dir_list` opens with `O_DIRECTORY` (6.7.11) | All three sites check `our_is_dir` first |
+| Capture with a closed std fd now works (6.7.15 `_proc_redirect`) | Only if nous runs with fd 0/1/2 closed, and then it gets real output instead of 0 bytes |
+| `lib/process.cyr` now includes `lib/io.cyr` (6.7.16) | No nous fn collides with an io name |
+| DCE reachability is a worklist (6.7.18) | Output changes only where it was wrong: call chains over 512 deep |
+| Enum separators, include tails, value builtins as statements (6.7.16/17) | All are errors now, and the build passes |
+| `args_init` reads cmdline to EOF (6.7.12) | nous ignores its return |
+| `fncallN(&f, ..)` of a pair fn returns the pair (6.7.17) | nous's one `fncall2` callee is a variable |
+| bayan 1.11.x `#deprecated` lookups | nous calls none |
+| Plaintext dependency URLs refused (6.7.18) | `[deps.bayan]` is https |
+
+### Performance
+
+Same machine, 1.5.0 on 6.7.9 vs 1.5.1 on 6.7.18, median of 3 alternating runs:
+
+| Bench | 1.5.0 / 6.7.9 | 1.5.1 / 6.7.18 | Δ |
+|---|---|---|---|
+| `detect_source` | 640 ns | 576 ns | −10.0% |
+| `validate_name` | 518 ns | 523 ns | +1.0% |
+| `resolve_mkt_hit` | 2.29 µs | 2.23 µs | −2.7% |
+| `resolve_mkt_miss` | 4.67 µs | 4.51 µs | −3.4% |
+| `search_100` | 88.50 µs | 84.72 µs | −4.3% |
+| `list_installed_100` | 13.10 µs | 13.34 µs | +1.9% |
+| `strat_mkt_first` | 2.24 µs | 2.22 µs | −1.0% |
+| `strat_sys_first` | 2.27 µs | 2.27 µs | −0.2% |
+| `strat_only_mkt` | 2.25 µs | 2.23 µs | −1.0% |
+| `strat_search_all` | 2.23 µs | 2.21 µs | −0.8% |
+| `graph_resolve` | 9.18 µs | 8.98 µs | −2.1% |
+| `recipe_parse` | 18.94 µs | 17.98 µs | −5.1% |
+| `levenshtein` | 2.28 µs | 2.26 µs | −0.7% |
+| `constraint` | 713 ns | 702 ns | −1.5% |
+| `cycle_detect_20` | 24.42 µs | 22.70 µs | −7.0% |
+| `topo_sort_20` | 36.50 µs | 34.57 µs | −5.3% |
+| `recipe_db_load` | 7.147 ms | 6.987 ms | −2.2% |
+| `serde_roundtrip` | 2.89 µs | 2.76 µs | −4.7% |
+| `capture_200k` (new) | — (truncated) | 1.92 ms | — |
+
+- **The 1.5.0 `detect_source` regression is gone**: 1.5.0 measured 576 → 615 ns, and 6.7.18 is
+  back to 574–583 ns.
+- **`recipe_parse` −5%** (18.9–19.3 vs 17.3–18.5 µs, no overlap) comes from calling `bayan_toml_*`
+  directly, without the compat-wrapper hop. `serde_roundtrip` also separates (2.86–2.92 vs
+  2.68–2.77 µs). The `cycle_detect` / `topo_sort` ranges overlap, so they are noise. One 1.5.0
+  run was uniformly elevated, and the medians absorb it.
+- ⚖️ **The copy-out has a cost.** In an A/B at 60,000 bytes, which fits the old buffer, a raw
+  `exec_capture` took 620–630 µs and `nous_capture` 728–755 µs: about +120 µs. The stdlib's
+  `memcpy` (behind `str_clone`) is a byte loop, about 2 ns a byte. That is the price of fixing
+  the aliasing, and against real apt/dpkg runs (tens to hundreds of ms) it is noise.
+- **Binary size:** release build 58,504 → 32,688 B (−44%); dev build 631,944 → 286,640 B.
+
+### Corrections to earlier entries
+
+- **1.5.0 said `cyrius lib sync --dry-run` prints addresses "on 6.6.20, 6.7.9 and 6.7.18".** The
+  6.7.18 observation was wrong. That run was in a project pinned to 6.6.20, so the 6.7.18 CLI
+  re-executed into 6.6.20. It was fixed upstream in 6.7.12 (TL-14), and 6.7.18 prints paths.
+- **1.5.0's lock trap (`lib sync` before `deps`) is fixed upstream in 6.7.13** (TL-11 / D42).
+  Reproduced from the 1.5.0 tree: on 6.7.18 a scoped `lib sync` across a pin move refuses, names
+  `--full`, and writes nothing. Running `cyrius deps` alone remains the procedure.
+
+### Known — found by this release's audit (tracked in the roadmap)
+
+- **Bare-name function collisions, latent.** `which_exists(name)` is also defined by kavach with
+  the same arity, and `cmd_run(...)` by thoth (same arity) and by cyrius's build tool. No consumer
+  vendors nous next to kavach or thoth today. Renaming either is breaking, so this is left for a
+  planned API break.
+
 ## [1.5.0] - 2026-11-12
 
 **cyrius 6.6.20 → 6.7.9, stdlib re-vendored to the 6.7.9 bundled versions.** 287 assertions,

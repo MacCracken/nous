@@ -183,6 +183,15 @@ fn b_recipe_db() {
     return 0;
 }
 
+# Full capture of a 200,000-byte child output (1.5.1): spawn, read, and the
+# owned copy. That is past the pre-1.5.1 64 KiB buffer. After the first run
+# the scratch buffer has grown, so each iteration is a single run.
+var cap_args = 0;
+fn b_capture() {
+    nous_capture(cap_args);
+    return 0;
+}
+
 # Serde roundtrip benchmark
 fn b_serde() {
     var pkg = resolved_pkg_new(str_from("bench-pkg"), str_from("1.0.0"),
@@ -283,6 +292,16 @@ fn main() {
     var b12 = bench_new("serde_roundtrip");
     bench_run(b12, &b_serde, 100000);
     vec_push(benches, b12);
+
+    # Child-output capture, 200,000 bytes (1.5.1)
+    cap_args = vec_new();
+    vec_push(cap_args, "/usr/bin/head");
+    vec_push(cap_args, "-c");
+    vec_push(cap_args, "200000");
+    vec_push(cap_args, "/dev/zero");
+    var b19 = bench_new("capture_200k");
+    bench_run(b19, &b_capture, 100);
+    vec_push(benches, b19);
 
     bench_report_all(benches);
     return 0;

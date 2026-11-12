@@ -411,7 +411,7 @@ fn test_errors() {
     vec_push(cycle, str_from("C"));
     vec_push(cycle, str_from("A"));
     assert(str_eq(format_cycle(cycle), str_from("A -> B -> C -> A")), "cycle fmt");
-    var e = nous_error_new(ERR_INVALID_PACKAGE_NAME, str_from("bad;pkg"), str_from("invalid character ';'"));
+    var e = nous_error_new(NOUS_ERR_INVALID_PACKAGE_NAME, str_from("bad;pkg"), str_from("invalid character ';'"));
     var msg = nous_error_msg(e);
     assert(str_contains(msg, str_from("bad;pkg")), "has name");
     assert(str_contains(msg, str_from("invalid character")), "has reason");
@@ -551,39 +551,39 @@ fn test_manifest_serde_roundtrip() {
 
 fn test_error_kind_serde_roundtrip() {
     test_group("error_kind_serde");
-    var e1 = nous_error_new(ERR_COMMAND_EXEC, str_from("apt-cache"), str_from("not found"));
+    var e1 = nous_error_new(NOUS_ERR_COMMAND_EXEC, str_from("apt-cache"), str_from("not found"));
     var j1 = error_kind_to_json(e1);
     var b1 = error_kind_from_json(j1);
-    assert_eq(ne_kind(b1), ERR_COMMAND_EXEC, "kind roundtrip");
+    assert_eq(ne_kind(b1), NOUS_ERR_COMMAND_EXEC, "kind roundtrip");
     assert(str_eq(ne_msg(b1), str_from("apt-cache")), "msg roundtrip");
 
-    var e2 = nous_error_new(ERR_DEPENDENCY_CYCLE, str_from("A -> B -> A"), 0);
+    var e2 = nous_error_new(NOUS_ERR_DEPENDENCY_CYCLE, str_from("A -> B -> A"), 0);
     var j2 = error_kind_to_json(e2);
     assert(str_contains(j2, str_from("A -> B -> A")), "cycle in json");
 
-    var e3 = nous_error_new(ERR_VERSION_CONFLICT, str_from("foo"), str_from("conflict"));
+    var e3 = nous_error_new(NOUS_ERR_VERSION_CONFLICT, str_from("foo"), str_from("conflict"));
     var j3 = error_kind_to_json(e3);
     var b3 = error_kind_from_json(j3);
-    assert_eq(ne_kind(b3), ERR_VERSION_CONFLICT, "conflict kind");
+    assert_eq(ne_kind(b3), NOUS_ERR_VERSION_CONFLICT, "conflict kind");
     assert(str_eq(ne_msg(b3), str_from("foo")), "conflict msg");
 }
 
 fn test_error_display_all_variants() {
     test_group("error_display_all");
-    var e1 = nous_error_new(ERR_COMMAND_EXEC, str_from("apt-cache search"), str_from("not found"));
+    var e1 = nous_error_new(NOUS_ERR_COMMAND_EXEC, str_from("apt-cache search"), str_from("not found"));
     var m1 = nous_error_msg(e1);
     assert(str_contains(m1, str_from("apt-cache search")), "cmd exec msg");
     assert(str_contains(m1, str_from("not found")), "cmd exec detail");
 
-    var e2 = nous_error_new(ERR_REGISTRY_IO, str_from("/tmp/test"), str_from("permission denied"));
+    var e2 = nous_error_new(NOUS_ERR_REGISTRY_IO, str_from("/tmp/test"), str_from("permission denied"));
     var m2 = nous_error_msg(e2);
     assert(str_contains(m2, str_from("/tmp/test")), "registry io path");
 
-    var e3 = nous_error_new(ERR_INVALID_MANIFEST, str_from("/tmp/manifest.json"), str_from("invalid json"));
+    var e3 = nous_error_new(NOUS_ERR_INVALID_MANIFEST, str_from("/tmp/manifest.json"), str_from("invalid json"));
     var m3 = nous_error_msg(e3);
     assert(str_contains(m3, str_from("manifest")), "manifest keyword");
 
-    var e4 = nous_error_new(ERR_INVALID_VERSION_CONSTRAINT, str_from(">>1.0"), str_from("unknown operator >>"));
+    var e4 = nous_error_new(NOUS_ERR_INVALID_VERSION_CONSTRAINT, str_from(">>1.0"), str_from("unknown operator >>"));
     var m4 = nous_error_msg(e4);
     assert(str_contains(m4, str_from(">>1.0")), "constraint msg");
     assert(str_contains(m4, str_from("unknown operator")), "constraint detail");
@@ -910,7 +910,7 @@ fn test_resolve_all_cycle_error() {
     var res_t, res = resolver_resolve_all(r, names);
     assert(is_err_result(res_t), "cycle detected");
     var err = res;
-    assert_eq(ne_kind(err), ERR_DEPENDENCY_CYCLE, "cycle error kind");
+    assert_eq(ne_kind(err), NOUS_ERR_DEPENDENCY_CYCLE, "cycle error kind");
     rm_rf(d); rm_rf(c);
 }
 
@@ -1131,13 +1131,85 @@ fn test_constraints_compatible() {
 
 fn test_nous_error_to_kind() {
     test_group("error_to_kind");
-    var e = nous_error_new(ERR_COMMAND_EXEC,
+    var e = nous_error_new(NOUS_ERR_COMMAND_EXEC,
       str_from("apt-cache"), str_from("not found"));
     var k = nous_error_to_kind(e);
-    assert_eq(ne_kind(k), ERR_COMMAND_EXEC, "kind preserved");
+    assert_eq(ne_kind(k), NOUS_ERR_COMMAND_EXEC, "kind preserved");
     assert(str_eq(ne_msg(k), str_from("apt-cache")), "msg preserved");
     assert(str_eq(ne_detail(k), str_from("not found")),
       "detail preserved");
+}
+
+# 1.5.1 renamed ErrKind's bare ERR_* members to NOUS_ERR_*. The values are the
+# JSON wire format (`{"kind":N}`), so the rename must leave every one unchanged.
+fn test_err_kind_values() {
+    test_group("err_kind_values");
+    assert_eq(NOUS_ERR_COMMAND_EXEC, 0, "COMMAND_EXEC = 0");
+    assert_eq(NOUS_ERR_REGISTRY_IO, 1, "REGISTRY_IO = 1");
+    assert_eq(NOUS_ERR_INVALID_MANIFEST, 2, "INVALID_MANIFEST = 2");
+    assert_eq(NOUS_ERR_INVALID_PACKAGE_NAME, 3, "INVALID_PACKAGE_NAME = 3");
+    assert_eq(NOUS_ERR_INVALID_VERSION_CONSTRAINT, 4,
+      "INVALID_VERSION_CONSTRAINT = 4");
+    assert_eq(NOUS_ERR_DEPENDENCY_CYCLE, 5, "DEPENDENCY_CYCLE = 5");
+    assert_eq(NOUS_ERR_VERSION_CONFLICT, 6, "VERSION_CONFLICT = 6");
+}
+
+# A `head -c N /dev/zero` argv: exactly N bytes of output, no shell, no PATH.
+fn head_args(nbytes): i64 {
+    var a = vec_new();
+    vec_push(a, "/usr/bin/head");
+    vec_push(a, "-c");
+    vec_push(a, to_cstr(str_from_int(nbytes)));
+    vec_push(a, "/dev/zero");
+    return a;
+}
+
+# 1.5.1 capture fix. Before it, the 200,000-byte capture came back as 65,536
+# bytes, and the first cmd_run result read "WORLD\n" once the second ran.
+fn test_capture_complete() {
+    test_group("capture_complete");
+    # Aliasing: each result is an owned copy, not a view of a shared buffer.
+    var a = cmd_run(str_from("echo hello"));
+    var b = cmd_run(str_from("echo WORLD"));
+    assert(str_eq(a, str_from("hello\n")), "first capture survives the second");
+    assert(str_eq(b, str_from("WORLD\n")), "second capture intact");
+    # Truncation: more than the old 64 KiB, at the default limits.
+    var big_t, big = nous_cmd_capture(str_from("/usr/bin/head -c 200000 /dev/zero"));
+    assert_eq(is_ok(big_t), 1, "200000-byte capture is Ok");
+    assert_eq(str_len(big), 200000, "all 200000 bytes captured");
+    # Growth within explicit limits: 1024 -> 2048 -> 4096.
+    var g_t, g = nous_capture_n(head_args(3000), 1024, 4096);
+    assert_eq(is_ok(g_t), 1, "3000 bytes fit under a 4096 max");
+    assert_eq(str_len(g), 3000, "grown capture is complete");
+    var x_t, x = nous_capture_n(head_args(4096), 1024, 4096);
+    assert_eq(is_ok(x_t), 1, "exactly max bytes is complete, not overflow");
+    assert_eq(str_len(x), 4096, "exactly-max capture length");
+    # Overflow: an Err naming the command and the limit, never a partial Ok.
+    var o_t, o = nous_capture_n(head_args(5000), 1024, 4096);
+    assert_eq(is_err_result(o_t), 1, "5000 bytes over a 4096 max is Err");
+    assert_eq(ne_kind(o), NOUS_ERR_COMMAND_EXEC, "overflow kind");
+    assert(str_contains(ne_msg(o), str_from("/usr/bin/head -c 5000")),
+      "overflow names the command");
+    assert(str_contains(ne_detail(o), str_from("4096-byte capture limit")),
+      "overflow names the limit");
+    # No output stays Ok(0), the pre-1.5.1 contract.
+    var e_t, e = nous_cmd_capture(str_from("true"));
+    assert_eq(is_ok(e_t), 1, "no output is Ok");
+    assert_eq(e, 0, "no output is Ok(0)");
+}
+
+# A run cut short by the stdlib's idle deadline is an Err, not short output.
+fn test_capture_deadline() {
+    test_group("capture_deadline");
+    var prev = proc_set_timeout_ms(200);
+    var a = vec_new();
+    vec_push(a, "/usr/bin/sleep");
+    vec_push(a, "5");
+    var d_t, d = nous_capture(a);
+    proc_set_timeout_ms(prev);
+    assert_eq(is_err_result(d_t), 1, "deadline cut is Err");
+    assert(str_contains(ne_detail(d), str_from("idle deadline")),
+      "deadline Err says why");
 }
 
 fn test_semver_eq() {
@@ -1402,6 +1474,9 @@ fn main() {
     test_registry_install_stub();
     test_constraints_compatible();
     test_nous_error_to_kind();
+    test_err_kind_values();
+    test_capture_complete();
+    test_capture_deadline();
     test_semver_eq();
     test_caret_zero();
     test_tilde_zero();

@@ -41,6 +41,8 @@ fn resolver_check_updates(r, installed, avail_fn): i64 {
     var out = vec_new();
     # System/apt leg — sysdb knows installed AND available globally.
     var sres_t, sres = sysdb_updates(rs_sys(r));
+    # 1.5.1: a system-leg Err is surfaced, not skipped (see resolver_search).
+    if (is_err_result(sres_t) == 1) { return Err(sres); }
     if (is_ok(sres_t) == 1) {
         var k = 0;
         while (k < vec_len(sres)) {
