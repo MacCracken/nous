@@ -26,6 +26,8 @@ enum ErrKind {
     NOUS_ERR_INVALID_VERSION_CONSTRAINT = 4;
     NOUS_ERR_DEPENDENCY_CYCLE = 5;
     NOUS_ERR_VERSION_CONFLICT = 6;
+    NOUS_ERR_NOT_FOUND = 7;            # 1.5.3: a name no source has
+    NOUS_ERR_AMBIGUOUS_SOURCE = 8;     # 1.5.3: SearchAll found it in 2+ sources
 }
 
 # ===================================================================
@@ -48,11 +50,11 @@ enum ErrKind {
 # SemVer:       sv_major(0) sv_minor(8) sv_patch(16)         = 24 bytes
 # Constraint:   ct_op(0) ct_ver(8)                           = 16 bytes
 # DepGraph:     dg_nodes(0) dg_edges(8) dg_versions(16)      = 24 bytes
-# ResPlan:      pl_packages(0) pl_order(8)                    = 16 bytes
+# ResPlan:      pl_packages(0) pl_order(8) pl_unresolved(16)   = 24 bytes
 # Recipe:       rc_name(0) rc_ver(8) rc_desc(16) rc_license(24) rc_arch(32)
 #               rc_groups(40) rc_release(48) rc_url(56) rc_sha256(64)
 #               rc_patches(72) rc_rt_deps(80) rc_bd_deps(88)  = 96 bytes
-# RecipeDb:     rdb_path(0) rdb_recipes(8) rdb_order(16)     = 24 bytes
+# RecipeDb:     rdb_path(0) rdb_recipes(8) rdb_order(16) rdb_duplicates(24) = 32 bytes
 
 # ===================================================================
 # Constructors
@@ -112,11 +114,16 @@ fn avail_update_new(name, src, inst_ver, avail_ver, changelog): i64 {
     return p;
 }
 
-fn search_result_new(results, sources, total): i64 {
+fn nous_search_result_new(results, sources, total): i64 {
     var p = alloc(24);
     store64(p, results); store64(p + 8, sources); store64(p + 16, total);
     return p;
 }
+
+# Deprecated (1.5.3), removed in 2.0.0: daimon's `search_result_new` takes FIVE
+# arguments, so bundling both is a hard error (an arity-disagreeing duplicate).
+#deprecated("use nous_search_result_new; search_result_new collides with daimon's 5-arg one (removed in 2.0.0)")
+fn search_result_new(results, sources, total): i64 { return nous_search_result_new(results, sources, total); }
 
 fn sysdb_make(apt_available): i64 {
     var p = alloc(8);

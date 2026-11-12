@@ -5,6 +5,292 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.3] - 2026-11-12
+
+**The P(-1) sweep: audit, hardening, security, correctness and optimization, with
+repairs.**
+
+- **Method:** two independent code reviews (security and input hardening;
+  correctness and determinism), external spec research, and my own review.
+  Findings were proven by running probes wherever possible. apt behaviour was
+  checked on Debian 12 in docker.
+- **Result:** 2 P0s and 12 P1 / high findings repaired, plus P2/P3 and performance work.
+  Assertions went from 314 to **493**, and 5 fuzz harnesses now run under
+  `--poison=ab`; before, there was one fixed-input smoke file.
+- **Gates:** clean (fmt / lint, with no `note` lines / vet / deny / doc), and the
+  build is warning-free. No toolchain change.
+
+The full report, with every finding, its proof and its fix, is
+[docs/audit/2026-11-12-1.5.3-p-1.md](docs/audit/2026-11-12-1.5.3-p-1.md). The
+policy questions were the maintainer's decisions D1–D13, recorded there.
+
+### ⚠ Behaviour changes — read before moving ark to 1.5.3
+
+No API is removed and every error value is unchanged; two are added. The scope
+decision put everything in this patch release, so these changes ship here.
+
+| Change | Before | Now |
+|---|---|---|
+| Missing dependency / root (D4) | silently dropped: `a -> ghost` gave Ok [a], a missing root Ok [] | `Err(NOUS_ERR_NOT_FOUND)` (new kind **7**), naming who needed it, with a typo suggestion. An apt dependency apt cannot show (virtual, alternative) is listed in `nous_pl_unresolved(plan)` instead |
+| Version constraints (D1) | only the first constraint per dependency counted, and the chosen version was never checked | all are intersected as ranges and the chosen version must satisfy them, so more (correct) `NOUS_ERR_VERSION_CONFLICT` |
+| Unsupported constraint syntax (D1) | `!=1.0`, `>=1.0, <2.0`, `^1 \|\| ^2`, `latest` parsed silently into something else | `Err(NOUS_ERR_INVALID_VERSION_CONSTRAINT)` (now actually raised) |
+| SearchAll (D5) | identical to MarketplaceFirst | asks every source; a name in two is `Err(NOUS_ERR_AMBIGUOUS_SOURCE)` (new kind **8**) |
+| apt dependencies (D5) | looked up per strategy, so a marketplace manifest named `libssl3` was spliced into curl's closure | an apt package's deps resolve from apt only |
+| Dependency cycles (D3) | every cycle rejected, so any apt closure reaching libc6 ↔ libgcc-s1 failed | cycles of apt packages only are accepted (Debian Policy §7.2; [ADR 0005](docs/adr/0005-system-only-dependency-cycles.md)); any cycle touching a non-apt package is still an error |
+| `trusted` (D9) | hard-coded 1 for marketplace packages | 0 until sigil verifies signatures (roadmap 1.9.x); apt stays 1 |
+| `pl_order` | reverse install order (docs said install order; ark prints it as "deps-first") | install order, matching `pl_packages` |
+| Install order | Kahn's order reversed, and hash-seeded, so different on every run | Tarjan emission order, deterministic. It is a valid order but can differ from 1.5.2 |
+| Flutter apps | labelled `SOURCE_MARKETPLACE` under the default, SystemFirst and SearchAll strategies | `SOURCE_FLUTTER_APP` |
+| `sysdb_updates` | `apt list --upgradable` | `apt-get -s dist-upgrade` `Inst` lines. Held-back packages are not listed |
+| Recipe DB | 342 of zugot's 563 files loaded | all 535 unique recipes; duplicates use a fixed precedence and are reported (D6) |
+| JSON output | strings raw (invalid JSON for `"`, `\`, newlines) | escaped; SearchResult adds `"sources"` |
+| Bundle needs | `bayan_toml_*` | `bayan_toml_*` and `bayan_json_*`. ark's full stdlib `bayan` already provides both |
+
+### Fixed — P0
+
+- **Resolution was not deterministic** (both reviews; proven). `map_keys` walks
+  hash-slot order, and the stdlib seeds the hash from getrandom per process
+  (`lib/hashseed.cyr`, since cyrius 6.5.39). That made several things change
+  from run to run on identical inputs: install order, dependency order, the
+  reported cycle, whether a conflict was caught, and suggestion ties. **Six runs
+  gave six install orders; now they give one.** All six `map_keys` sites go
+  through `_nous_sorted_keys` (byte order). Pinned by `determinism_hash_order`,
+  which asserts the exact order; the old code matched it about 1 run in 120.
+- **Conflict detection was unsound** (both reviews and research; proven).
+  - Only the first constraint per dependency was kept, so `*`, `=1.0.0` and
+    `=2.0.0` passed 15 times in 40.
+  - The version chosen was never checked: `>=2.0.0` resolved to 1.0.0.
+  - `constraints_compatible` sampled about five versions. So `>1.2.0` with
+    `<1.3.0` "conflicted", and swapping the arguments changed the answer.
+
+  Now there are real version ranges, every constraint is intersected, and the
+  chosen version is checked (see Fixed — versions).
+
+### Fixed — security
+
+- **Option injection into apt** (P1; proven on real apt). `validate_package_name`
+  accepted a leading `-`, so `apt-cache show -c/tmp/evil.conf` loaded an
+  attacker's file as apt config: `apt-config` showed the forged
+  `Dir::State::lists`. An installed marketplace package could ship such a file
+  and name it as a dependency.
+  - A leading `-` is now rejected.
+  - Only Debian Policy §5.6.1 names reach an apt argv at all.
+- **Symlink fan-out denial of service** (P1; proven). `dir_size_recursive`
+  followed links with no limit. A package directory with `a -> .` and `b -> .`
+  meant 2^40 paths, at 500 MB and climbing after 10 s. Now links aren't followed
+  (`lstat`) and depth is capped at 64. The same input takes **2 ms**.
+- **SIGSEGV from a manifest constraint** (P1; proven). A 20-digit version
+  component made `constraint_parse` store a null version, and `semver_cmp` then
+  dereferenced it. Now it's `NOUS_ERR_INVALID_VERSION_CONSTRAINT`, and the matcher
+  refuses a null version.
+- **Files over a fixed buffer were half-parsed** (P1; proven). Manifests were
+  read into 8 KiB, recipes and `build-order.txt` into 64 KiB. A long
+  description before the dependencies silently lost every one; the 2026-04-16
+  audit's "truncation means a parse failure" was wrong.
+  - Files are now read whole, sized by `stat`, capped at `NOUS_FILE_MAX`
+    (1 MiB), and refused rather than half-read.
+  - This also saves memory: 563 recipes used to take 64 KiB each.
+- **JSON injection** (P2). Strings went out raw, so a description
+  `x","trusted":true,"z":"` injected keys. Now the stdlib escaper
+  (`str_builder_add_json_str`) handles every string.
+- **Manifest structure confusion** (P2, decision D7). The field scanners took the
+  first `"name"` anywhere: `{"author":{"name":"mallory"},"name":"real"}` read as
+  mallory, and a string value `"dependencies"` hijacked the deps. Manifests are
+  now parsed with bayan's JSON parser (`dist/bayan-json.cyr`).
+- **Dependency confusion inside transitive resolution** (decision D5): see
+  Behaviour changes.
+- **Hard-coded trust** (decision D9): see Behaviour changes.
+- **P3s:**
+  - `which_path` accepted relative PATH entries and directories; now it takes
+    absolute entries and executable regular files only.
+  - `apt-cache search` treated the query as a regex: `g++` matched 22,782
+    packages, and now the escaped query matches 114.
+  - `Installed-Size × 1024` could overflow; it now saturates.
+  - `semver_parse`'s overflow guard was off by one: `9223372036854775808` wrapped
+    negative.
+  - `json_extract_str` read one byte past its input.
+
+### Fixed — versions (decisions D1 + D2)
+
+- **Constraints are version ranges**, desugared per npm/Cargo. The full table is
+  in [docs/sources.md](docs/sources.md).
+  - Partials used to give the wrong range. `^0` excluded 0.5.0, and now means
+    `<1.0.0`. `~1` excluded 1.5.0, and now means `<2.0.0`. `>1.2` admitted
+    1.2.1, and now means `>=1.3.0`.
+  - A leading `v` is accepted, so `v2.0.0` vs `1.0.0` no longer misses the
+    update or offers a downgrade.
+  - Unsupported syntax is an error that matches nothing. Pre-release and
+    compound ranges are roadmap 1.7.x.
+- **Debian version comparison** (`nous_deb_version_cmp`): deb-version(7) /
+  dpkg `verrevcmp`, used for apt and community versions.
+  - Before, nous missed revision-only security updates (`7.81.0-1ubuntu1.16`
+    vs `.15`), `~` pre-releases, and letter suffixes (`0.9.8zh`).
+  - It also offered an epoch downgrade (`2.0-1` over `1:1.0-1`).
+  - `resolver_check_updates` compares per source with `nous_update_is_newer_src`,
+    because ark sends zugot versions through it.
+
+### Fixed — correctness
+
+- **Debian dependency cycles** (D3): accepted when the cycle is apt-only. curl's
+  32-package closure now resolves on Debian 12 (verified). Cycle detection is an
+  **iterative Tarjan** pass. The recursive DFS crashed on 50k+ chains, and a
+  100k chain now takes 0.5 s. The self-loop path is correct: `aa -> aa`, not
+  `xx -> aa -> aa`.
+- **apt / dpkg parsing** (verified on Debian 12). The parsers are pure
+  `_sysdb_parse_*` functions now, unit-tested and fuzzed without apt.
+  - `apt-cache show` printed every version (2 for libc6), and nous merged them,
+    keeping the oldest. Now it uses `--no-all-versions` and the first stanza.
+  - `Pre-Depends` is parsed.
+  - `python3:any` failed validation and aborted the resolve; the qualifier is
+    stripped.
+  - A held package read as not installed, and a removed-with-config one as
+    installed. Now dpkg's own `${db:Status-Status}` decides.
+  - `Description-<lang>` is read.
+- **The recipe DB lost 221 of 563 zugot recipes.**
+  - It scanned `desktop`, but the directory is `desktops` (196 recipes), and it
+    scanned a `bazaar` that does not exist.
+  - A multi-line `runtime = [` gave 0 deps: firefox now has 30.
+  - A `# "x"` comment added a dep.
+
+  Every category directory is now scanned in byte order. Duplicate names
+  (zugot has 28) use a fixed precedence (base first, then sorted) and are
+  listed through `nous_recipe_db_duplicates` (D6).
+- **JSON roundtrip** (the CLAUDE.md rule). `from_json` dropped size, deps, trust
+  and dates, and never decoded escapes. AvailUpdate, SearchResult, AgentInfo and
+  Manifest had no `from_json` at all. Every type now roundtrips every field,
+  including hostile strings.
+- **Flutter labelling and `pl_order`:** see Behaviour changes.
+- **The test suite leaked temp directories.** `rm_rf` passed a cstr to
+  `is_dir(Str)`, so about 30 `/tmp/nous-test-*` were left per run. Now it uses
+  `lstat`, never follows links, and leaves 0.
+- **Found by the new fuzzer:** a dependency item starting with `:` kept the
+  colon in its name (`tests/fuzz_apt.fcyr`, case 2096).
+
+### Changed — performance
+
+Measured on the same machine, median of 3 alternating runs against 1.5.2:
+
+| Bench | 1.5.2 | 1.5.3 | Δ |
+|---|---|---|---|
+| `detect_source` | 592 ns | 223 ns | **−62.3%** |
+| `validate_name` | 532 ns | 547 ns | +2.8% |
+| `resolve_mkt_hit` | 2.23 µs | 2.27 µs | +1.7% |
+| `resolve_mkt_miss` | 4.54 µs | 2.44 µs | **−46.3%** |
+| `search_100` | 85.79 µs | 91.35 µs | +6.5% |
+| `list_installed_100` | 12.62 µs | 11.77 µs | −6.8% |
+| `strat_mkt_first` | 2.24 µs | 2.28 µs | +1.8% |
+| `strat_sys_first` | 2.28 µs | 2.34 µs | +2.5% |
+| `strat_only_mkt` | 2.30 µs | 2.27 µs | −1.3% |
+| `strat_search_all` | 2.48 µs | 2.30 µs | −7.2% |
+| `graph_resolve` | 8.98 µs | 7.87 µs | −12.4% |
+| `recipe_parse` | 18.12 µs | 18.38 µs | +1.4% |
+| `levenshtein` | 2.27 µs | 2.28 µs | +0.4% |
+| `constraint` | 713 ns | 1.06 µs | +49.2% |
+| `cycle_detect_20` | 23.32 µs | 24.94 µs | +6.9% |
+| `topo_sort_20` | 34.10 µs | 42.34 µs | +24.2% |
+| `recipe_db_load` | 7.091 ms | 11.245 ms | +58.6% |
+| `serde_roundtrip` | 2.78 µs | 6.92 µs | +148.6% |
+| `capture_200k` | 1.986 ms | 2.831 ms | +42.5% |
+| `sort_installed_2000` (new) | — | 808 µs | — |
+| `deb_version_cmp` (new) | — | 665 ns | — |
+| `constraint_range` (new) | — | 547 ns | — |
+| `manifest_parse` (new) | — | 5.35 µs | — |
+
+- **Sorting is a stable natural merge sort**, replacing three O(n²) insertion
+  sorts (TAOCP §5.2.4). The order is element-for-element identical, ties
+  included. On 2,000 packages:
+
+  | Input shape | 1.5.2 | 1.5.3 |
+  |---|---|---|
+  | Random order | 32 ms | 0.74 ms |
+  | Already sorted (dpkg's output) | 146 µs | 127 µs |
+  | Two sorted runs (`resolver_list`) | 445 µs | 191 µs |
+
+  A plain merge sort was tried first and **lost** on the sorted shapes
+  (149 → 532 µs), which is why it is the natural variant.
+- **apt lookups are batched** per breadth-first wave. apt spends ~430 ms per
+  call loading its cache, and 8 names cost the same as 1. curl's closure went
+  from **14.7 s to 2.9 s**, with an identical 32-package install order (diffed).
+- **Smaller wins:**
+  - The queues use a head index instead of `vec_remove(…, 0)`: a 2,000-leaf
+    star graph goes from 8.7 ms to 4.7 ms.
+  - `detect_source` no longer allocates.
+  - Recipe arrays are a zero-copy view when they hold no comment.
+  - Constraint ranges are cached.
+- **⚖️ The price of correctness,** each one measured and attributed:
+  - `serde_roundtrip`, about +4 µs: real escaping plus a real parser.
+  - `constraint`, about +0.35 µs: strict parsing.
+  - `capture_200k`, about +0.85 ms per capture: the 60 s idle deadline (D12)
+    makes the stdlib wait in 1 ms polling slices. That's against roughly 430 ms
+    of apt startup per call.
+  - `topo_sort_20`, about +8 µs: sorted keys for determinism.
+  - `recipe_db_load`: 535 recipes instead of 342, about 10% faster per recipe.
+- **Release binary:** 36,848 → 40,936 B (`CYRIUS_DCE=1`).
+
+### Added
+
+- **API:**
+  - `nous_pl_unresolved` / `nous_unres_name` / `nous_unres_requirer`
+  - `nous_recipe_db_duplicates` / `nous_rdup_name` / `_kept` / `_ignored`
+  - `nous_constraint_error`, `ct_prec`
+  - `nous_deb_version_cmp`, `nous_update_is_newer_src`
+  - `sysdb_info_many`
+  - `update_from_json`, `search_result_from_json`, `agent_info_from_json`,
+    `manifest_from_json`
+  - `nous_registry_get` / `nous_registry_list`, `nous_search_result_new`,
+    `nous_recipe_parse_file`
+- **Error kinds:** `NOUS_ERR_NOT_FOUND` (7) and `NOUS_ERR_AMBIGUOUS_SOURCE` (8).
+- **Tunables:** `NOUS_CAPTURE_IDLE_MS` (60 s), `NOUS_FILE_MAX` (1 MiB),
+  `NOUS_DIR_DEPTH_MAX` (64), `NOUS_SYSDB_BATCH` (256).
+- **Fuzzing (D8):** sandhi's `fuzz/fz_driver.cyr` is vendored verbatim as
+  `tests/fz_driver.cyr`. There are 4 seeded-mutation targets, each with
+  invariants:
+  - `fuzz_cyml`: the recipe parser.
+  - `fuzz_json`: every `*_from_json`, plus a property that random hostile
+    strings roundtrip exactly.
+  - `fuzz_version`: `constraints_compatible` is symmetric, and Debian
+    comparison is antisymmetric with cmp(a, a) = 0.
+  - `fuzz_apt`: every extracted dependency name is clean.
+
+  CI runs `cyrius fuzz --poison=ab tests/`, and all of them pass.
+- **Dependencies:** bayan's `dist/bayan-json.cyr` profile (D7, same tag), and the
+  stdlib `mmap` leaf (for the fuzz driver; DCE drops it from the binary).
+- **Tests:** 314 → 493 assertions. The apt-only ones were run on Debian 12 in
+  docker, and their regression tests were mutation-checked.
+
+### Deprecated (removed in 2.0.0)
+
+All of these are latent collisions; none is live in ark. Every one warns at the
+call site (`#deprecated`), and nous no longer calls any of them.
+
+| Deprecated | Use | Collides with |
+|---|---|---|
+| `to_cstr` | stdlib `str_cstr` | hadara, hoosh, vidya |
+| `join_path` | stdlib `path_join` | commandress |
+| `registry_get` / `registry_list` | `nous_registry_get` / `nous_registry_list` | bote, hoosh, szal, thoth |
+| `search_result_new` | `nous_search_result_new` | daimon, with a different arity (a hard error if both are bundled) |
+| `recipe_parse_file` | `nous_recipe_parse_file` | takumi |
+
+### Docs
+
+- New: the [audit report](docs/audit/2026-11-12-1.5.3-p-1.md) and
+  [ADR 0005](docs/adr/0005-system-only-dependency-cycles.md).
+- `CLAUDE.md`: the cycle rule now carries the apt-only exception (D3).
+- [`docs/sources.md`](docs/sources.md): citations for Tarjan, Knuth's merge, dpkg
+  `verrevcmp`, npm/Cargo desugaring and Debian Policy, plus known deviations.
+- Updated: `docs/api.md`, `gaps.md`, `roadmap.md` and the architecture overview.
+
+### Not repaired here (on the roadmap)
+
+- Version selection with backtracking (PubGrub-style).
+- SemVer pre-release ordering and compound ranges.
+- Lockfile integrity.
+- The system leg via apt's own solver (`apt-get -s install`).
+- Rollback and freeze protection.
+- An upstream word-wise `memcpy` (D11).
+- `: Result` annotations (D13, with the 1.6.0 docs).
+- `struct stat` portability.
+
 ## [1.5.2] - 2026-11-12
 
 **Quick fixes batched from the 1.5.0 / 1.5.1 audits and the doc backlog.** No toolchain change

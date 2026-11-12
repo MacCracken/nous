@@ -16,6 +16,18 @@ include "src/graph.cyr"
 include "src/recipe.cyr"
 include "src/updates.cyr"
 
+# Join up to four cstr pieces into one Str (keeps long fixtures under lint's
+# 120-character line limit).
+fn j4(a, b, c, d): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    str_builder_add_cstr(sb, c);
+    str_builder_add_cstr(sb, d);
+    return str_builder_build(sb);
+}
+fn j4c(a, b, c, d): i64 { return _nous_cstr(j4(a, b, c, d)); }
+
 var tc = 0;
 
 fn mkdir_test() {
@@ -31,11 +43,11 @@ fn mkdir_test() {
 }
 
 fn write_manifest(dir, name, runtime) {
-    var installed = join_path(dir, str_from("installed"));
+    var installed = path_join(dir, str_from("installed"));
     mkdir_str(installed);
-    var pd = join_path(installed, str_from(name));
+    var pd = path_join(installed, str_from(name));
     mkdir_str(pd);
-    var mp = join_path(pd, str_from("manifest.json"));
+    var mp = path_join(pd, str_from("manifest.json"));
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"agent\":{\"name\":\"");
     str_builder_add_cstr(sb, name);
@@ -45,15 +57,15 @@ fn write_manifest(dir, name, runtime) {
     str_builder_add_cstr(sb, runtime);
     str_builder_add_cstr(sb, "\"}");
     var json = str_builder_build(sb);
-    file_write_all(to_cstr(mp), to_cstr(json), str_len(json));
+    file_write_all(_nous_cstr(mp), _nous_cstr(json), str_len(json));
 }
 
 fn write_manifest_deps(dir, name, runtime, deps_json) {
-    var installed = join_path(dir, str_from("installed"));
+    var installed = path_join(dir, str_from("installed"));
     mkdir_str(installed);
-    var pd = join_path(installed, str_from(name));
+    var pd = path_join(installed, str_from(name));
     mkdir_str(pd);
-    var mp = join_path(pd, str_from("manifest.json"));
+    var mp = path_join(pd, str_from("manifest.json"));
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"agent\":{\"name\":\"");
     str_builder_add_cstr(sb, name);
@@ -66,20 +78,28 @@ fn write_manifest_deps(dir, name, runtime, deps_json) {
     str_builder_add_cstr(sb, runtime);
     str_builder_add_cstr(sb, "\"}");
     var json = str_builder_build(sb);
-    file_write_all(to_cstr(mp), to_cstr(json), str_len(json));
+    file_write_all(_nous_cstr(mp), _nous_cstr(json), str_len(json));
 }
 
+# Remove `path` (a Str) and everything under it, never following a symlink.
+# 1.5.3: this passed a cstr to stdlib `is_dir(path: Str)` and `dir_list(path:
+# Str)`, so it never saw a directory and removed none. Every run leaked about
+# 30 /tmp/nous-test-* trees (1,889 had piled up). It now lstats: a link or a
+# file is unlinked, and a real directory is emptied and removed.
 fn rm_rf(path) {
-    var cp = to_cstr(path);
-    if (is_dir(cp) == 1) {
-        var e = dir_list(cp);
+    var cp = _nous_cstr(path);
+    var st[144];
+    if (sys_lstat(cp, &st) < 0) { return 0; }
+    if ((load32(&st + 24) & 61440) == 16384) {
+        var e = dir_list(path);
         var i = 0;
         while (i < vec_len(e)) {
-            rm_rf(join_path(path, vec_get(e, i)));
+            rm_rf(path_join(path, vec_get(e, i)));
             i = i + 1;
         }
         sys_rmdir(cp);
     } else { sys_unlink(cp); }
+    return 0;
 }
 
 # ===================================================================
@@ -110,6 +130,10 @@ fn test_validate_name() {
     assert(is_err_result(validate_package_name(str_from(" leading"))), "leading ws");
     assert(is_err_result(validate_package_name(str_from("pkg;rm"))), "semicolon");
     assert(is_err_result(validate_package_name(str_from("pkg|bad"))), "pipe");
+    # 1.5.3: a leading '-' would be an apt OPTION (`-c<file>` loads apt config).
+    assert(is_err_result(validate_package_name(str_from("-c/tmp/evil.conf"))), "leading dash");
+    assert(is_err_result(validate_package_name(str_from("--help"))), "long option");
+    assert(is_ok(validate_package_name(str_from("a-b"))), "inner dash still fine");
 }
 
 fn test_source_display() {
@@ -140,7 +164,7 @@ fn test_registry_new() {
     # Missing dir now yields an ok, empty registry (see registry_new)
     var missing_t, missing = registry_new(str_from("/nonexistent/path"));
     assert(is_ok(missing_t), "missing dir -> ok");
-    assert_eq(vec_len(registry_list(missing)), 0, "missing dir -> empty");
+    assert_eq(vec_len(nous_registry_list(missing)), 0, "missing dir -> empty");
     rm_rf(d);
 }
 
@@ -149,13 +173,13 @@ fn test_registry_scan() {
     var d = mkdir_test();
     write_manifest(d, "test-scanner", "native");
     var reg_t, reg = registry_new(d);
-    var pkg = registry_get(reg, str_from("test-scanner"));
+    var pkg = nous_registry_get(reg, str_from("test-scanner"));
     assert(pkg != 0, "found");
     assert(str_eq(mpkg_name(pkg), str_from("test-scanner")), "name");
     assert(str_eq(mpkg_version(pkg), str_from("1.0.0")), "version");
-    assert(registry_get(reg, str_from("nonexistent")) == 0, "miss");
+    assert(nous_registry_get(reg, str_from("nonexistent")) == 0, "miss");
     assert(vec_len(registry_search(reg, str_from("test"))) >= 1, "search");
-    assert_eq(vec_len(registry_list(reg)), 1, "list");
+    assert_eq(vec_len(nous_registry_list(reg)), 1, "list");
     rm_rf(d);
 }
 
@@ -190,7 +214,8 @@ fn test_resolve_mkt() {
     assert(pkg != 0, "found");
     assert(str_eq(rp_name(pkg), str_from("test-scanner")), "name");
     assert_eq(rp_src(pkg), SOURCE_MARKETPLACE, "src");
-    assert_eq(rp_trust(pkg), 1, "trusted");
+    # 1.5.3 (D9): unverified marketplace packages are not trusted.
+    assert_eq(rp_trust(pkg), 0, "marketplace is untrusted until sigil verifies it");
     rm_rf(d); rm_rf(c);
 }
 
@@ -240,6 +265,10 @@ fn test_resolve_flutter() {
     var pkg_t, pkg = resolver_resolve(r, str_from("flutter-pkg"));
     assert(pkg != 0, "found");
     assert_eq(rp_src(pkg), SOURCE_FLUTTER_APP, "flutter");
+    # 1.5.3: the default strategy labels it a Flutter app too (it said marketplace).
+    resolver_with_strategy(r, strategy_default());
+    var p2_t, p2 = resolver_resolve(r, str_from("flutter-pkg"));
+    assert_eq(rp_src(p2), SOURCE_FLUTTER_APP, "flutter under MarketplaceFirst");
     rm_rf(d); rm_rf(c);
 }
 
@@ -368,6 +397,556 @@ fn test_deterministic_order() {
     rm_rf(d); rm_rf(c);
 }
 
+# A graph node with deps given as a comma-free list of cstrs.
+fn det_node(name, d1, d2): i64 {
+    var deps = vec_new();
+    if (d1 != 0) { vec_push(deps, str_from(d1)); }
+    if (d2 != 0) { vec_push(deps, str_from(d2)); }
+    return resolved_pkg_new(str_from(name), str_from("1.0.0"), SOURCE_MARKETPLACE,
+      str_from(""), 0, deps, 1);
+}
+
+# 1.5.3 (P0-1): output order must not depend on the per-process hash seed. The
+# seed cannot be pinned, so this asserts the exact order the byte-sorted fix
+# gives. Under the old hash order it matched by chance about 1 run in 120
+# (topo), and the cycle reported varied between [p,q,p] and [q,p,q].
+fn test_determinism_hash_order() {
+    test_group("determinism_hash_order");
+    # Five independent nodes plus a root that depends on two of them.
+    var g = dep_graph_new();
+    dep_graph_add(g, det_node("libe", 0, 0));
+    dep_graph_add(g, det_node("liba", 0, 0));
+    dep_graph_add(g, det_node("libd", 0, 0));
+    dep_graph_add(g, det_node("app", "libc", "libb"));
+    dep_graph_add(g, det_node("libb", 0, 0));
+    dep_graph_add(g, det_node("libc", 0, 0));
+    var order = dep_graph_topo_sort(g);
+    var want = vec_new();
+    vec_push(want, "app"); vec_push(want, "liba"); vec_push(want, "libd");
+    vec_push(want, "libe"); vec_push(want, "libc"); vec_push(want, "libb");
+    assert_eq(vec_len(order), 6, "6 nodes ordered");
+    var same = 1;
+    var i = 0;
+    while (i < vec_len(want) && i < vec_len(order)) {
+        if (str_eq(vec_get(order, i), str_from(vec_get(want, i))) == 0) { same = 0; }
+        i = i + 1;
+    }
+    assert_eq(same, 1, "topo order is byte-sorted Kahn order, every run");
+    # Two disjoint 2-cycles: the one reported is the byte-first, always.
+    var g2 = dep_graph_new();
+    dep_graph_add(g2, det_node("q", "p", 0));
+    dep_graph_add(g2, det_node("y", "x", 0));
+    dep_graph_add(g2, det_node("p", "q", 0));
+    dep_graph_add(g2, det_node("x", "y", 0));
+    var cyc = dep_graph_detect_cycle(g2);
+    assert(cyc != 0, "cycle found");
+    assert(str_eq(format_cycle(cyc), str_from("p -> q -> p")), "reported cycle is p -> q -> p");
+    # Marketplace dependency order follows the dep names, not hash slots.
+    var m = map_new();
+    map_set(m, "zeta", str_from("*"));
+    map_set(m, "alpha", str_from("*"));
+    map_set(m, "mid", str_from("*"));
+    var k = _nous_sorted_keys(m);
+    assert(str_eq(str_from(vec_get(k, 0)), str_from("alpha")), "sorted keys: alpha");
+    assert(str_eq(str_from(vec_get(k, 2)), str_from("zeta")), "sorted keys: zeta");
+}
+
+# 1.5.3 (P1): an unparseable constraint version (here a 20-digit component) in
+# a manifest is Err(NOUS_ERR_INVALID_VERSION_CONSTRAINT). It used to reach
+# semver_cmp as a null SemVer and SIGSEGV the resolver, which any marketplace
+# manifest could trigger.
+fn test_constraint_overflow_is_err() {
+    test_group("constraint_overflow_is_err");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest_deps(d, "ca", "native", "\"dd\":\">=1.0.0\"");
+    write_manifest_deps(d, "cb", "native", "\"dd\":\">=99999999999999999999\"");
+    write_manifest(d, "dd", "native");
+    var r_t, r = resolver_new(d, c);
+    resolver_with_strategy(r, strategy_only(SOURCE_MARKETPLACE));
+    var names = vec_new();
+    vec_push(names, str_from("ca"));
+    vec_push(names, str_from("cb"));
+    var p_t, p = resolver_resolve_all(r, names);
+    assert_eq(is_err_result(p_t), 1, "oversized constraint is Err, not a crash");
+    assert_eq(ne_kind(p), NOUS_ERR_INVALID_VERSION_CONSTRAINT, "kind INVALID_VERSION_CONSTRAINT");
+    assert(str_eq(ne_msg(p), str_from("dd")), "names the dependency");
+    var c2 = constraint_parse(str_from("^99999999999999999999"));
+    assert_eq(constraint_matches(c2, semver_new(1, 0, 0)), 0, "matcher refuses a null version");
+    rm_rf(d); rm_rf(c);
+}
+
+# 1.5.3 (P1, security): a package directory holding `a -> .` and `b -> .`
+# made the registry scan walk 2^40 paths (500 MB and climbing after 10 s).
+# Symlinks are no longer followed. The scan must finish and count the manifest
+# only.
+fn test_symlink_fanout_bounded() {
+    test_group("symlink_fanout_bounded");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest(d, "loopy", "native");
+    var pdir = path_join(path_join(d, str_from("installed")), str_from("loopy"));
+    sys_symlink(".", _nous_cstr(path_join(pdir, str_from("a"))));
+    sys_symlink(".", _nous_cstr(path_join(pdir, str_from("b"))));
+    var r_t, r = resolver_new(d, c);
+    assert_eq(is_ok(r_t), 1, "registry scan returns");
+    var pkgs = rg_pkgs(rs_reg(r));
+    assert_eq(vec_len(pkgs), 1, "one package");
+    var msize = file_stat_size(_nous_cstr(path_join(pdir, str_from("manifest.json"))));
+    assert_eq(mp_size(vec_get(pkgs, 0)), msize, "size counts the manifest, not the links");
+    rm_rf(d); rm_rf(c);
+}
+
+# 1.5.3 (P1): files larger than the old fixed buffers (manifest 8 KiB, recipe
+# 64 KiB) were half-parsed, and dependencies after a long description were
+# silently lost. They are now read whole.
+fn test_large_files_read_whole() {
+    test_group("large_files_read_whole");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    # A 20 KB manifest whose "dependencies" come after the description.
+    var installed = path_join(d, str_from("installed"));
+    mkdir_str(installed);
+    var pd = path_join(installed, str_from("bigdesc"));
+    mkdir_str(pd);
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"agent\":{\"name\":\"bigdesc\",\"version\":\"1.0.0\",\"description\":\"");
+    var i = 0;
+    while (i < 20000) { str_builder_add_cstr(sb, "x"); i = i + 1; }
+    str_builder_add_cstr(sb, "\"},\"dependencies\":{\"depdep\":\"*\"},\"runtime\":\"native\"}");
+    var json = str_builder_build(sb);
+    file_write_all(_nous_cstr(path_join(pd, str_from("manifest.json"))), _nous_cstr(json), str_len(json));
+    var r_t, r = resolver_new(d, c);
+    var mp = nous_registry_get(rs_reg(r), str_from("bigdesc"));
+    assert(mp != 0, "big manifest loads");
+    assert_eq(map_has(mpkg_deps(mp), "depdep"), 1, "dependency after a 20 KB description is kept");
+    # An 80 KB recipe whose [depends] comes after a long description.
+    var rb = str_builder_new();
+    str_builder_add_cstr(rb, "[package]\nname = \"bigrecipe\"\nversion = \"1.0\"\ndescription = \"");
+    i = 0;
+    while (i < 80000) { str_builder_add_cstr(rb, "y"); i = i + 1; }
+    str_builder_add_cstr(rb, "\"\n\n[depends]\nruntime = [\"zlib\"]\n");
+    var rtext = str_builder_build(rb);
+    var rpath = path_join(c, str_from("bigrecipe.cyml"));
+    file_write_all(_nous_cstr(rpath), _nous_cstr(rtext), str_len(rtext));
+    var rc = nous_recipe_parse_file(rpath);
+    assert(rc != 0, "big recipe parses");
+    assert_eq(vec_len(rc_rt_deps(rc)), 1, "runtime dep after an 80 KB description is kept");
+    rm_rf(d); rm_rf(c);
+}
+
+# 1.5.3: the apt/dpkg parsers are pure functions now, tested here on fixtures
+# shaped like real Debian 12 output (no apt needed). Each check is a bug the old
+# inline parsing had.
+fn test_sysdb_parsers() {
+    test_group("sysdb_parsers");
+    # apt-cache show with TWO versions: first stanza only, Pre-Depends counted,
+    # :any stripped, the first alternative kept, Description-<lang> read.
+    var show = j4(
+      "Package: multi\nVersion: 3.0-1\nPre-Depends: predep (>= 1)\n",
+      "Depends: libnew (>= 3.0), python3:any, alt-a | alt-b\nDescription-en: newer one\n",
+      "Size: 4096\n\nPackage: multi\nVersion: 2.0-1\nDepends: libold\nDescription: older\n\n",
+      "");
+    var info = _sysdb_parse_info(str_from("multi"), show);
+    assert(info != 0, "info parsed");
+    assert(str_eq(rp_ver(info), str_from("3.0-1")), "candidate (first) version, not the oldest");
+    assert(str_eq(rp_desc(info), str_from("newer one")), "Description-<lang> read");
+    assert_eq(rp_size(info), 4096, "size");
+    var deps = rp_deps(info);
+    assert_eq(vec_len(deps), 4, "predep + libnew + python3 + alt-a, no libold");
+    assert(str_eq(vec_get(deps, 0), str_from("predep")), "Pre-Depends counts");
+    assert(str_eq(vec_get(deps, 2), str_from("python3")), ":any stripped");
+    assert(str_eq(vec_get(deps, 3), str_from("alt-a")), "first alternative");
+    # 1.5.3 (fuzz case 2096): a leading qualifier never leaks into a name.
+    var odd = vec_new();
+    _sysdb_dep_names(str_from(":athon3pyny, (>= 1), ok-dep"), odd);
+    assert_eq(vec_len(odd), 1, "malformed items yield no name");
+    assert(str_eq(vec_get(odd, 0), str_from("ok-dep")), "the clean one survives");
+    assert_eq(_sysdb_parse_info(str_from("virt"), str_from("N: Can't select versions\n")), 0, "a virtual name is 0");
+    # dpkg-query with ${db:Status-Status}: held = installed, config-files = not.
+    var dq = j4(
+      "bash\t5.2.15-2\t7164\tinstalled\nfoo\t1.0\t10\tconfig-files\n",
+      "libc6\t2.36-9\t13001\tinstalled\nlibc6\t2.36-9\t12000\tinstalled\n",
+      "huge\t1\t999999999999999999\tinstalled\n",
+      "");
+    var inst = _sysdb_parse_installed(dq);
+    assert_eq(vec_len(inst), 3, "bash, libc6 once, huge; config-files excluded");
+    assert(str_eq(ip_name(vec_get(inst, 0)), str_from("bash")), "held package is installed");
+    assert_eq(ip_size(vec_get(inst, 1)), 13001 * 1024, "first multi-arch line kept");
+    assert(ip_size(vec_get(inst, 2)) > 0, "Installed-Size saturates, no overflow");
+    # apt-get -s dist-upgrade Inst lines.
+    var sim = j4(
+      "NOTE: This is only a simulation!\n",
+      "Inst perl-base [5.36.0-7+deb12u3] (5.36.0-7+deb12u4 Debian-Security:12/oldstable-security [amd64])\n",
+      "Inst newpkg (1.0 Debian:12/stable [amd64])\n",
+      "Conf perl-base (5.36.0-7+deb12u4 Debian-Security:12/oldstable-security [amd64])\n");
+    var ups = _sysdb_parse_upgrades(sim);
+    assert_eq(vec_len(ups), 1, "one upgrade; the new install and Conf skipped");
+    assert(str_eq(load64(vec_get(ups, 0)), str_from("perl-base")), "upgrade name");
+    assert(str_eq(load64(vec_get(ups, 0) + 16), str_from("5.36.0-7+deb12u3")), "installed version");
+    assert(str_eq(load64(vec_get(ups, 0) + 24), str_from("5.36.0-7+deb12u4")), "available version");
+    # apt-cache search.
+    var sr = _sysdb_parse_search(str_from("coreutils - GNU core utilities\n"));
+    assert_eq(vec_len(sr), 1, "one search hit");
+    assert(str_eq(rp_desc(vec_get(sr, 0)), str_from("GNU core utilities")), "search description");
+    # Only Debian-syntax names ever reach apt.
+    assert_eq(_sysdb_debian_name(str_from("libc6")), 1, "libc6");
+    assert_eq(_sysdb_debian_name(str_from("g++")), 1, "g++");
+    assert_eq(_sysdb_debian_name(str_from("-c/tmp/evil.conf")), 0, "option-shaped name refused");
+    assert_eq(_sysdb_debian_name(str_from("publisher/agent")), 0, "marketplace name is not apt");
+    assert_eq(_sysdb_debian_name(str_from("Foo")), 0, "uppercase is not Debian");
+    assert_eq(_sysdb_debian_name(str_from("a")), 0, "one char is too short");
+    # Several names in one apt-cache call: one stanza each, keyed by Package.
+    var many = _sysdb_parse_info_many(j4(
+        "Package: aa\nVersion: 1.0\nDepends: bb\n\nPackage: bb\nVersion: 2.0\n\n",
+        "",
+        "",
+        ""));
+    assert_eq(map_count(many), 2, "two stanzas, two packages");
+    assert(str_eq(rp_ver(map_get(many, "bb")), str_from("2.0")), "keyed by Package");
+    assert_eq(vec_len(rp_deps(map_get(many, "aa"))), 1, "deps per stanza");
+    # The search query is escaped for apt-cache's regex.
+    assert(str_eq(str_from(_sysdb_regex_escape(str_from("g++"))), str_from("g\\+\\+")), "regex escaped");
+}
+
+fn write_text(path, text): i64 {
+    file_write_all(_nous_cstr(path), text, strlen(text));
+    return 0;
+}
+
+# 1.5.3 (P1): the recipe DB scanned a hard-coded category list ("desktop" for
+# zugot's "desktops", plus a nonexistent "bazaar") and lost 221 of 563 recipes.
+# A multi-line `runtime = [` gave 0 deps, and a trailing `# "x"` comment added
+# one. Duplicate names now have a fixed precedence (base first) and are
+# reported.
+fn test_recipe_db_scan() {
+    test_group("recipe_db_scan");
+    var z = mkdir_test();
+    var base = path_join(z, str_from("base"));
+    var desk = path_join(z, str_from("desktops"));
+    mkdir_str(base);
+    mkdir_str(desk);
+    write_text(path_join(base, str_from("dbus.cyml")),
+      j4c(
+        "[package]\nname = \"dbus\"\nversion = \"1.14\"\n\n[depends]\nruntime = [\n",
+        "    \"glibc\",   # the C library\n    \"expat\",\n]\n",
+        "build = [\"gcc\"]  # \"not-a-dep\"\n",
+        ""));
+    write_text(path_join(desk, str_from("dbus.cyml")),
+      "[package]\nname = \"dbus\"\nversion = \"9.9\"\n\n[depends]\nruntime = [\"evil-payload\"]\n");
+    write_text(path_join(desk, str_from("plasma.cyml")),
+      "[package]\nname = \"plasma\"\nversion = \"6.0\"\n");
+    var db = recipe_db_load(z);
+    assert_eq(recipe_db_count(db), 2, "dbus + plasma (an unlisted category is scanned)");
+    var dbus = recipe_db_get(db, str_from("dbus"));
+    assert(str_eq(rc_ver(dbus), str_from("1.14")), "base wins a duplicate name");
+    var rt = rc_rt_deps(dbus);
+    assert_eq(vec_len(rt), 2, "multi-line array: glibc + expat");
+    assert(str_eq(vec_get(rt, 1), str_from("expat")), "second element of the multi-line array");
+    assert_eq(vec_len(rc_bd_deps(dbus)), 1, "a quoted word in a trailing comment is not a dep");
+    var dups = nous_recipe_db_duplicates(db);
+    assert_eq(vec_len(dups), 1, "one duplicate reported");
+    assert(str_eq(nous_rdup_kept(vec_get(dups, 0)), str_from("base/dbus.cyml")), "kept path");
+    assert(str_eq(nous_rdup_ignored(vec_get(dups, 0)), str_from("desktops/dbus.cyml")), "ignored path");
+    rm_rf(z);
+}
+
+# 1.5.3 (D4): a missing dependency is no longer dropped silently. `a5 -> ghost`
+# gave Ok [a5], and a missing root gave Ok [].
+fn test_missing_deps_are_errors() {
+    test_group("missing_deps_are_errors");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    write_manifest_deps(d, "a5", "native", "\"ghost\":\"*\"");
+    write_manifest(d, "pkg-alpha", "native");
+    var r_t, r = resolver_new(d, c);
+    resolver_with_strategy(r, strategy_only(SOURCE_MARKETPLACE));
+    var n1 = vec_new();
+    vec_push(n1, str_from("a5"));
+    var t1, e1 = resolver_resolve_all(r, n1);
+    assert_eq(is_err_result(t1), 1, "a missing dependency is an Err");
+    assert_eq(ne_kind(e1), NOUS_ERR_NOT_FOUND, "kind NOT_FOUND");
+    assert(str_eq(ne_msg(e1), str_from("ghost")), "names the missing package");
+    assert(str_contains(ne_detail(e1), str_from("required by `a5`")), "names who needed it");
+    var n2 = vec_new();
+    vec_push(n2, str_from("pkg-alphx"));
+    var t2, e2 = resolver_resolve_all(r, n2);
+    assert_eq(is_err_result(t2), 1, "a missing root is an Err");
+    assert(str_contains(ne_detail(e2), str_from("did you mean `pkg-alpha`?")), "with a typo suggestion");
+    assert(str_contains(nous_error_msg(e2), str_from("package `pkg-alphx` not found")), "readable message");
+    var n3 = vec_new();
+    vec_push(n3, str_from("pkg-alpha"));
+    var t3, p3 = resolver_resolve_all(r, n3);
+    assert_eq(is_ok(t3), 1, "a complete closure is still Ok");
+    assert_eq(vec_len(nous_pl_unresolved(p3)), 0, "nothing unresolved");
+    rm_rf(d); rm_rf(c);
+}
+
+fn cyc_node(name, src, d1, d2): i64 {
+    var deps = vec_new();
+    if (d1 != 0) { vec_push(deps, str_from(d1)); }
+    if (d2 != 0) { vec_push(deps, str_from(d2)); }
+    return resolved_pkg_new(str_from(name), str_from("1.0.0"), src, str_from(""), 0, deps, 1);
+}
+
+# 1.5.3 (D3, ADR 0005): Debian allows dependency cycles (Policy §7.2), e.g.
+# libc6 <-> libgcc-s1 on Debian 12. An apt-only cycle is accepted and ordered;
+# any cycle touching a non-apt package is still an error. Cycle detection is
+# iterative now (a 50k+ chain crashed), and a self-loop's path is right.
+fn test_cycle_policy() {
+    test_group("cycle_policy");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var r_t, r = resolver_new(d, c);
+    # The Debian shape: an apt-only 2-cycle under a marketplace package.
+    var g = dep_graph_new();
+    dep_graph_add(g, cyc_node("app", SOURCE_MARKETPLACE, "libc6", 0));
+    dep_graph_add(g, cyc_node("libc6", SOURCE_SYSTEM, "libgcc-s1", 0));
+    dep_graph_add(g, cyc_node("libgcc-s1", SOURCE_SYSTEM, "libc6", 0));
+    var p_t, p = finalize_graph(r, g);
+    assert_eq(is_ok(p_t), 1, "an apt-only cycle is accepted");
+    var o = pl_order(p);
+    assert_eq(vec_len(o), 3, "all three ordered");
+    assert(str_eq(vec_get(o, 0), str_from("libc6")), "cycle members first, byte order");
+    assert(str_eq(vec_get(o, 1), str_from("libgcc-s1")), "then the other member");
+    assert(str_eq(vec_get(o, 2), str_from("app")), "the dependent last");
+    # A marketplace cycle is still rejected, with its path.
+    var g2 = dep_graph_new();
+    dep_graph_add(g2, cyc_node("ma", SOURCE_MARKETPLACE, "mb", 0));
+    dep_graph_add(g2, cyc_node("mb", SOURCE_MARKETPLACE, "ma", 0));
+    var e_t, e = finalize_graph(r, g2);
+    assert_eq(is_err_result(e_t), 1, "a marketplace cycle is an Err");
+    assert_eq(ne_kind(e), NOUS_ERR_DEPENDENCY_CYCLE, "kind DEPENDENCY_CYCLE");
+    assert(str_eq(ne_msg(e), str_from("ma -> mb -> ma")), "with its path");
+    # A cycle mixing apt and marketplace is rejected too.
+    var g3 = dep_graph_new();
+    dep_graph_add(g3, cyc_node("sysx", SOURCE_SYSTEM, "mktx", 0));
+    dep_graph_add(g3, cyc_node("mktx", SOURCE_MARKETPLACE, "sysx", 0));
+    var m_t, m = finalize_graph(r, g3);
+    assert_eq(is_err_result(m_t), 1, "a mixed cycle is an Err");
+    # Self-loop reached through another node: the path is [aa, aa].
+    var g4 = dep_graph_new();
+    dep_graph_add(g4, cyc_node("xx", SOURCE_MARKETPLACE, "aa", 0));
+    dep_graph_add(g4, cyc_node("aa", SOURCE_MARKETPLACE, "aa", 0));
+    assert(str_eq(format_cycle(dep_graph_detect_cycle(g4)), str_from("aa -> aa")), "self-loop path");
+    # A 100,000-node chain: no stack crash (the recursive walk crashed).
+    var g5 = dep_graph_new();
+    var i = 0;
+    while (i < 100000) {
+        var deps = vec_new();
+        if (i + 1 < 100000) { vec_push(deps, str_from_int(i + 1)); }
+        dep_graph_add(g5, resolved_pkg_new(str_from_int(i), j4(
+              "1",
+              "",
+              "",
+              ""), SOURCE_MARKETPLACE, str_from(""), 0, deps, 1));
+        i = i + 1;
+    }
+    assert_eq(dep_graph_detect_cycle(g5), 0, "100k chain: no cycle, no crash");
+    rm_rf(d); rm_rf(c);
+}
+
+fn ct_ok(c, v): i64 { return constraint_matches(constraint_parse(str_from(c)), semver_parse(str_from(v))); }
+fn ct_err(c): i64 { return nous_constraint_error(constraint_parse(str_from(c))) != 0; }
+fn compat(a, b): i64 { return constraints_compatible(constraint_parse(str_from(a)), constraint_parse(str_from(b))); }
+fn deb(a, b): i64 { return nous_deb_version_cmp(str_from(a), str_from(b)); }
+
+# 1.5.3 (D1): constraints are version ranges. Partials follow npm/Cargo,
+# unsupported syntax is an error, and compatibility is a real intersection.
+fn test_version_ranges() {
+    test_group("version_ranges");
+    # Partials (they gave the wrong range before).
+    assert_eq(ct_ok("^0", "0.5.0"), 1, "^0 = <1.0.0");
+    assert_eq(ct_ok("^0", "1.0.0"), 0, "^0 excludes 1.0.0");
+    assert_eq(ct_ok("^0.0", "0.0.5"), 1, "^0.0 = <0.1.0");
+    assert_eq(ct_ok("^0.0", "0.1.0"), 0, "^0.0 excludes 0.1.0");
+    assert_eq(ct_ok("~1", "1.5.0"), 1, "~1 = <2.0.0");
+    assert_eq(ct_ok("~0", "0.3.0"), 1, "~0 = <1.0.0");
+    assert_eq(ct_ok(">1.2", "1.2.1"), 0, ">1.2 = >=1.3.0 (Cargo)");
+    assert_eq(ct_ok(">1.2", "1.3.0"), 1, ">1.2 admits 1.3.0");
+    assert_eq(ct_ok("<=1.2", "1.2.9"), 1, "<=1.2 = <1.3.0");
+    assert_eq(ct_ok("<=1.2", "1.3.0"), 0, "<=1.2 excludes 1.3.0");
+    assert_eq(ct_ok("1.2", "1.2.7"), 1, "bare partial is an X-range");
+    assert_eq(ct_ok("1.x", "1.9.0"), 1, "1.x");
+    assert_eq(ct_ok(">=v1.0", "1.0.0"), 1, "leading v");
+    # Full versions keep their exact meaning.
+    assert_eq(ct_ok("^1.2.3", "1.9.9"), 1, "^1.2.3");
+    assert_eq(ct_ok("^0.2.3", "0.3.0"), 0, "^0.2.3 zero-major");
+    # Unsupported syntax is an error that matches nothing (it parsed silently).
+    assert_eq(ct_err("!=1.0.0"), 1, "!= refused");
+    assert_eq(ct_err("==1.0.0"), 1, "== refused");
+    assert_eq(ct_err("~>1.2"), 1, "~> refused");
+    assert_eq(ct_err(">=1.0, <2.0"), 1, "comma compound refused");
+    assert_eq(ct_err("^1.0 || ^2.0"), 1, "|| refused");
+    assert_eq(ct_err("latest"), 1, "latest refused");
+    assert_eq(ct_err("1.0.0-beta"), 1, "pre-release constraint refused (1.7.x)");
+    assert_eq(ct_ok(">=1.0, <2.0", "5.0.0"), 0, "a refused constraint matches nothing");
+    assert_eq(ct_err(">=1.2.3"), 0, "a plain comparator is fine");
+    # Compatibility is a true intersection, independent of argument order.
+    assert_eq(compat(">1.0.0", "<1.1.0"), 1, ">1.0.0 with <1.1.0");
+    assert_eq(compat("<1.1.0", ">1.0.0"), 1, "same, swapped");
+    assert_eq(compat(">1.2.0", "<1.3.0"), 1, "1.2.1 satisfies both");
+    assert_eq(compat(">=2.0.0", "<2.0.0"), 0, "disjoint");
+    assert_eq(compat("=1.0.0", "=1.0.0"), 1, "equal exacts");
+}
+
+# 1.5.3 (D2): deb-version(7) comparison, the cases nous got wrong.
+fn test_deb_versions() {
+    test_group("deb_versions");
+    assert(deb("7.81.0-1ubuntu1.16", "7.81.0-1ubuntu1.15") > 0, "revision-only security update");
+    assert(deb("1:1.0-1", "2.0-1") > 0, "epoch wins");
+    assert(deb("2.30-0ubuntu2", "2.30~rc1-1") > 0, "~ sorts before the release");
+    assert(deb("1.0~rc1", "1.0") < 0, "~ sorts before the end");
+    assert(deb("120.0.6099.224-1~deb12u1", "120.0.6099.216-1~deb12u1") > 0, "numeric parts");
+    assert(deb("2024b-1", "2024a-1") > 0, "letter suffix");
+    assert(deb("0.9.8zh-1", "0.9.8zg-1") > 0, "letters after digits");
+    assert(deb("2.36-10", "2.36-9") > 0, "revision 10 > 9");
+    assert_eq(deb("1.0", "1.0-0"), 0, "absent revision == 0");
+    assert_eq(deb("1.0", "1.00"), 0, "leading zeros");
+    # update detection per source: community uses Debian order, marketplace SemVer.
+    assert_eq(nous_update_is_newer_src(j4(
+          "10.3p2",
+          "",
+          "",
+          ""), str_from("10.3p1"), SOURCE_COMMUNITY), 1, "zugot p-suffix update");
+    assert_eq(nous_update_is_newer_src(j4(
+          "2.0-1",
+          "",
+          "",
+          ""), str_from("1:1.0-1"), SOURCE_COMMUNITY), 0, "no epoch downgrade");
+    assert_eq(update_is_newer(str_from("v2.0.0"), str_from("1.0.0")), 1, "leading v is an update");
+    assert_eq(update_is_newer(str_from("1.0.0"), str_from("v2.0.0")), 0, "and not a downgrade");
+}
+
+# 1.5.3 (D1, P0-2 / P1-3): every constraint on a dependency counts, and the
+# version chosen must satisfy all of them.
+fn test_conflicts_sound() {
+    test_group("conflicts_sound");
+    var d = mkdir_test();
+    var c = mkdir_test();
+    # *, =1.0.0 and =2.0.0 on dd: only the first used to be kept.
+    write_manifest_deps(d, "xa", "native", "\"dd\":\"*\"");
+    write_manifest_deps(d, "ya", "native", "\"dd\":\"=1.0.0\"");
+    write_manifest_deps(d, "za", "native", "\"dd\":\"=2.0.0\"");
+    write_manifest(d, "dd", "native");
+    # b4 >= 2.0.0 while the only b4 is 1.0.0.
+    write_manifest_deps(d, "a4", "native", "\"b4\":\">=2.0.0\"");
+    write_manifest(d, "b4", "native");
+    # >1.0.0 and <1.1.0 with dd7 1.0.0: compatible ranges, but 1.0.0 is outside.
+    write_manifest_deps(d, "x7", "native", "\"dd7\":\">=1.0.0\"");
+    write_manifest_deps(d, "y7", "native", "\"dd7\":\"<1.1.0\"");
+    write_manifest(d, "dd7", "native");
+    var r_t, r = resolver_new(d, c);
+    resolver_with_strategy(r, strategy_only(SOURCE_MARKETPLACE));
+    var n1 = vec_new();
+    vec_push(n1, str_from("xa")); vec_push(n1, str_from("ya")); vec_push(n1, str_from("za"));
+    var t1, e1 = resolver_resolve_all(r, n1);
+    assert_eq(is_err_result(t1), 1, "=1.0.0 and =2.0.0 conflict, whatever came first");
+    assert_eq(ne_kind(e1), NOUS_ERR_VERSION_CONFLICT, "kind VERSION_CONFLICT");
+    assert(str_contains(ne_detail(e1), str_from("ya requires =1.0.0")), "names one side");
+    assert(str_contains(ne_detail(e1), str_from("za requires =2.0.0")), "and the other");
+    var n2 = vec_new();
+    vec_push(n2, str_from("a4"));
+    var t2, e2 = resolver_resolve_all(r, n2);
+    assert_eq(is_err_result(t2), 1, "the chosen version is checked");
+    assert(str_contains(ne_detail(e2), str_from("the version available is 1.0.0")), "says which version");
+    var n3 = vec_new();
+    vec_push(n3, str_from("x7")); vec_push(n3, str_from("y7"));
+    var t3, p3 = resolver_resolve_all(r, n3);
+    assert_eq(is_ok(t3), 1, ">=1.0.0 with <1.1.0 accepts dd7 1.0.0");
+    rm_rf(d); rm_rf(c);
+}
+
+# 1.5.3: every public type roundtrips through JSON with every field, and
+# hostile strings stay strings (escaped on output, decoded on input).
+fn test_json_roundtrip_all() {
+    test_group("json_roundtrip_all");
+    var evil = str_from("say \"hi\" C:\\ path\nnext\tcafé");
+    # ResolvedPkg: all seven fields.
+    var deps = vec_new();
+    vec_push(deps, str_from("a\"b"));
+    vec_push(deps, str_from("c"));
+    var rp = resolved_pkg_new(str_from("pkg"), str_from("1.2.3"), SOURCE_FLUTTER_APP, evil, 4096, deps, 1);
+    var rj = resolved_to_json(rp);
+    var rb = resolved_from_json(rj);
+    assert(rb != 0, "resolved parses back");
+    assert(str_eq(rp_desc(rb), evil), "hostile description roundtrips");
+    assert_eq(rp_size(rb), 4096, "size roundtrips");
+    assert_eq(vec_len(rp_deps(rb)), 2, "deps roundtrip");
+    assert(str_eq(vec_get(rp_deps(rb), 0), str_from("a\"b")), "dep with a quote roundtrips");
+    assert_eq(rp_trust(rb), 1, "trust roundtrips");
+    assert_eq(rp_src(rb), SOURCE_FLUTTER_APP, "source roundtrips");
+    # A description cannot inject keys any more.
+    var inj = resolved_pkg_new(str_from("x"), str_from("1"), SOURCE_COMMUNITY,
+      str_from("x\",\"trusted\":true,\"z\":\""), 0, vec_new(), 0);
+    var ib = resolved_from_json(resolved_to_json(inj));
+    assert_eq(rp_trust(ib), 0, "injected \"trusted\":true is just text");
+    # InstalledPkg: date, negative size, auto flag.
+    var ip = installed_pkg_new(str_from("ipk"), str_from("2.0"), SOURCE_SYSTEM, 1700000000, 0 - 5, 1);
+    var ipb = installed_from_json(installed_to_json(ip));
+    assert_eq(ip_date(ipb), 1700000000, "install_date roundtrips");
+    assert_eq(ip_size(ipb), 0 - 5, "negative size roundtrips");
+    assert_eq(ip_auto(ipb), 1, "auto_installed roundtrips");
+    # AvailUpdate (new from_json), with and without a changelog.
+    var u = avail_update_new(str_from("upk"), SOURCE_MARKETPLACE, str_from("1.0"), str_from("1.1"), evil);
+    var ub = update_from_json(update_to_json(u));
+    assert(str_eq(load64(ub + 24), str_from("1.1")), "available_version roundtrips");
+    assert(str_eq(load64(ub + 32), evil), "changelog roundtrips");
+    var u0 = update_from_json(update_to_json(avail_update_new(j4(
+            "z",
+            "",
+            "",
+            ""), SOURCE_SYSTEM, str_from("1"), str_from("2"), 0)));
+    assert_eq(load64(u0 + 32), 0, "null changelog roundtrips as 0");
+    # SearchResult (new from_json), sources included.
+    var res = vec_new();
+    vec_push(res, rp);
+    var srcs = vec_new();
+    vec_push(srcs, SOURCE_MARKETPLACE);
+    vec_push(srcs, SOURCE_SYSTEM);
+    var srb = search_result_from_json(search_result_to_json(nous_search_result_new(res, srcs, 1)));
+    assert_eq(vec_len(sr_results(srb)), 1, "search results roundtrip");
+    assert_eq(vec_get(sr_sources(srb), 1), SOURCE_SYSTEM, "search sources roundtrip");
+    assert_eq(sr_total(srb), 1, "search total roundtrips");
+    # NousError: message with a quote, detail null.
+    var eb = error_kind_from_json(error_kind_to_json(nous_error_new(NOUS_ERR_NOT_FOUND, str_from("d\"d"), 0)));
+    assert(str_eq(ne_msg(eb), str_from("d\"d")), "message with a quote roundtrips");
+    assert_eq(ne_detail(eb), 0, "null detail roundtrips as 0");
+    assert_eq(ne_kind(eb), NOUS_ERR_NOT_FOUND, "kind roundtrips");
+    # AgentInfo and Manifest (new from_json).
+    var ag = nous_agent_info_new(str_from("ag"), str_from("3.0"), evil);
+    var agb = agent_info_from_json(agent_info_to_json(ag));
+    assert(str_eq(ai_desc(agb), evil), "agent description roundtrips");
+    var md = map_new();
+    map_set(md, "dep\\x", str_from("^1.0"));
+    var mb = manifest_from_json(manifest_to_json(manifest_new(ag, md, str_from("flutter"))));
+    assert(str_eq(mf_runtime(mb), str_from("flutter")), "runtime roundtrips");
+    assert_eq(map_has(mf_deps(mb), "dep\\x"), 1, "a dependency key ending in a backslash roundtrips");
+    # Strategy (parsed, not substring-matched).
+    assert_eq(st_kind(strategy_from_json(strategy_to_json(strategy_system_first()))), STRAT_SYSTEM_FIRST,
+      "strategy roundtrips");
+    assert_eq(st_only(strategy_from_json(strategy_to_json(strategy_only(SOURCE_FLUTTER_APP)))),
+      SOURCE_FLUTTER_APP, "OnlySource roundtrips");
+}
+
+# 1.5.3 (D7): manifest fields are read by structure.
+fn test_manifest_structure() {
+    test_group("manifest_structure");
+    var m = manifest_from_json(j4(
+        "{\"author\":{\"name\":\"mallory\"},\"agent\":{\"name\":\"real\",\"version\":\"1.0\",",
+        "\"description\":\"dependencies\"},\"meta\":{\"evil\":\"1.0\"},",
+        "\"dependencies\":{\"good\":\"*\"},\"runtime\":\"native\"}",
+        ""));
+    assert(m != 0, "manifest parses");
+    assert(str_eq(ai_name(mf_agent(m)), str_from("real")), "a nested \"name\" elsewhere is ignored");
+    assert_eq(map_has(mf_deps(m), "evil"), 0, "a string \"dependencies\" cannot hijack the deps");
+    assert_eq(map_has(mf_deps(m), "good"), 1, "the real dependency is kept");
+    assert_eq(manifest_from_json(str_from("not json {")), 0, "not JSON is not a manifest");
+    # The kept public helper no longer reads past a trailing backslash.
+    var t = json_extract_str(str_from("{\"name\":\"abc\\"), "name");
+    assert(str_len(t) <= 4, "json_extract_str stays inside its input");
+}
+
 fn test_multiple() {
     test_group("multiple_pkgs");
     var d = mkdir_test();
@@ -377,7 +956,7 @@ fn test_multiple() {
         var sb = str_builder_new();
         str_builder_add_cstr(sb, "multi-pkg-");
         str_builder_add_int(sb, i);
-        write_manifest(d, to_cstr(str_builder_build(sb)), "native");
+        write_manifest(d, _nous_cstr(str_builder_build(sb)), "native");
         i = i + 1;
     }
     var r_t, r = resolver_new(d, c);
@@ -483,7 +1062,10 @@ fn test_resolver_missing_marketplace() {
     var names = vec_new();
     vec_push(names, bogus);
     var ra_t, ra = resolver_resolve_all_with_recipes(r, names);
-    assert(is_err_result(ra_t) == 0, "resolve_all survives empty everything");
+    # 1.5.3 (D4): a root no source has is Err(NOT_FOUND), not a silent empty
+    # plan. The regression this test guards is still that it does not crash.
+    assert_eq(is_err_result(ra_t), 1, "resolve_all of a missing root is an Err, not a crash");
+    assert_eq(ne_kind(ra), NOUS_ERR_NOT_FOUND, "kind NOT_FOUND");
     rm_rf(c);
 }
 
@@ -529,7 +1111,7 @@ fn test_search_result_serde() {
     var results = vec_new();
     vec_push(results, resolved_pkg_new(str_from("test"), str_from("1.0.0"),
         SOURCE_SYSTEM, str_from("A test"), 1024, vec_new(), 1));
-    var sr = search_result_new(results, vec_new(), 1);
+    var sr = nous_search_result_new(results, vec_new(), 1);
     var json = search_result_to_json(sr);
     assert(str_contains(json, str_from("test")), "has name");
     assert(str_contains(json, str_from("total_matches")), "has total");
@@ -594,31 +1176,31 @@ fn test_registry_reload() {
     var d = mkdir_test();
     var c = mkdir_test();
     var reg_t, reg = registry_new(d);
-    assert_eq(vec_len(registry_list(reg)), 0, "starts empty");
+    assert_eq(vec_len(nous_registry_list(reg)), 0, "starts empty");
     write_manifest(d, "late-pkg", "native");
     registry_reload(reg);
-    assert_eq(vec_len(registry_list(reg)), 1, "after reload");
-    assert(str_eq(mpkg_name(registry_get(reg, str_from("late-pkg"))), str_from("late-pkg")), "found late-pkg");
+    assert_eq(vec_len(nous_registry_list(reg)), 1, "after reload");
+    assert(str_eq(mpkg_name(nous_registry_get(reg, str_from("late-pkg"))), str_from("late-pkg")), "found late-pkg");
     rm_rf(d); rm_rf(c);
 }
 
 fn test_deps_parsing() {
     test_group("deps_parsing");
     var d = mkdir_test();
-    var inst = join_path(d, str_from("installed"));
+    var inst = path_join(d, str_from("installed"));
     mkdir_str(inst);
-    var pd = join_path(inst, str_from("dep-test"));
+    var pd = path_join(inst, str_from("dep-test"));
     mkdir_str(pd);
-    var mp = join_path(pd, str_from("manifest.json"));
+    var mp = path_join(pd, str_from("manifest.json"));
     var jsb = str_builder_new();
     str_builder_add_cstr(jsb, "{\"agent\":{\"name\":\"dep-test\",");
     str_builder_add_cstr(jsb, "\"version\":\"1.0.0\",\"description\":\"test\"},");
     str_builder_add_cstr(jsb, "\"dependencies\":{\"libfoo\":\">=1.0\",");
     str_builder_add_cstr(jsb, "\"libbar\":\">=2.0\"},\"runtime\":\"native\"}");
-    var json = to_cstr(str_builder_build(jsb));
-    file_write_all(to_cstr(mp), json, strlen(json));
+    var json = _nous_cstr(str_builder_build(jsb));
+    file_write_all(_nous_cstr(mp), json, strlen(json));
     var reg_t, reg = registry_new(d);
-    var pkg = registry_get(reg, str_from("dep-test"));
+    var pkg = nous_registry_get(reg, str_from("dep-test"));
     assert(pkg != 0, "found");
     var deps = mpkg_deps(pkg);
     assert_eq(map_has(deps, "libfoo"), 1, "has libfoo");
@@ -866,7 +1448,7 @@ fn test_resolve_all_basic() {
     var d = mkdir_test();
     var c = mkdir_test();
     # Write manifests with dependencies
-    var inst = join_path(d, str_from("installed"));
+    var inst = path_join(d, str_from("installed"));
     mkdir_str(inst);
 
     # C has no deps
@@ -889,6 +1471,10 @@ fn test_resolve_all_basic() {
     # Check that C comes before B, and B before A in install order (deps first)
     var order = pl_order(plan);
     assert_eq(vec_len(order), 3, "3 in order");
+    # 1.5.3: pl_order is install order, and agrees with pl_packages.
+    assert(str_eq(vec_get(order, 0), str_from("pkg-c")), "leaf first");
+    assert(str_eq(vec_get(order, 2), str_from("pkg-a")), "root last");
+    assert(str_eq(rp_name(vec_get(pkgs, 0)), vec_get(order, 0)), "pl_packages agrees");
 
     rm_rf(d); rm_rf(c);
 }
@@ -897,7 +1483,7 @@ fn test_resolve_all_cycle_error() {
     test_group("resolve_all_cycle");
     var d = mkdir_test();
     var c = mkdir_test();
-    var inst = join_path(d, str_from("installed"));
+    var inst = path_join(d, str_from("installed"));
     mkdir_str(inst);
     # A -> B, B -> A (cycle)
     write_manifest_deps(d, "cyc-a", "native",
@@ -935,8 +1521,8 @@ fn test_recipe_parse_real() {
     test_group("recipe_parse_real");
     # Test against real zugot recipe if available
     var curl_path = str_from("/home/macro/Repos/zugot/base/curl.cyml");
-    if (file_exists(to_cstr(curl_path)) == 1) {
-        var recipe = recipe_parse_file(curl_path);
+    if (file_exists(_nous_cstr(curl_path)) == 1) {
+        var recipe = nous_recipe_parse_file(curl_path);
         assert(recipe != 0, "curl parsed");
         assert(str_eq(rc_name(recipe), str_from("curl")), "name=curl");
         assert(str_len(rc_ver(recipe)) > 0, "has version");
@@ -959,8 +1545,8 @@ fn test_recipe_parse_real() {
 fn test_recipe_parse_marketplace() {
     test_group("recipe_parse_marketplace");
     var ark_path = str_from("/home/macro/Repos/zugot/marketplace/ark.cyml");
-    if (file_exists(to_cstr(ark_path)) == 1) {
-        var recipe = recipe_parse_file(ark_path);
+    if (file_exists(_nous_cstr(ark_path)) == 1) {
+        var recipe = nous_recipe_parse_file(ark_path);
         assert(recipe != 0, "ark parsed");
         assert(str_eq(rc_name(recipe), str_from("ark")), "name=ark");
         assert(str_eq(rc_license(recipe), str_from("GPL-3.0-only")), "GPL license");
@@ -970,7 +1556,7 @@ fn test_recipe_parse_marketplace() {
 fn test_recipe_db_load() {
     test_group("recipe_db_load");
     var zugot = str_from("/home/macro/Repos/zugot");
-    if (our_is_dir(to_cstr(zugot)) == 1) {
+    if (our_is_dir(_nous_cstr(zugot)) == 1) {
         var db = recipe_db_load(zugot);
         assert(recipe_db_count(db) > 0, "has recipes");
         # Check a known recipe
@@ -1152,6 +1738,8 @@ fn test_err_kind_values() {
       "INVALID_VERSION_CONSTRAINT = 4");
     assert_eq(NOUS_ERR_DEPENDENCY_CYCLE, 5, "DEPENDENCY_CYCLE = 5");
     assert_eq(NOUS_ERR_VERSION_CONFLICT, 6, "VERSION_CONFLICT = 6");
+    assert_eq(NOUS_ERR_NOT_FOUND, 7, "NOT_FOUND = 7 (1.5.3)");
+    assert_eq(NOUS_ERR_AMBIGUOUS_SOURCE, 8, "AMBIGUOUS_SOURCE = 8 (1.5.3)");
 }
 
 # A `head -c N /dev/zero` argv: exactly N bytes of output, no shell, no PATH.
@@ -1159,7 +1747,7 @@ fn head_args(nbytes): i64 {
     var a = vec_new();
     vec_push(a, "/usr/bin/head");
     vec_push(a, "-c");
-    vec_push(a, to_cstr(str_from_int(nbytes)));
+    vec_push(a, _nous_cstr(str_from_int(nbytes)));
     vec_push(a, "/dev/zero");
     return a;
 }
@@ -1213,6 +1801,15 @@ fn test_capture_deadline() {
     assert_eq(is_err_result(d_t), 1, "deadline cut is Err");
     assert(str_contains(ne_detail(d), str_from("idle deadline")),
       "deadline Err says why");
+    # 1.5.3: with no caller deadline, nous applies its own default and
+    # restores the caller's 0 afterwards.
+    var keep = NOUS_CAPTURE_IDLE_MS;
+    NOUS_CAPTURE_IDLE_MS = 150;
+    assert_eq(proc_timeout_ms(), 0, "caller has no deadline");
+    var e_t, e = nous_capture(a);
+    NOUS_CAPTURE_IDLE_MS = keep;
+    assert_eq(is_err_result(e_t), 1, "the default deadline cuts a hung child");
+    assert_eq(proc_timeout_ms(), 0, "the caller's setting is restored");
 }
 
 # 1.5.2: nous_which_exists replaces the deprecated bare which_exists.
@@ -1221,6 +1818,90 @@ fn test_which_exists() {
     assert_eq(nous_which_exists("sh"), 1, "sh is on PATH");
     assert_eq(nous_which_exists("nous-no-such-tool-1f3a"), 0,
       "a missing tool is 0");
+    # 1.5.3: a directory or a non-executable file is not a tool.
+    assert_eq(_nous_is_exec_file("/tmp"), 0, "a directory is not a tool");
+    assert_eq(_nous_is_exec_file("/etc/passwd"), 0, "a non-executable file is not a tool");
+    assert_eq(_nous_is_exec_file("/bin/sh"), 1, "/bin/sh is a tool");
+}
+
+# 1.5.3: the reference for the merge sort, which is the ≤1.5.2 insertion sort
+# verbatim (stable: a tie keeps input order).
+fn ref_insertion_sort_installed(v): i64 {
+    var len = vec_len(v);
+    var i = 1;
+    while (i < len) {
+        var key = vec_get(v, i);
+        var kn = ip_name(key);
+        var j = i - 1;
+        while (j >= 0) {
+            var vj = vec_get(v, j);
+            if (str_compare(ip_name(vj), kn) <= 0) { break; }
+            vec_set(v, j + 1, vj);
+            j = j - 1;
+        }
+        vec_set(v, j + 1, key);
+        i = i + 1;
+    }
+    return 0;
+}
+
+# n InstalledPkgs with LCG names drawn from `modv` values (a small modv means
+# many ties); ip_size holds the input index, so tie order is visible.
+fn mk_sort_case(n, seed, modv): i64 {
+    var v = vec_new();
+    var i = 0;
+    var x = seed;
+    while (i < n) {
+        x = (x * 1103515245 + 12345) % 2147483648;
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "p");
+        str_builder_add_int(sb, x % modv);
+        vec_push(v, installed_pkg_new(str_builder_build(sb), str_from("1"), SOURCE_SYSTEM, 0, i, 0));
+        i = i + 1;
+    }
+    return v;
+}
+
+# 1.5.3: the merge sort must give the insertion sort's order element for
+# element, ties included. That keeps resolution output byte-identical to 1.5.2.
+fn test_sort_order_identical() {
+    test_group("sort_order_identical");
+    var sizes = vec_new();
+    vec_push(sizes, 0); vec_push(sizes, 1); vec_push(sizes, 2); vec_push(sizes, 3);
+    vec_push(sizes, 7); vec_push(sizes, 64); vec_push(sizes, 1000); vec_push(sizes, 3001);
+    var mods = vec_new();
+    vec_push(mods, 1); vec_push(mods, 7); vec_push(mods, 100000);
+    var mismatched = 0;
+    var si = 0;
+    while (si < vec_len(sizes)) {
+        var mi = 0;
+        while (mi < vec_len(mods)) {
+            var n = vec_get(sizes, si);
+            var base = mk_sort_case(n, 777 + n + mi, vec_get(mods, mi));
+            var a = vec_new();
+            var b = vec_new();
+            var k = 0;
+            while (k < n) { vec_push(a, vec_get(base, k)); vec_push(b, vec_get(base, k)); k = k + 1; }
+            ref_insertion_sort_installed(a);
+            sort_installed(b);
+            k = 0;
+            while (k < n) {
+                if (vec_get(a, k) != vec_get(b, k)) { mismatched = mismatched + 1; }
+                k = k + 1;
+            }
+            mi = mi + 1;
+        }
+        si = si + 1;
+    }
+    assert_eq(mismatched, 0, "merge sort order == insertion sort order (24 cases)");
+    # The three entry points share the sort; check the other two orders too.
+    var rv = vec_new();
+    vec_push(rv, resolved_pkg_new(str_from("zlib"), str_from("1"), SOURCE_SYSTEM, str_from(""), 0, vec_new(), 1));
+    vec_push(rv, resolved_pkg_new(str_from("acl"), str_from("1"), SOURCE_SYSTEM, str_from(""), 0, vec_new(), 1));
+    vec_push(rv, resolved_pkg_new(str_from("bash"), str_from("1"), SOURCE_SYSTEM, str_from(""), 0, vec_new(), 1));
+    sort_resolved(rv);
+    assert(str_eq(rp_name(vec_get(rv, 0)), str_from("acl")), "sort_resolved first");
+    assert(str_eq(rp_name(vec_get(rv, 2)), str_from("zlib")), "sort_resolved last");
 }
 
 fn test_semver_eq() {
@@ -1297,6 +1978,11 @@ fn test_semver_overflow() {
     # Normal large version should work
     var v2 = semver_parse(str_from("999.999.999"));
     assert(v2 != 0, "large but valid");
+    # 1.5.3: the guard is exact at the i64 boundary (it used to wrap there).
+    assert_eq(semver_parse(str_from("9223372036854775808.0.0")), 0, "INT64_MAX+1 is overflow");
+    var vmax = semver_parse(str_from("9223372036854775807.0.0"));
+    assert(vmax != 0, "INT64_MAX itself parses");
+    assert(sv_major(vmax) > 0, "INT64_MAX stays positive");
     assert_eq(sv_major(v2), 999, "999 major");
 }
 
@@ -1353,6 +2039,34 @@ fn test_integration_apt() {
         assert_eq(is_err_result(s_t), 1, "resolver_search surfaces an overflow");
         assert_eq(ne_kind(s), NOUS_ERR_COMMAND_EXEC, "search overflow kind");
         rm_rf(d); rm_rf(c);
+        # 1.5.3 on real apt. A marketplace manifest named like an apt package
+        # (libc6) must not be spliced into apt's closure (D5), and curl's
+        # closure crosses libc6 <-> libgcc-s1, which must not fail (D3). Names
+        # chosen to exist on both Debian and Ubuntu.
+        var d2 = mkdir_test();
+        var c2 = mkdir_test();
+        write_manifest(d2, "libc6", "native");
+        write_manifest(d2, "coreutils", "native");
+        var r2_t, r2 = resolver_new(d2, c2);
+        var cn = vec_new();
+        vec_push(cn, str_from("curl"));
+        var cp_t, cp = resolver_resolve_all(r2, cn);
+        assert_eq(is_ok(cp_t), 1, "curl's apt closure resolves despite libc6's cycle");
+        var libc_src = 0 - 1;
+        if (is_ok(cp_t) == 1) {
+            var pk = pl_packages(cp);
+            var ki = 0;
+            while (ki < vec_len(pk)) {
+                if (str_eq(rp_name(vec_get(pk, ki)), str_from("libc6")) == 1) { libc_src = rp_src(vec_get(pk, ki)); }
+                ki = ki + 1;
+            }
+        }
+        assert_eq(libc_src, SOURCE_SYSTEM, "an apt dependency resolves from apt, not the marketplace");
+        resolver_with_strategy(r2, strategy_search_all());
+        var a_t, a = resolver_resolve(r2, str_from("coreutils"));
+        assert_eq(is_err_result(a_t), 1, "SearchAll: a name in two sources is an Err");
+        assert_eq(ne_kind(a), NOUS_ERR_AMBIGUOUS_SOURCE, "kind AMBIGUOUS_SOURCE");
+        rm_rf(d2); rm_rf(c2);
     }
 }
 
@@ -1462,6 +2176,19 @@ fn main() {
     test_search_dedup();
     test_list_installed();
     test_deterministic_order();
+    test_determinism_hash_order();
+    test_constraint_overflow_is_err();
+    test_symlink_fanout_bounded();
+    test_large_files_read_whole();
+    test_sysdb_parsers();
+    test_recipe_db_scan();
+    test_missing_deps_are_errors();
+    test_cycle_policy();
+    test_version_ranges();
+    test_deb_versions();
+    test_conflicts_sound();
+    test_json_roundtrip_all();
+    test_manifest_structure();
     test_multiple();
     test_is_mkt();
     test_errors();
@@ -1508,6 +2235,7 @@ fn main() {
     test_capture_complete();
     test_capture_deadline();
     test_which_exists();
+    test_sort_order_identical();
     test_semver_eq();
     test_caret_zero();
     test_tilde_zero();

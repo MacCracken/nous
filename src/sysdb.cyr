@@ -2,6 +2,33 @@
 # ===================================================================
 # SystemPackageDb
 # ===================================================================
+#
+# 1.5.3 split: each query is now a command (`sysdb_*`) plus a PURE parser
+# (`_sysdb_parse_*`) that turns the tool's output into nous records, so parsing
+# is unit-tested and fuzzed without apt. Fixed while splitting (each one checked
+# on Debian 12):
+#
+#   - `apt-cache show` prints EVERY available version (2 for libc6), and the
+#     loop kept the last, i.e. the oldest, version with the deps of all of them.
+#     Now `--no-all-versions` and the first stanza only.
+#   - `Pre-Depends` counted for nothing; now it is a dependency like `Depends`.
+#   - `python3:any` / `<pkg>:<arch>` deps failed name validation and aborted
+#     the whole resolve (most python3-* packages). The qualifier is stripped.
+#   - "installed" was a substring test on `${Status}`, so a held package
+#     (`hold ok installed`) read as NOT installed and a removed-with-config one
+#     (`deinstall ok config-files`) slipped into `get_installed`. Now dpkg's
+#     own `${db:Status-Status}` must be `installed`.
+#   - Updates came from `apt list --upgradable`. apt(8) says that is not a
+#     script interface, and an admin's `APT::Cmd::format` changes its output.
+#     Now `apt-get -s dist-upgrade` `Inst` lines (works unprivileged).
+#   - The search query is a POSIX regex to apt-cache: `g++` matched 22,782
+#     packages, `g\+\+` 114. Metacharacters are escaped.
+#   - Only names in Debian Policy §5.6.1 syntax reach apt (see
+#     `_sysdb_debian_name`); anything else is not an apt package.
+#   - `Installed-Size` (KiB) × 1024 is bounded; it could overflow.
+#
+# Tools run array-form (no shell) with absolute paths, an empty environment
+# (so the C locale), and nous's capture limits and idle deadline.
 
 fn sysdb_new(): i64 {
     var ok = 0;
@@ -11,27 +38,105 @@ fn sysdb_new(): i64 {
 
 fn sysdb_available(db): i64 { return sd_apt(db); }
 
-fn sysdb_search(db, query): i64 {
-    if (sd_apt(db) == 0) { return Ok(vec_new()); }
-    # Validate query to prevent command injection
-    var vr_t, vr = validate_package_name(query);
-    if (is_err_result(vr_t) == 1) { return Ok(vec_new()); }
-    var args = vec_new();
-    vec_push(args, tool_path("apt-cache"));
-    vec_push(args, "search");
-    vec_push(args, "--names-only");
-    vec_push(args, to_cstr(query));
-    var out_t, output = nous_capture(args);
-    if (is_err_result(out_t) == 1) { return Err(output); }
-    if (output == 0) { return Ok(vec_new()); }
-    var lines = str_split(output, 10);
+# ---- helpers --------------------------------------------------------
+
+# 1 when `name` is a Debian package name (Policy §5.6.1): at least 2 chars,
+# lowercase alphanumeric first, then [a-z0-9+.-]. Anything else (marketplace
+# "publisher/x", uppercase, "_", "@", ":") is not an apt package, so it is
+# never passed to apt at all.
+fn _sysdb_debian_name(name): i64 {
+    var n = str_len(name);
+    if (n < 2) { return 0; }
+    var d = str_data(name);
+    var c0 = load8(d);
+    if ((c0 < 97 || c0 > 122) && (c0 < 48 || c0 > 57)) { return 0; }
+    var i = 1;
+    while (i < n) {
+        var c = load8(d + i);
+        var ok = 0;
+        if (c >= 97 && c <= 122) { ok = 1; }
+        if (c >= 48 && c <= 57) { ok = 1; }
+        if (c == 43 || c == 45 || c == 46) { ok = 1; }
+        if (ok == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# `q` with POSIX regex metacharacters backslash-escaped, as a cstr.
+fn _sysdb_regex_escape(q): i64 {
+    var sb = str_builder_new();
+    var d = str_data(q);
+    var n = str_len(q);
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i);
+        # . + * ? [ ] ( ) { } ^ $ | backslash
+        if (c == 46 || c == 43 || c == 42 || c == 63 || c == 91 || c == 93 || c == 40 ||
+          c == 41 || c == 123 || c == 125 || c == 94 || c == 36 || c == 124 || c == 92) {
+            str_builder_putc(sb, 92);
+        }
+        str_builder_putc(sb, c);
+        i = i + 1;
+    }
+    return _nous_cstr(str_builder_build(sb));
+}
+
+# Installed-Size is KiB. Bytes, saturating instead of overflowing.
+fn _sysdb_kib_bytes(skb): i64 {
+    if (skb <= 0) { return 0; }
+    if (skb > 9007199254740991) { return 9223372036854775807; }   # > (2^63-1)/1024
+    return skb * 1024;
+}
+
+# Append the package names in a Depends / Pre-Depends value to `deps`. For
+# each comma item, keep the first `|` alternative, cut the version relation
+# "(>= 2.0)" and an arch qualifier "python3:any", and skip empties.
+fn _sysdb_dep_names(value, deps): i64 {
+    var items = str_split(value, 44);
+    var i = 0;
+    while (i < vec_len(items)) {
+        var it = vec_get(items, i);
+        var bar = str_index_of(it, 124);
+        if (bar >= 0) { it = str_sub(it, 0, bar); }
+        it = str_trim(it);
+        # Cut at the FIRST space / '(' / ':' even at position 0, so a malformed
+        # item yields an empty name, which is skipped, never a name holding one
+        # (found by tests/fuzz_apt.fcyr, case 2096: ":athon3pyny").
+        var sp = str_index_of(it, 32);
+        if (sp >= 0) { it = str_sub(it, 0, sp); }
+        var par = str_index_of(it, 40);
+        if (par >= 0) { it = str_sub(it, 0, par); }
+        var colon = str_index_of(it, 58);
+        if (colon >= 0) { it = str_sub(it, 0, colon); }
+        if (str_len(it) > 0) { vec_push(deps, it); }
+        i = i + 1;
+    }
+    return 0;
+}
+
+# The value of "Field: value" when `line` starts with `field` (a cstr ending
+# in ": "), else 0.
+fn _sysdb_field(line, field): i64 {
+    var fl = strlen(field);
+    if (str_len(line) < fl) { return 0; }
+    if (memeq(str_data(line), field, fl) == 0) { return 0; }
+    return str_trim(str_sub(line, fl, str_len(line) - fl));
+}
+
+# ---- pure parsers ---------------------------------------------------
+
+# `apt-cache search --names-only` lines: "name - description".
+fn _sysdb_parse_search(output): i64 {
     var results = vec_new();
+    if (output == 0) { return results; }
+    var lines = str_split(output, 10);
     var i = 0;
     while (i < vec_len(lines)) {
         var line = str_trim(vec_get(lines, i));
         if (str_len(line) > 0) {
             var sp = str_find(line, str_from(" - "));
-            if (sp >= 0) {
+            if (sp > 0) {
                 var n = str_trim(str_sub(line, 0, sp));
                 var d = str_trim(str_sub(line, sp + 3, str_len(line) - sp - 3));
                 vec_push(results, resolved_pkg_new(n, str_from(""), SOURCE_SYSTEM, d, 0, vec_new(), 1));
@@ -39,147 +144,268 @@ fn sysdb_search(db, query): i64 {
         }
         i = i + 1;
     }
-    return Ok(results);
+    return results;
 }
 
-fn sysdb_is_installed(db, name): i64 {
-    if (sd_apt(db) == 0) { return Ok(0); }
-    var vr_t, vr = validate_package_name(name);
-    if (is_err_result(vr_t) == 1) { return Ok(0); }
-    var args = vec_new();
-    vec_push(args, tool_path("dpkg-query"));
-    vec_push(args, "-W");
-    vec_push(args, "-f");
-    vec_push(args, "${Status}");
-    vec_push(args, to_cstr(name));
-    var out_t, output = nous_capture(args);
-    if (is_err_result(out_t) == 1) { return Err(output); }
-    if (output == 0) { return Ok(0); }
-    if (str_contains(output, str_from("install ok installed")) == 1) { return Ok(1); }
-    return Ok(0);
-}
-
-fn sysdb_get_installed(db, name): i64 {
-    if (sd_apt(db) == 0) { return Ok(0); }
-    var vr_t, vr = validate_package_name(name);
-    if (is_err_result(vr_t) == 1) { return Ok(0); }
-    var args = vec_new();
-    vec_push(args, tool_path("dpkg-query"));
-    vec_push(args, "-W");
-    vec_push(args, "-f");
-    vec_push(args, "${Package}\t${Version}\t${Installed-Size}\n");
-    vec_push(args, to_cstr(name));
-    var out_t, output = nous_capture(args);
-    if (is_err_result(out_t) == 1) { return Err(output); }
-    if (output == 0) { return Ok(0); }
-    var lines = str_split(output, 10);
-    if (vec_len(lines) == 0) { return Ok(0); }
-    var fields = str_split(vec_get(lines, 0), 9);
-    if (vec_len(fields) < 3) { return Ok(0); }
-    var skb = str_to_int(str_trim(vec_get(fields, 2)));
-    return Ok(installed_pkg_new(vec_get(fields, 0), vec_get(fields, 1), SOURCE_SYSTEM, 0, skb * 1024, 0));
-}
-
-fn sysdb_list(db): i64 {
-    if (sd_apt(db) == 0) { return Ok(vec_new()); }
-    # Every installed package: past the pre-1.5.1 64 KiB buffer at ~1,500.
-    var q = str_from("dpkg-query -W -f '${Package}\t${Version}\t${Installed-Size}\t${Status}\n'");
-    var out_t, output = nous_cmd_capture(q);
-    if (is_err_result(out_t) == 1) { return Err(output); }
-    if (output == 0) { return Ok(vec_new()); }
-    var lines = str_split(output, 10);
+# `dpkg-query -W -f '${Package}\t${Version}\t${Installed-Size}\t${db:Status-Status}\n'`
+# lines → InstalledPkgs whose status is exactly "installed". A multi-arch
+# package prints one line per architecture; only the first is kept.
+fn _sysdb_parse_installed(output): i64 {
     var pkgs = vec_new();
+    if (output == 0) { return pkgs; }
+    var seen = map_new();
+    var lines = str_split(output, 10);
     var i = 0;
     while (i < vec_len(lines)) {
-        var line = str_trim(vec_get(lines, i));
-        if (str_len(line) > 0) {
-            var f = str_split(line, 9);
-            if (vec_len(f) >= 4) {
-                if (str_contains(vec_get(f, 3), str_from("install ok installed")) == 1) {
+        var f = str_split(vec_get(lines, i), 9);
+        if (vec_len(f) >= 4) {
+            var name = str_trim(vec_get(f, 0));
+            var status = str_trim(vec_get(f, 3));
+            if (str_len(name) > 0 && str_eq_cstr(status, "installed") == 1) {
+                var cn = _nous_cstr(name);
+                if (map_has(seen, cn) == 0) {
+                    map_set(seen, cn, 1);
                     var skb = str_to_int(str_trim(vec_get(f, 2)));
-                    vec_push(pkgs, installed_pkg_new(vec_get(f, 0), vec_get(f, 1), SOURCE_SYSTEM, 0, skb * 1024, 0));
+                    vec_push(pkgs, installed_pkg_new(name, str_trim(vec_get(f, 1)),
+                        SOURCE_SYSTEM, 0, _sysdb_kib_bytes(skb), 0));
                 }
             }
         }
         i = i + 1;
     }
-    return Ok(pkgs);
+    return pkgs;
 }
 
-fn sysdb_updates(db): i64 {
-    if (sd_apt(db) == 0) { return Ok(vec_new()); }
-    var out_t, output = nous_cmd_capture(str_from("apt list --upgradable 2>/dev/null"));
-    if (is_err_result(out_t) == 1) { return Err(output); }
-    if (output == 0) { return Ok(vec_new()); }
-    var lines = str_split(output, 10);
+# `apt-get -s dist-upgrade` → AvailUpdates from the
+# "Inst NAME [OLD] (NEW ARCHIVE [ARCH])" lines. A new install has no "[OLD]",
+# is not an update of an installed package, and is skipped.
+fn _sysdb_parse_upgrades(output): i64 {
     var upd = vec_new();
+    if (output == 0) { return upd; }
+    var lines = str_split(output, 10);
     var i = 0;
     while (i < vec_len(lines)) {
         var line = vec_get(lines, i);
-        if (str_starts_with(line, "Listing") == 0 && str_contains(line, str_from("[upgradable")) == 1) {
-            var sp = str_index_of(line, 47);
-            if (sp > 0) {
-                var pn = str_sub(line, 0, sp);
-                var rest = str_split(str_sub(line, sp + 1, str_len(line) - sp - 1), 32);
-                # Not `var av = str_from("")`: that types `av` as `Str` and the
-                # i64 vec_get then warns (cyrius 6.6.20). Same value either way.
-                var av = 0;
-                if (vec_len(rest) >= 2) { av = vec_get(rest, 1); }
-                else { av = str_from(""); }
-                var fp = str_find(line, str_from("from: "));
-                var iv = str_from("");
-                if (fp >= 0) {
-                    var after = str_sub(line, fp + 6, str_len(line) - fp - 6);
-                    var br = str_index_of(after, 93);
-                    if (br > 0) { iv = str_sub(after, 0, br); }
+        if (str_starts_with(line, str_from("Inst ")) == 1) {
+            var rest = str_sub(line, 5, str_len(line) - 5);
+            var sp = str_index_of(rest, 32);
+            var lb = str_index_of(rest, 91);
+            var lp = str_index_of(rest, 40);
+            if (sp > 0 && lb == sp + 1 && lp > lb) {
+                var name = str_sub(rest, 0, sp);
+                var rb = str_index_of(rest, 93);
+                if (rb > lb && rb < lp) {
+                    var old = str_sub(rest, lb + 1, rb - lb - 1);
+                    var after = str_sub(rest, lp + 1, str_len(rest) - lp - 1);
+                    var sp2 = str_index_of(after, 32);
+                    var nv = after;
+                    if (sp2 > 0) { nv = str_sub(after, 0, sp2); }
+                    var colon = str_index_of(name, 58);
+                    if (colon > 0) { name = str_sub(name, 0, colon); }
+                    vec_push(upd, avail_update_new(name, SOURCE_SYSTEM, old, nv, 0));
                 }
-                vec_push(upd, avail_update_new(pn, SOURCE_SYSTEM, iv, av, 0));
             }
         }
         i = i + 1;
     }
-    return Ok(upd);
+    return upd;
 }
 
-fn sysdb_info(db, name): i64 {
-    if (sd_apt(db) == 0) { return Ok(0); }
-    var vr_t, vr = validate_package_name(name);
-    if (is_err_result(vr_t) == 1) { return Ok(0); }
-    var args = vec_new();
-    vec_push(args, tool_path("apt-cache"));
-    vec_push(args, "show");
-    vec_push(args, to_cstr(name));
-    var out_t, output = nous_capture(args);
-    if (is_err_result(out_t) == 1) { return Err(output); }
-    if (output == 0) { return Ok(0); }
-    var version = str_from("");
-    var desc = str_from("");
+# `apt-cache show --no-all-versions NAME` → a ResolvedPkg from the FIRST
+# stanza, or 0 when there is no Version (a purely virtual name).
+fn _sysdb_parse_info(name, output): i64 {
+    if (output == 0) { return 0; }
+    # version / desc hold _sysdb_field's i64 (a Str or 0) until the end, as in
+    # recipe_parse_file; initialising them from str_from("") would type them
+    # Str and warn on every assignment.
+    var version = 0;
+    var desc = 0;
     var sz = 0;
     var deps = vec_new();
     var lines = str_split(output, 10);
     var li = 0;
-    while (li < vec_len(lines)) {
+    var go = 1;
+    while (li < vec_len(lines) && go == 1) {
         var line = vec_get(lines, li);
-        if (str_starts_with(line, "Version: ") == 1) {
-            version = str_trim(str_sub(line, 9, str_len(line) - 9));
-        } elif (str_starts_with(line, "Description: ") == 1) {
-            desc = str_trim(str_sub(line, 13, str_len(line) - 13));
-        } elif (str_starts_with(line, "Size: ") == 1) {
-            sz = str_to_int(str_trim(str_sub(line, 6, str_len(line) - 6)));
-        } elif (str_starts_with(line, "Depends: ") == 1) {
-            var dp = str_split(str_sub(line, 9, str_len(line) - 9), 44);
-            var di = 0;
-            while (di < vec_len(dp)) {
-                var dep = str_trim(vec_get(dp, di));
-                var spc = str_index_of(dep, 32);
-                if (spc > 0) { dep = str_sub(dep, 0, spc); }
-                if (str_len(dep) > 0) { vec_push(deps, dep); }
-                di = di + 1;
+        if (str_len(str_trim(line)) == 0) {
+            if (version != 0) { go = 0; }                      # end of the first stanza
+        } else {
+            var v = _sysdb_field(line, "Version: ");
+            if (v != 0) { version = v; }
+            var dsc = _sysdb_field(line, "Description: ");
+            if (dsc == 0 && str_starts_with(line, str_from("Description-")) == 1) {
+                var colon = str_index_of(line, 58);
+                if (colon > 0) { dsc = str_trim(str_sub(line, colon + 1, str_len(line) - colon - 1)); }
             }
+            if (dsc != 0) { desc = dsc; }
+            var s = _sysdb_field(line, "Size: ");
+            if (s != 0) { sz = str_to_int(s); }
+            var dv = _sysdb_field(line, "Depends: ");
+            if (dv != 0) { _sysdb_dep_names(dv, deps); }
+            var pv = _sysdb_field(line, "Pre-Depends: ");
+            if (pv != 0) { _sysdb_dep_names(pv, deps); }
         }
         li = li + 1;
     }
-    if (str_len(version) == 0) { return Ok(0); }
-    return Ok(resolved_pkg_new(name, version, SOURCE_SYSTEM, desc, sz, deps, 1));
+    if (version == 0 || str_len(version) == 0) { return 0; }
+    if (desc == 0) { desc = str_from(""); }
+    return resolved_pkg_new(name, version, SOURCE_SYSTEM, desc, sz, deps, 1);
 }
 
+# `apt-cache show --no-all-versions N1 N2 ...` (one stanza per name apt
+# knows; unknown or purely virtual names are simply absent) → a map from
+# Package name (cstr) to ResolvedPkg.
+fn _sysdb_parse_info_many(output): i64 {
+    var out = map_new();
+    if (output == 0) { return out; }
+    var d = str_data(output);
+    var n = str_len(output);
+    var start = 0;
+    var i = 0;
+    while (i <= n) {
+        # A stanza ends at a blank line ("\n\n") or at the end of the output.
+        var at_end = 0;
+        if (i == n) { at_end = 1; }
+        elif (load8(d + i) == 10 && i + 1 < n && load8(d + i + 1) == 10) { at_end = 1; }
+        if (at_end == 1) {
+            if (i > start) {
+                var stanza = str_new(d + start, i - start);
+                var lines = str_split(stanza, 10);
+                var name = 0;
+                var li = 0;
+                while (li < vec_len(lines) && name == 0) {
+                    name = _sysdb_field(vec_get(lines, li), "Package: ");
+                    li = li + 1;
+                }
+                if (name != 0) {
+                    var pkg = _sysdb_parse_info(name, stanza);
+                    if (pkg != 0) { map_set(out, _nous_cstr(name), pkg); }
+                }
+            }
+            start = i + 2;
+            i = i + 2;
+        } else {
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+# ---- queries --------------------------------------------------------
+
+fn sysdb_search(db, query): i64 {
+    if (sd_apt(db) == 0) { return Ok(vec_new()); }
+    var vr_t, vr = validate_package_name(query);
+    if (is_err_result(vr_t) == 1) { return Ok(vec_new()); }
+    var args = vec_new();
+    vec_push(args, tool_path("apt-cache"));
+    vec_push(args, "search");
+    vec_push(args, "--names-only");
+    vec_push(args, _sysdb_regex_escape(query));
+    var out_t, output = nous_capture(args);
+    if (is_err_result(out_t) == 1) { return Err(output); }
+    return Ok(_sysdb_parse_search(output));
+}
+
+fn _sysdb_dpkg_fmt(): i64 { return "${Package}\t${Version}\t${Installed-Size}\t${db:Status-Status}\n"; }
+
+fn sysdb_is_installed(db, name): i64 {
+    var t, p = sysdb_get_installed(db, name);
+    if (is_err_result(t) == 1) { return Err(p); }
+    if (p == 0) { return Ok(0); }
+    return Ok(1);
+}
+
+fn sysdb_get_installed(db, name): i64 {
+    if (sd_apt(db) == 0) { return Ok(0); }
+    if (_sysdb_debian_name(name) == 0) { return Ok(0); }
+    var args = vec_new();
+    vec_push(args, tool_path("dpkg-query"));
+    vec_push(args, "-W");
+    vec_push(args, "-f");
+    vec_push(args, _sysdb_dpkg_fmt());
+    vec_push(args, _nous_cstr(name));
+    var out_t, output = nous_capture(args);
+    if (is_err_result(out_t) == 1) { return Err(output); }
+    var pkgs = _sysdb_parse_installed(output);
+    if (vec_len(pkgs) == 0) { return Ok(0); }
+    return Ok(vec_get(pkgs, 0));
+}
+
+fn sysdb_list(db): i64 {
+    if (sd_apt(db) == 0) { return Ok(vec_new()); }
+    var args = vec_new();
+    vec_push(args, tool_path("dpkg-query"));
+    vec_push(args, "-W");
+    vec_push(args, "-f");
+    vec_push(args, _sysdb_dpkg_fmt());
+    var out_t, output = nous_capture(args);
+    if (is_err_result(out_t) == 1) { return Err(output); }
+    return Ok(_sysdb_parse_installed(output));
+}
+
+fn sysdb_updates(db): i64 {
+    if (sd_apt(db) == 0) { return Ok(vec_new()); }
+    var args = vec_new();
+    vec_push(args, tool_path("apt-get"));
+    vec_push(args, "-s");
+    vec_push(args, "-o");
+    vec_push(args, "Debug::NoLocking=1");
+    vec_push(args, "dist-upgrade");
+    var out_t, output = nous_capture(args);
+    if (is_err_result(out_t) == 1) { return Err(output); }
+    return Ok(_sysdb_parse_upgrades(output));
+}
+
+# Most names one `apt-cache show` call is given (1.5.3).
+var NOUS_SYSDB_BATCH = 256;
+
+# `sysdb_info` for many names in ONE apt-cache call (1.5.3, perf). apt spends
+# ~430 ms loading its cache on every call, and 8 names cost the same as 1
+# (measured on Debian 12). Returns Ok(map: cstr name -> ResolvedPkg) holding
+# only the names apt knows. A name that is not Debian syntax is never passed.
+fn sysdb_info_many(db, names): i64 {
+    var out = map_new();
+    if (sd_apt(db) == 0) { return Ok(out); }
+    var i = 0;
+    while (i < vec_len(names)) {
+        var args = vec_new();
+        vec_push(args, tool_path("apt-cache"));
+        vec_push(args, "show");
+        vec_push(args, "--no-all-versions");
+        var count = 0;
+        while (i < vec_len(names) && count < NOUS_SYSDB_BATCH) {
+            var nm = vec_get(names, i);
+            if (_sysdb_debian_name(nm) == 1) {
+                vec_push(args, _nous_cstr(nm));
+                count = count + 1;
+            }
+            i = i + 1;
+        }
+        if (count > 0) {
+            var t, output = nous_capture(args);
+            if (is_err_result(t) == 1) { return Err(output); }
+            var got = _sysdb_parse_info_many(output);
+            var keys = _nous_sorted_keys(got);
+            var k = 0;
+            while (k < vec_len(keys)) {
+                map_set(out, vec_get(keys, k), map_get(got, vec_get(keys, k)));
+                k = k + 1;
+            }
+        }
+    }
+    return Ok(out);
+}
+
+fn sysdb_info(db, name): i64 {
+    if (sd_apt(db) == 0) { return Ok(0); }
+    if (_sysdb_debian_name(name) == 0) { return Ok(0); }
+    var args = vec_new();
+    vec_push(args, tool_path("apt-cache"));
+    vec_push(args, "show");
+    vec_push(args, "--no-all-versions");
+    vec_push(args, _nous_cstr(name));
+    var out_t, output = nous_capture(args);
+    if (is_err_result(out_t) == 1) { return Err(output); }
+    return Ok(_sysdb_parse_info(name, output));
+}

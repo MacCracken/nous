@@ -58,6 +58,16 @@ fn nous_error_msg(e): i64 {
         str_builder_add(sb, msg);
         str_builder_add_cstr(sb, "`: ");
         if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == NOUS_ERR_NOT_FOUND) {
+        str_builder_add_cstr(sb, "package `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "` not found: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == NOUS_ERR_AMBIGUOUS_SOURCE) {
+        str_builder_add_cstr(sb, "package `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "` exists in more than one source: ");
+        if (detail != 0) { str_builder_add(sb, detail); }
     }
     return str_builder_build(sb);
 }
@@ -86,6 +96,14 @@ fn validate_package_name(name): i64 {
     var trimmed = str_trim(name);
     if (str_len(trimmed) != str_len(name)) {
         return err_invalid_name(name, str_from("package name cannot have leading or trailing whitespace"));
+    }
+    # 1.5.3 (P1, security): a leading '-' would reach apt-cache / dpkg-query as an
+    # OPTION. Proven on Debian 12: `apt-cache show -c/tmp/evil.conf` loads the
+    # file as apt config (forged Dir::State::lists), so an installed marketplace
+    # package could ship one and name it as a dependency. No real package name
+    # starts with '-' (Debian Policy §5.6.1: names start with an alphanumeric).
+    if (load8(str_data(name)) == 45) {
+        return err_invalid_name(name, str_from("package name cannot start with '-'"));
     }
     var d = str_data(name);
     var len = str_len(name);

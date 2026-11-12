@@ -1,0 +1,97 @@
+# Fuzz: the apt / dpkg output parsers (untrusted tool output; 1.5.3 made them
+# pure functions). Mutated apt-cache show, dpkg-query and apt-get -s output
+# must not crash, and every dependency name extracted must be clean: non-empty,
+# with no ':' ',' '|' '(' or space.
+include "src/types.cyr"
+include "src/util.cyr"
+include "src/error.cyr"
+include "src/strategy.cyr"
+include "src/source.cyr"
+include "src/command.cyr"
+include "src/sort.cyr"
+include "src/registry.cyr"
+include "src/sysdb.cyr"
+include "src/resolver.cyr"
+include "src/json.cyr"
+include "src/version.cyr"
+include "src/graph.cyr"
+include "src/recipe.cyr"
+include "src/updates.cyr"
+include "tests/fz_driver.cyr"
+
+# Join up to four cstr pieces into one Str (keeps long fixtures under lint's
+# 120-character line limit).
+fn j4(a, b, c, d): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    str_builder_add_cstr(sb, c);
+    str_builder_add_cstr(sb, d);
+    return str_builder_build(sb);
+}
+fn j4c(a, b, c, d): i64 { return _nous_cstr(j4(a, b, c, d)); }
+
+var _ap_buf = 0;
+var _ap_seeds = 0;
+const _AP_CAP = 8192;
+
+fn _ap_clean(name): i64 {
+    if (str_len(name) == 0) { return 0; }
+    var d = str_data(name);
+    var i = 0;
+    while (i < str_len(name)) {
+        var c = load8(d + i);
+        if (c == 58 || c == 44 || c == 124 || c == 40 || c == 32) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+fn _ap_case(k): i64 {
+    var seed = vec_get(_ap_seeds, k % vec_len(_ap_seeds));
+    var n = strlen(seed);
+    memcpy(_ap_buf, seed, n);
+    n = fz_mutate(_ap_buf, n, _AP_CAP);
+    var s = str_new(fz_exact(fz_arena(), _ap_buf, n), n);
+    var info = _sysdb_parse_info(str_from("p"), s);
+    if (info != 0) {
+        var deps = rp_deps(info);
+        var i = 0;
+        while (i < vec_len(deps)) {
+            if (_ap_clean(vec_get(deps, i)) == 0) { syscall(60, 41); }
+            i = i + 1;
+        }
+        fz_mix(vec_len(deps));
+    }
+    fz_mix(map_count(_sysdb_parse_info_many(s)));
+    fz_mix(vec_len(_sysdb_parse_installed(s)));
+    fz_mix(vec_len(_sysdb_parse_upgrades(s)));
+    fz_mix(vec_len(_sysdb_parse_search(s)));
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _ap_buf = alloc(_AP_CAP + 16);
+    _ap_seeds = vec_new();
+    vec_push(_ap_seeds, j4c(
+        "Package: multi\nVersion: 3.0-1\nPre-Depends: predep (>= 1)\n",
+        "Depends: libnew (>= 3.0), python3:any, a | b\nDescription-en: x\nSize: 4096\n\n",
+        "Package: multi\nVersion: 2.0-1\n\n",
+        ""));
+    vec_push(_ap_seeds, "bash\t5.2-2\t7164\tinstalled\nfoo\t1.0\t10\tconfig-files\n");
+    vec_push(_ap_seeds, j4c(
+        "Inst perl-base [5.36.0-7+deb12u3] (5.36.0-7+deb12u4 Debian-Security:12 [amd64])\n",
+        "Inst new (1.0 Debian:12 [amd64])\nConf x (1)\n",
+        "",
+        ""));
+    vec_push(_ap_seeds, "coreutils - GNU core utilities\nzlib1g - compression library\n");
+    _sysdb_parse_info(str_from("p"), str_from(""));
+    _sysdb_parse_upgrades(str_from("Inst "));
+    _sysdb_parse_upgrades(str_from("Inst x [ (\n"));
+    _sysdb_parse_installed(str_from("\t\t\t\n"));
+    return fz_run("apt fuzz", 6000, &_ap_case);
+}
+
+var _ec = main();
+syscall(60, _ec);

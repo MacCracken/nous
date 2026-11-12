@@ -63,6 +63,7 @@ stdlib = [
     "process",
     "bench",
     "fnptr",
+    "mmap",     # 1.5.3: tests/fz_driver.cyr's shared page (cyr_mmap); test-only in practice
 ]
 
 # bayan's flat-TOML profile alone, not the whole stdlib `bayan` fold. nous
@@ -73,10 +74,17 @@ stdlib = [
 # 58,504 to 406,296 B (1.5.1). bayan-toml needs only alloc/str/vec/hashseed/
 # string/io/result/syscalls (its dist/bayan-toml.deps). Same shape as
 # samay/shravan/mihi pulling `dist/bayan-json.cyr`.
+#
+# 1.5.3 (decision D7): plus the JSON profile, `dist/bayan-json.cyr`. Manifests
+# and nous's own *_from_json now go through bayan's real parser, not nous's
+# hand-rolled field scanners. Those took the first `"name"` anywhere, including
+# inside a nested object, so `{"author":{"name":"mallory"},"name":"real"}` read
+# as mallory. They never decoded escapes, and they read past a trailing `\`.
+# The two profiles declare no name in common.
 [deps.bayan]
 git = "https://github.com/MacCracken/bayan.git"
 tag = "1.11.1"
-modules = ["dist/bayan-toml.cyr"]
+modules = ["dist/bayan-toml.cyr", "dist/bayan-json.cyr"]
 
 # Distribution manifest. Single binary today (`nous`); release.yml
 # packages the x86_64 build. Kept declarative so future tooling

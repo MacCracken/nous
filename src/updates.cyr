@@ -59,7 +59,7 @@ fn resolver_check_updates(r, installed, avail_fn): i64 {
             var src = ip_src(pkg);
             if (src != SOURCE_SYSTEM) {
                 var av = fncall2(avail_fn, ip_name(pkg), src);
-                if (update_is_newer(av, ip_ver(pkg)) == 1) {
+                if (nous_update_is_newer_src(av, ip_ver(pkg), src) == 1) {
                     vec_push(out, avail_update_new(ip_name(pkg), src, ip_ver(pkg), av, 0));
                 }
             }
@@ -67,4 +67,18 @@ fn resolver_check_updates(r, installed, avail_fn): i64 {
         }
     }
     return Ok(out);
+}
+
+# update_is_newer, per source (1.5.3, decision D2). Community (zugot) versions
+# are Debian-style ("10.3p1", "1.9.17p2", "149.0.2-2"), so they compare by
+# deb-version(7). Marketplace and Flutter versions compare as SemVer. ark sends
+# zugot versions through resolver_check_updates, where the SemVer comparison
+# missed suffix and revision updates and offered epoch downgrades.
+fn nous_update_is_newer_src(avail, installed, src): i64 {
+    if (src == SOURCE_COMMUNITY || src == SOURCE_SYSTEM) {
+        if (avail == 0 || installed == 0) { return 0; }
+        if (str_len(avail) == 0) { return 0; }
+        return nous_deb_version_cmp(avail, installed) > 0;
+    }
+    return update_is_newer(avail, installed);
 }

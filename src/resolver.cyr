@@ -12,23 +12,35 @@ fn resolver_new(mkt_dir, cache_dir): i64 {
 fn resolver_with_strategy(r, strat): i64 { rs_set_strat(r, strat); return r; }
 
 fn mpkg_to_resolved(pkg, src): i64 {
-    var dk = map_keys(mpkg_deps(pkg));
+    var dk = _nous_sorted_keys(mpkg_deps(pkg));
     var ds = vec_new();
     var i = 0;
     while (i < vec_len(dk)) {
         vec_push(ds, str_from(vec_get(dk, i)));
         i = i + 1;
     }
-    return resolved_pkg_new(mpkg_name(pkg), mpkg_version(pkg), src, mpkg_desc(pkg), mp_size(pkg), ds, 1);
+    # trusted = 0 (1.5.3, decision D9): nothing verifies a marketplace package's
+    # signature yet (sigil integration is roadmap 1.9.x), so nous no longer
+    # claims it. It was hard-coded to 1, which the 2026-04-16 audit already
+    # flagged ("never hard-code trust"). apt packages stay 1: apt verifies its
+    # archives.
+    return resolved_pkg_new(mpkg_name(pkg), mpkg_version(pkg), src, mpkg_desc(pkg), mp_size(pkg), ds, 0);
 }
 
 fn resolve_mkt(r, name): i64 {
-    var pkg = registry_get(rs_reg(r), name);
+    var pkg = nous_registry_get(rs_reg(r), name);
     if (pkg == 0) {
         trace_msg(r, "marketplace: ", name, "miss");
         return 0;
     }
     trace_msg(r, "marketplace: ", name, "hit");
+    # 1.5.3 (P2): label by runtime. A Flutter app found in the registry was
+    # returned as SOURCE_MARKETPLACE, so under MarketplaceFirst, SystemFirst and
+    # SearchAll `resolve_flutter` was unreachable, and ark used the marketplace
+    # install step for a Flutter app.
+    if (str_eq_cstr(mpkg_runtime(pkg), "flutter") == 1) {
+        return mpkg_to_resolved(pkg, SOURCE_FLUTTER_APP);
+    }
     return mpkg_to_resolved(pkg, SOURCE_MARKETPLACE);
 }
 
@@ -46,7 +58,7 @@ fn resolve_sys(r, name): i64 {
 }
 
 fn resolve_flutter(r, name): i64 {
-    var pkg = registry_get(rs_reg(r), name);
+    var pkg = nous_registry_get(rs_reg(r), name);
     if (pkg == 0) {
         trace_msg(r, "flutter: ", name, "miss");
         return 0;
@@ -64,20 +76,18 @@ fn resolver_resolve(r, name): i64 {
     if (is_err_result(v_t) == 1) { return Err(v); }
     var k = st_kind(rs_strat(r));
 
+    # resolve_mkt labels a Flutter-runtime package SOURCE_FLUTTER_APP itself
+    # (1.5.3), so the old resolve_flutter fallbacks after it were unreachable.
     if (k == STRAT_MARKETPLACE_FIRST) {
         var mp = resolve_mkt(r, name);
         if (mp != 0) { return Ok(mp); }
-        var fl = resolve_flutter(r, name);
-        if (fl != 0) { return Ok(fl); }
         return resolve_sys(r, name);
     }
     if (k == STRAT_SYSTEM_FIRST) {
         var sr_t, sr = resolve_sys(r, name);
         if (is_err_result(sr_t) == 1) { return Err(sr); }
         if (sr != 0) { return Ok(sr); }
-        var mp = resolve_mkt(r, name);
-        if (mp != 0) { return Ok(mp); }
-        return Ok(resolve_flutter(r, name));
+        return Ok(resolve_mkt(r, name));
     }
     if (k == STRAT_ONLY_SOURCE) {
         var s = st_only(rs_strat(r));
@@ -86,12 +96,23 @@ fn resolver_resolve(r, name): i64 {
         if (s == SOURCE_FLUTTER_APP) { return Ok(resolve_flutter(r, name)); }
         return Ok(0);
     }
+    # SearchAll (1.5.3, decision D5) asks EVERY source, and a name found in more
+    # than one is Err(NOUS_ERR_AMBIGUOUS_SOURCE), never a silent pick. It used to
+    # be identical to MarketplaceFirst, so a marketplace package named like a
+    # system one won without a word.
     if (k == STRAT_SEARCH_ALL) {
         var mp = resolve_mkt(r, name);
+        var ss_t, ss = resolve_sys(r, name);
+        if (is_err_result(ss_t) == 1) { return Err(ss); }
+        if (mp != 0 && ss != 0) {
+            var sb = str_builder_new();
+            str_builder_add_cstr(sb, "found in ");
+            str_builder_add(sb, source_to_str(rp_src(mp)));
+            str_builder_add_cstr(sb, " and in system; pick a source with strategy_only()");
+            return nous_err(NOUS_ERR_AMBIGUOUS_SOURCE, name, str_builder_build(sb));
+        }
         if (mp != 0) { return Ok(mp); }
-        var fl = resolve_flutter(r, name);
-        if (fl != 0) { return Ok(fl); }
-        return resolve_sys(r, name);
+        return Ok(ss);
     }
     return Ok(0);
 }
@@ -105,7 +126,7 @@ fn resolver_search(r, query): i64 {
     var i = 0;
     while (i < vec_len(mr)) {
         var mpkg = vec_get(mr, i);
-        map_set(seen, to_cstr(mpkg_name(mpkg)), 1);
+        map_set(seen, _nous_cstr(mpkg_name(mpkg)), 1);
         vec_push(results, mpkg_to_resolved(mpkg, SOURCE_MARKETPLACE));
         i = i + 1;
     }
@@ -119,19 +140,19 @@ fn resolver_search(r, query): i64 {
     var j = 0;
     while (j < vec_len(sp)) {
         var pkg = vec_get(sp, j);
-        if (map_has(seen, to_cstr(rp_name(pkg))) == 0) {
-            map_set(seen, to_cstr(rp_name(pkg)), 1);
+        if (map_has(seen, _nous_cstr(rp_name(pkg))) == 0) {
+            map_set(seen, _nous_cstr(rp_name(pkg)), 1);
             vec_push(results, pkg);
         }
         j = j + 1;
     }
     sort_resolved(results);
-    return Ok(search_result_new(results, sources, vec_len(results)));
+    return Ok(nous_search_result_new(results, sources, vec_len(results)));
 }
 
 fn resolver_list(r): i64 {
     var pkgs = vec_new();
-    var ml = registry_list(rs_reg(r));
+    var ml = nous_registry_list(rs_reg(r));
     var i = 0;
     while (i < vec_len(ml)) {
         var mpkg = vec_get(ml, i);
@@ -150,5 +171,5 @@ fn resolver_list(r): i64 {
 }
 
 fn resolver_updates(r): i64 { return sysdb_updates(rs_sys(r)); }
-fn resolver_is_mkt(r, name): i64 { if (registry_get(rs_reg(r), name) != 0) { return 1; } return 0; }
+fn resolver_is_mkt(r, name): i64 { if (nous_registry_get(rs_reg(r), name) != 0) { return 1; } return 0; }
 

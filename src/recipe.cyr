@@ -33,8 +33,9 @@ fn rc_bd_deps(r): i64 { return load64(r + 88); }
 
 # RecipeDb constructor (3 fields, 24 bytes)
 fn recipe_db_new(path, recipes, order): i64 {
-    var p = alloc(24);
+    var p = alloc(32);
     store64(p, path); store64(p + 8, recipes); store64(p + 16, order);
+    store64(p + 24, vec_new());
     return p;
 }
 fn rdb_path(d): i64 { return load64(d); }
@@ -146,10 +147,72 @@ fn nous_cyml_parse(src): i64 {
                         value = str_new(d + vs, pos - vs);
                         if (pos < len) { pos = pos + 1; }
                     }
-                    # Unquoted: read to end of line
+                    # Array [...]: may span lines (1.5.3, P1). It used to be read to the
+                    # end of its first line, so `runtime = [` + one dep per line (47
+                    # zugot recipes, e.g. firefox's ~20 deps) gave ZERO deps. Read up to
+                    # the matching ']', string- and escape-aware, dropping `#` comments
+                    # outside quotes, which used to add a dep from `# "openssl"`.
+                    elif (vc == 91) {
+                        # Fast path (1.5.3, perf): with no `#` comment inside, the
+                        # value is a view of the source (zero copy). Otherwise it
+                        # is copied with the comments dropped.
+                        var sp2 = pos;
+                        var sdepth = 0;
+                        var sinstr = 0;
+                        var has_comment = 0;
+                        var sdone = 0;
+                        while (sp2 < len && sdone == 0) {
+                            var sc = load8(d + sp2);
+                            if (sinstr == 1) {
+                                if (sc == 92) { sp2 = sp2 + 1; } elif (sc == 34) { sinstr = 0; }
+                            } elif (sc == 35) { has_comment = 1; sdone = 1; }
+                            elif (sc == 34) { sinstr = 1; }
+                            elif (sc == 91) { sdepth = sdepth + 1; }
+                            elif (sc == 93) {
+                                sdepth = sdepth - 1;
+                                if (sdepth == 0) { sdone = 1; }
+                            }
+                            sp2 = sp2 + 1;
+                        }
+                        if (has_comment == 0) {
+                            if (sp2 > len) { sp2 = len; }
+                            value = str_new(d + pos, sp2 - pos);
+                            pos = sp2;
+                        } else {
+                            var asb = str_builder_new();
+                            var depth = 0;
+                            var instr = 0;
+                            var adone = 0;
+                            while (pos < len && adone == 0) {
+                                var ac = load8(d + pos);
+                                if (instr == 1) {
+                                    str_builder_putc(asb, ac);
+                                    if (ac == 92 && pos + 1 < len) {
+                                        pos = pos + 1;
+                                        str_builder_putc(asb, load8(d + pos));
+                                    } elif (ac == 34) { instr = 0; }
+                                    pos = pos + 1;
+                                } elif (ac == 35) {
+                                    while (pos < len && load8(d + pos) != 10) { pos = pos + 1; }
+                                } else {
+                                    str_builder_putc(asb, ac);
+                                    if (ac == 34) { instr = 1; }
+                                    if (ac == 91) { depth = depth + 1; }
+                                    if (ac == 93) {
+                                        depth = depth - 1;
+                                        if (depth == 0) { adone = 1; }
+                                    }
+                                    pos = pos + 1;
+                                }
+                            }
+                            value = str_builder_build(asb);
+                        }
+                    }
+                    # Other unquoted values (numbers, booleans): to the end of the line
+                    # or to a `#` comment (TOML strings are always quoted).
                     else {
                         var ustart = pos;
-                        while (pos < len && load8(d + pos) != 10) { pos = pos + 1; }
+                        while (pos < len && load8(d + pos) != 10 && load8(d + pos) != 35) { pos = pos + 1; }
                         var uend = pos;
                         while (uend > ustart) {
                             var tc = load8(d + uend - 1);
@@ -171,10 +234,10 @@ fn nous_cyml_parse(src): i64 {
 }
 
 fn cyml_parse_file(path): i64 {
-    var buf = alloc(65536);
-    var n = file_read_all(to_cstr(path), buf, 65536);
-    if (n <= 0) { return vec_new(); }
-    return nous_cyml_parse(str_new(buf, n));
+    # Whole file or nothing (1.5.3): never a half-read prefix.
+    var content = _nous_read_file(path, NOUS_FILE_MAX);
+    if (content == 0) { return vec_new(); }
+    return nous_cyml_parse(content);
 }
 
 # Get a section's pairs by name from parsed sections
@@ -205,7 +268,7 @@ fn cyml_get(pairs, key): i64 {
 
 # Parse a .cyml recipe file into a Recipe struct.
 # Returns 0 on failure.
-fn recipe_parse_file(path): i64 {
+fn nous_recipe_parse_file(path): i64 {
     var sections = cyml_parse_file(path);
     if (vec_len(sections) == 0) { return 0; }
 
@@ -279,14 +342,16 @@ fn recipe_parse_file(path): i64 {
     return r;
 }
 
+# Deprecated (1.5.3), removed in 2.0.0: takumi defines `recipe_parse_file` too.
+#deprecated("use nous_recipe_parse_file; recipe_parse_file collides with takumi (removed in 2.0.0)")
+fn recipe_parse_file(path): i64 { return nous_recipe_parse_file(path); }
+
 # Read build-order.txt: returns vec of Str ("category/name" entries)
 fn read_build_order(zugot_path): i64 {
     var order = vec_new();
-    var bo_path = join_path(zugot_path, str_from("build-order.txt"));
-    var buf = alloc(65536);
-    var n = file_read_all(to_cstr(bo_path), buf, 65536);
-    if (n <= 0) { return order; }
-    var content = str_new(buf, n);
+    var bo_path = path_join(zugot_path, str_from("build-order.txt"));
+    var content = _nous_read_file(bo_path, NOUS_FILE_MAX);
+    if (content == 0) { return order; }
     var lines = str_split(content, 10);
     var i = 0;
     while (i < vec_len(lines)) {
@@ -303,41 +368,62 @@ fn read_build_order(zugot_path): i64 {
 
 # Scan a zugot directory and load all .cyml recipes into a hashmap.
 # Returns a RecipeDb.
+#
+# 1.5.3 (P1): every category directory is scanned, not a hard-coded list. The
+# list named "desktop", but zugot's directory is "desktops" (196 recipes), and
+# it named a "bazaar" that does not exist: 342 of 563 recipes loaded. Entries
+# are visited in byte order, so the result no longer depends on the
+# filesystem's listing order.
+#
+# Duplicate names (1.5.3, decision D6): zugot has 26 (e.g. base/curl and
+# edge/curl, with different deps). The winner used to be whichever loaded
+# last, and a crafted bazaar/zz-glibc.cyml replaced glibc's deps. Now the
+# precedence is fixed: "base" first, then the other categories in byte order,
+# then files in byte order within a category. The FIRST recipe with a name
+# wins, and every later one is recorded in `nous_recipe_db_duplicates`.
 fn recipe_db_load(zugot_path): i64 {
     var recipes = map_new();
+    var where = map_new();
     var order = read_build_order(zugot_path);
-    var cp = to_cstr(zugot_path);
-
-    # Scan known category directories
-    var categories = vec_new();
-    vec_push(categories, "base");
-    vec_push(categories, "desktop");
-    vec_push(categories, "marketplace");
-    vec_push(categories, "ai");
-    vec_push(categories, "edge");
-    vec_push(categories, "network");
-    vec_push(categories, "browser");
-    vec_push(categories, "python");
-    vec_push(categories, "database");
-    vec_push(categories, "sandbox");
-    vec_push(categories, "bazaar");
-
+    var db = recipe_db_new(zugot_path, recipes, order);
+    var cats = vec_new();
+    var all = dir_list(zugot_path);
+    _nous_sort_strs(all);
+    var ai = 0;
+    while (ai < vec_len(all)) {
+        var nm = vec_get(all, ai);
+        if (str_eq_cstr(nm, "base") == 1) { vec_push(cats, nm); }
+        ai = ai + 1;
+    }
+    ai = 0;
+    while (ai < vec_len(all)) {
+        var nm2 = vec_get(all, ai);
+        if (str_len(nm2) > 0 && load8(str_data(nm2)) != 46 && str_eq_cstr(nm2, "base") == 0) {
+            vec_push(cats, nm2);
+        }
+        ai = ai + 1;
+    }
     var ci = 0;
-    while (ci < vec_len(categories)) {
-        var cat = str_from(vec_get(categories, ci));
-        var cat_dir = join_path(zugot_path, cat);
-        var cdir = to_cstr(cat_dir);
-        if (our_is_dir(cdir) == 1) {
+    while (ci < vec_len(cats)) {
+        var cat = vec_get(cats, ci);
+        var cat_dir = path_join(zugot_path, cat);
+        if (our_is_dir(_nous_cstr(cat_dir)) == 1) {
             var entries = dir_list(cat_dir);
+            _nous_sort_strs(entries);
             var ei = 0;
             while (ei < vec_len(entries)) {
                 var entry = vec_get(entries, ei);
-                # Only .cyml files
                 if (str_ends_with(entry, str_from(".cyml")) == 1) {
-                    var fpath = join_path(cat_dir, entry);
-                    var recipe = recipe_parse_file(fpath);
+                    var recipe = nous_recipe_parse_file(path_join(cat_dir, entry));
                     if (recipe != 0) {
-                        map_set(recipes, to_cstr(rc_name(recipe)), recipe);
+                        var rel = path_join(cat, entry);
+                        var cn = _nous_cstr(rc_name(recipe));
+                        if (map_has(recipes, cn) == 1) {
+                            vec_push(rdb_duplicates(db), _nous_rdup_new(rc_name(recipe), map_get(where, cn), rel));
+                        } else {
+                            map_set(recipes, cn, recipe);
+                            map_set(where, cn, rel);
+                        }
                     }
                 }
                 ei = ei + 1;
@@ -345,13 +431,27 @@ fn recipe_db_load(zugot_path): i64 {
         }
         ci = ci + 1;
     }
-
-    return recipe_db_new(zugot_path, recipes, order);
+    return db;
 }
+
+fn rdb_duplicates(d): i64 { return load64(d + 24); }
+
+# A shadowed recipe: {name, kept "cat/file.cyml", ignored "cat/file.cyml"}.
+fn _nous_rdup_new(name, kept, ignored): i64 {
+    var p = alloc(24);
+    store64(p, name); store64(p + 8, kept); store64(p + 16, ignored);
+    return p;
+}
+fn nous_rdup_name(p): i64 { return load64(p); }
+fn nous_rdup_kept(p): i64 { return load64(p + 8); }
+fn nous_rdup_ignored(p): i64 { return load64(p + 16); }
+
+# Every recipe a same-named earlier one shadowed, in load order (1.5.3, D6).
+fn nous_recipe_db_duplicates(db): i64 { return rdb_duplicates(db); }
 
 # Look up a recipe by package name.
 fn recipe_db_get(db, name): i64 {
-    return map_get(rdb_recipes(db), to_cstr(name));
+    return map_get(rdb_recipes(db), _nous_cstr(name));
 }
 
 # Get the build order as a vec of Str.
@@ -410,123 +510,301 @@ fn resolve_from_recipe(r, name): i64 {
     return recipe_to_resolved(recipe);
 }
 
-# Extended resolve_all that also checks recipe DB.
-fn resolver_resolve_all_with_recipes(r, names): i64 {
-    var graph = dep_graph_new();
-    var pending = vec_new();
-    var visited = map_new();
+# Extended resolve_all that also checks the recipe DB.
+fn resolver_resolve_all_with_recipes(r, names): i64 { return _nous_resolve_closure(r, names, 1); }
 
+# "not found" detail: who needed it, plus a typo suggestion when one is close.
+fn _nous_not_found(r, name, requirer): i64 {
+    var sb = str_builder_new();
+    if (requirer == 0) {
+        str_builder_add_cstr(sb, "not in any source");
+    } else {
+        str_builder_add_cstr(sb, "required by `");
+        str_builder_add(sb, requirer);
+        str_builder_add_cstr(sb, "`");
+    }
+    var sug = suggest_package(name, collect_known_names(r));
+    if (sug != 0) {
+        str_builder_add_cstr(sb, "; did you mean `");
+        str_builder_add(sb, sug);
+        str_builder_add_cstr(sb, "`?");
+    }
+    return nous_err(NOUS_ERR_NOT_FOUND, name, str_builder_build(sb));
+}
+
+# The transitive closure of `names` (1.5.3: one core for both entry points;
+# they were near-duplicates). A breadth-first queue of (name, requirer, is the
+# requirer an apt package).
+#
+#   - A dependency of an APT package resolves from apt only (decision D5). Under
+#     MarketplaceFirst, curl's `libssl3` used to be looked up in the marketplace
+#     first, so a manifest named "libssl3" was spliced into apt's closure. Every
+#     other name follows the resolver's strategy, plus the recipe DB when
+#     `use_recipes`.
+#   - A name that cannot be found is no longer skipped silently (decision D4).
+#     A root, or a dependency of a non-apt package, is
+#     Err(NOUS_ERR_NOT_FOUND) naming who needed it. An apt dependency apt cannot
+#     show (a virtual package, an alternative) is recorded in
+#     `nous_pl_unresolved`, because apt resolves those itself. Before, `a ->
+#     ghost` gave Ok [a], and a missing root gave Ok [].
+#   - The first time a name is reached decides how it resolves (breadth-first,
+#     deterministic).
+fn _nous_resolve_closure(r, names, use_recipes): i64 {
+    var graph = dep_graph_new();
+    var q_name = vec_new();
+    var q_req = vec_new();
+    var q_sys = vec_new();
+    var visited = map_new();
+    var unresolved = vec_new();
+    var fetched = map_new();      # apt-side names fetched: cstr -> pkg (0 = absent)
     var i = 0;
     while (i < vec_len(names)) {
-        vec_push(pending, vec_get(names, i));
+        vec_push(q_name, vec_get(names, i));
+        vec_push(q_req, 0);
+        vec_push(q_sys, 0);
         i = i + 1;
     }
-
-    while (vec_len(pending) > 0) {
-        var name = vec_get(pending, 0);
-        vec_remove(pending, 0);
-        var cname = to_cstr(name);
+    var ph = 0;
+    while (ph < vec_len(q_name)) {
+        var name = vec_get(q_name, ph);
+        var requirer = vec_get(q_req, ph);
+        var from_sys = vec_get(q_sys, ph);
+        ph = ph + 1;
+        var cname = _nous_cstr(name);
         if (map_has(visited, cname) == 1) { continue; }
         map_set(visited, cname, 1);
 
-        # Try normal resolution first
-        var res_t, res = resolver_resolve(r, name);
-        if (is_err_result(res_t) == 1) { return Err(res); }
-        var pkg = res;
-
-        # Fallback to recipe DB
-        if (pkg == 0) {
-            pkg = resolve_from_recipe(r, name);
+        var pkg = 0;
+        if (from_sys == 1) {
+            # Batched (1.5.3, perf). The first time an apt-side name is not yet
+            # fetched, fetch EVERY apt-side name queued so far in one apt call.
+            # curl's 32-package closure took 32 calls (14.7 s); it now takes
+            # one per breadth-first wave. Same results, same order.
+            if (map_has(fetched, cname) == 0) {
+                var want = vec_new();
+                var wq = ph - 1;
+                while (wq < vec_len(q_name)) {
+                    var wn = vec_get(q_name, wq);
+                    var wc = _nous_cstr(wn);
+                    if (vec_get(q_sys, wq) == 1 && map_has(fetched, wc) == 0 && map_has(visited, wc) == 0) {
+                        vec_push(want, wn);
+                        map_set(fetched, wc, 0);
+                    } elif (wq == ph - 1) {
+                        vec_push(want, wn);
+                        map_set(fetched, wc, 0);
+                    }
+                    wq = wq + 1;
+                }
+                var f_t, got = sysdb_info_many(rs_sys(r), want);
+                if (is_err_result(f_t) == 1) { return Err(got); }
+                var gk = _nous_sorted_keys(got);
+                var gi = 0;
+                while (gi < vec_len(gk)) {
+                    map_set(fetched, vec_get(gk, gi), map_get(got, vec_get(gk, gi)));
+                    gi = gi + 1;
+                }
+            }
+            pkg = map_get(fetched, cname);
+            if (pkg != 0) { trace_msg(r, "system: ", name, "hit"); }
+            else { trace_msg(r, "system: ", name, "miss"); }
+            if (pkg == 0) {
+                vec_push(unresolved, _nous_unres_new(name, requirer));
+                continue;
+            }
+        } else {
+            var res_t, res = resolver_resolve(r, name);
+            if (is_err_result(res_t) == 1) { return Err(res); }
+            pkg = res;
+            if (pkg == 0 && use_recipes == 1) { pkg = resolve_from_recipe(r, name); }
+            if (pkg == 0) { return _nous_not_found(r, name, requirer); }
         }
-        if (pkg == 0) { continue; }
 
         dep_graph_add(graph, pkg);
+        var is_sys = 0;
+        if (rp_src(pkg) == SOURCE_SYSTEM) { is_sys = 1; }
         var deps = rp_deps(pkg);
         var j = 0;
         while (j < vec_len(deps)) {
             var dep = vec_get(deps, j);
-            if (map_has(visited, to_cstr(dep)) == 0) {
-                vec_push(pending, dep);
+            if (map_has(visited, _nous_cstr(dep)) == 0) {
+                vec_push(q_name, dep);
+                vec_push(q_req, rp_name(pkg));
+                vec_push(q_sys, is_sys);
             }
             j = j + 1;
         }
     }
-
-    return finalize_graph(r, graph);
+    var p_t, plan = finalize_graph(r, graph);
+    if (is_err_result(p_t) == 1) { return Err(plan); }
+    store64(plan + 16, unresolved);
+    return Ok(plan);
 }
 
 # Shared finalization: cycle check, conflict check, topo sort, build plan.
 fn finalize_graph(r, graph): i64 {
-    var cycle = dep_graph_detect_cycle(graph);
-    if (cycle != 0) {
-        return nous_err(NOUS_ERR_DEPENDENCY_CYCLE, format_cycle(cycle), 0);
+    # Cycles (1.5.3, decision D3; ADR 0005). Debian allows circular dependencies
+    # (Policy §7.2), and real ones exist: on Debian 12 libc6 depends on
+    # libgcc-s1, which depends on libc6. Rejecting every cycle failed any
+    # transitive resolve that reached libc6 through apt. A cycle made ONLY of apt
+    # (SOURCE_SYSTEM) packages is accepted, and its members install in byte
+    # order (Policy: "the breaking point is arbitrary"). Any cycle that touches a
+    # marketplace / community / flutter package is still an error.
+    var nb = alloc(8);
+    var ab = alloc(8);
+    var comps = _nous_tarjan(graph, nb, ab);
+    var tnames = load64(nb);
+    var tadj = load64(ab);
+    var ci = 0;
+    while (ci < vec_len(comps)) {
+        var comp = vec_get(comps, ci);
+        if (_nous_comp_cyclic(comp, tadj) == 1) {
+            var all_sys = 1;
+            var mi = 0;
+            while (mi < vec_len(comp)) {
+                var node = map_get(dg_nodes(graph), vec_get(tnames, vec_get(comp, mi)));
+                if (rp_src(node) != SOURCE_SYSTEM) { all_sys = 0; }
+                mi = mi + 1;
+            }
+            if (all_sys == 0) {
+                return nous_err(NOUS_ERR_DEPENDENCY_CYCLE,
+                  format_cycle(_nous_comp_cycle_path(comp, tadj, tnames)), 0);
+            }
+        }
+        ci = ci + 1;
     }
 
-    # Conflict detection with detailed explanation
-    var constraint_map = map_new();
-    var source_map = map_new();
-    var all_nodes = map_keys(dg_nodes(graph));
+    # Version constraints (1.5.3, decisions D1 + D2). Every constraint on a
+    # dependency is kept, with who required it, and they are intersected as
+    # version ranges. Before, only the FIRST constraint was stored and each
+    # later one was compared with that one alone (`*`, `=1.0.0`, `=2.0.0`
+    # passed), and constraints_compatible sampled about five versions. Then
+    # the version actually chosen must satisfy every range: `>=2.0.0` used to
+    # resolve to 1.0.0 without a word. apt and community versions compare as
+    # Debian versions (deb-version(7)), the rest as SemVer.
+    var cons = map_new();          # dep cstr -> vec of {range, requirer, text}
+    var all_nodes = _nous_sorted_keys(dg_nodes(graph));
     var i = 0;
     while (i < vec_len(all_nodes)) {
-        var cname = vec_get(all_nodes, i);
-        var pkg = map_get(dg_nodes(graph), cname);
+        var pkg = map_get(dg_nodes(graph), vec_get(all_nodes, i));
         var deps = rp_deps(pkg);
         var manifest_deps = map_new();
-        var mp = registry_get(rs_reg(r), rp_name(pkg));
-        if (mp != 0) { manifest_deps = mpkg_deps(mp); }
-        # Also check recipe DB if attached
-        if (rs_rdb(r) != 0) {
-            var rc = recipe_db_get(rs_rdb(r), rp_name(pkg));
-            if (rc != 0) {
-                # Recipe deps don't have version constraints in the dep list,
-                # but the recipe's own version is fixed
-            }
+        var mp = nous_registry_get(rs_reg(r), rp_name(pkg));
+        if (mp != 0 && rp_src(pkg) != SOURCE_SYSTEM && rp_src(pkg) != SOURCE_COMMUNITY) {
+            manifest_deps = mpkg_deps(mp);
         }
         var j = 0;
         while (j < vec_len(deps)) {
             var dep = vec_get(deps, j);
-            var cdep = to_cstr(dep);
-            var constraint_str = map_get(manifest_deps, cdep);
-            if (constraint_str != 0) {
-                var ct = constraint_parse(constraint_str);
-                if (map_has(constraint_map, cdep) == 1) {
-                    var existing = map_get(constraint_map, cdep);
-                    if (constraints_compatible(existing, ct) == 0) {
-                        var prev_src = map_get(source_map, cdep);
-                        var sb = str_builder_new();
-                        if (prev_src != 0) { str_builder_add(sb, prev_src); }
-                        str_builder_add_cstr(sb, " conflicts with ");
-                        str_builder_add(sb, rp_name(pkg));
-                        str_builder_add_cstr(sb, " requires ");
-                        str_builder_add(sb, constraint_str);
-                        return nous_err(NOUS_ERR_VERSION_CONFLICT, dep,
-                          str_builder_build(sb));
-                    }
-                } else {
-                    map_set(constraint_map, cdep, ct);
-                    var ssb = str_builder_new();
-                    str_builder_add(ssb, rp_name(pkg));
-                    str_builder_add_cstr(ssb, " requires ");
-                    str_builder_add(ssb, constraint_str);
-                    map_set(source_map, cdep, str_builder_build(ssb));
+            var cdep = _nous_cstr(dep);
+            var text = map_get(manifest_deps, cdep);
+            if (text != 0) {
+                var ct = constraint_parse(text);
+                if (nous_constraint_error(ct) != 0) {
+                    var esb = str_builder_new();
+                    str_builder_add(esb, rp_name(pkg));
+                    str_builder_add_cstr(esb, " requires ");
+                    str_builder_add(esb, text);
+                    str_builder_add_cstr(esb, ": ");
+                    str_builder_add(esb, nous_constraint_error(ct));
+                    return nous_err(NOUS_ERR_INVALID_VERSION_CONSTRAINT, dep, str_builder_build(esb));
                 }
+                if (map_has(cons, cdep) == 0) { map_set(cons, cdep, vec_new()); }
+                var ent = alloc(24);
+                store64(ent, _nous_range_of(ct)); store64(ent + 8, rp_name(pkg)); store64(ent + 16, text);
+                vec_push(map_get(cons, cdep), ent);
             }
             j = j + 1;
         }
         i = i + 1;
     }
-
-    var order = dep_graph_topo_sort(graph);
-    var ordered_pkgs = vec_new();
-    var oi = vec_len(order) - 1;
-    while (oi >= 0) {
-        var oraw = vec_get(order, oi);
-        var oname = to_cstr(oraw);
-        if (map_has(dg_nodes(graph), oname) == 1) {
-            vec_push(ordered_pkgs, map_get(dg_nodes(graph), oname));
+    var ckeys = _nous_sorted_keys(cons);
+    var ki = 0;
+    while (ki < vec_len(ckeys)) {
+        var cdep2 = vec_get(ckeys, ki);
+        var ents = map_get(cons, cdep2);
+        var acc = load64(vec_get(ents, 0));
+        var ei = 1;
+        while (ei < vec_len(ents)) {
+            var cur = vec_get(ents, ei);
+            var nxt = _nous_range_intersect(acc, load64(cur));
+            if (nxt == 0) {
+                # Name a pair that cannot both hold when there is one, else every
+                # requirement so far.
+                var sb = str_builder_new();
+                var pj = 0;
+                var found = 0;
+                while (pj < ei && found == 0) {
+                    var prev = vec_get(ents, pj);
+                    if (_nous_range_intersect(load64(prev), load64(cur)) == 0) {
+                        str_builder_add(sb, load64(prev + 8));
+                        str_builder_add_cstr(sb, " requires ");
+                        str_builder_add(sb, load64(prev + 16));
+                        found = 1;
+                    }
+                    pj = pj + 1;
+                }
+                if (found == 0) {
+                    pj = 0;
+                    while (pj < ei) {
+                        var pv = vec_get(ents, pj);
+                        if (pj > 0) { str_builder_add_cstr(sb, " and "); }
+                        str_builder_add(sb, load64(pv + 8));
+                        str_builder_add_cstr(sb, " requires ");
+                        str_builder_add(sb, load64(pv + 16));
+                        pj = pj + 1;
+                    }
+                }
+                str_builder_add_cstr(sb, ", but ");
+                str_builder_add(sb, load64(cur + 8));
+                str_builder_add_cstr(sb, " requires ");
+                str_builder_add(sb, load64(cur + 16));
+                return nous_err(NOUS_ERR_VERSION_CONFLICT, str_from(cdep2), str_builder_build(sb));
+            }
+            acc = nxt;
+            ei = ei + 1;
         }
-        oi = oi - 1;
+        if (map_has(dg_nodes(graph), cdep2) == 1) {
+            var node = map_get(dg_nodes(graph), cdep2);
+            ei = 0;
+            while (ei < vec_len(ents)) {
+                var e2 = vec_get(ents, ei);
+                if (_nous_range_contains_ver(load64(e2), rp_ver(node), rp_src(node)) == 0) {
+                    var vb = str_builder_new();
+                    str_builder_add(vb, load64(e2 + 8));
+                    str_builder_add_cstr(vb, " requires ");
+                    str_builder_add(vb, load64(e2 + 16));
+                    str_builder_add_cstr(vb, ", but the version available is ");
+                    str_builder_add(vb, rp_ver(node));
+                    str_builder_add_cstr(vb, " (");
+                    str_builder_add(vb, source_to_str(rp_src(node)));
+                    str_builder_add_cstr(vb, ")");
+                    return nous_err(NOUS_ERR_VERSION_CONFLICT, str_from(cdep2), str_builder_build(vb));
+                }
+                ei = ei + 1;
+            }
+        }
+        ki = ki + 1;
     }
 
-    return Ok(res_plan_new(ordered_pkgs, order));
+    # Install order (1.5.3): Tarjan's emission order, dependencies first, with
+    # each component's members in byte order. pl_order is INSTALL order, the
+    # same as pl_packages and as docs/api.md says; it used to be Kahn's raw order
+    # (dependents first), the reverse, while ark printed it as "deps-first".
+    var ordered_pkgs = vec_new();
+    var install_order = vec_new();
+    ci = 0;
+    while (ci < vec_len(comps)) {
+        var members = vec_get(comps, ci);
+        _nous_sort_ints(members);
+        var k = 0;
+        while (k < vec_len(members)) {
+            var cn = vec_get(tnames, vec_get(members, k));
+            vec_push(ordered_pkgs, map_get(dg_nodes(graph), cn));
+            vec_push(install_order, str_from(cn));
+            k = k + 1;
+        }
+        ci = ci + 1;
+    }
+
+    return Ok(res_plan_new(ordered_pkgs, install_order));
 }

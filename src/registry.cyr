@@ -50,7 +50,7 @@ fn json_extract_deps(data): i64 {
                         while (j < dl && load8(d + j) != 34) { j = j + 1; }
                         var val_str = str_new(d + vs, j - vs);
                         j = j + 1;
-                        map_set(deps, to_cstr(key_str), val_str);
+                        map_set(deps, _nous_cstr(key_str), val_str);
                     }
                 }
                 return deps;
@@ -61,30 +61,28 @@ fn json_extract_deps(data): i64 {
     return deps;
 }
 
+# 1.5.3 (decision D7): parsed with bayan's JSON parser (`manifest_from_json`),
+# by structure. nous's scanners took the first `"name"` anywhere, so
+# `{"author":{"name":"mallory"},"name":"real"}` read as mallory. A string
+# value "dependencies" hijacked the deps scan. Escapes were never decoded. A
+# file that is not one JSON object is not a manifest (0).
 fn parse_manifest_file(file_path): i64 {
-    var buf = alloc(8192);
-    var n = file_read_all(to_cstr(file_path), buf, 8192);
-    if (n <= 0) { return 0; }
-    var content = str_new(buf, n);
-    var name = json_extract_str(content, "name");
-    var version = json_extract_str(content, "version");
-    var desc = json_extract_str(content, "description");
-    var runtime = json_extract_str(content, "runtime");
-    if (name == 0) { name = str_from(""); }
-    if (version == 0) { version = str_from(""); }
-    if (desc == 0) { desc = str_from(""); }
-    if (runtime == 0) { runtime = str_from("native"); }
-    var deps = json_extract_deps(content);
-    var agent = nous_agent_info_new(name, version, desc);
-    return manifest_new(agent, deps, runtime);
+    # Whole file or nothing (1.5.3): never a half-read prefix.
+    var content = _nous_read_file(file_path, NOUS_FILE_MAX);
+    if (content == 0) { return 0; }
+    return manifest_from_json(content);
 }
 
 fn scan_installed(base_dir): i64 {
     var pkgs = vec_new();
-    var idir = join_path(base_dir, str_from("installed"));
-    var cd = to_cstr(idir);
+    var idir = path_join(base_dir, str_from("installed"));
+    var cd = _nous_cstr(idir);
     if (our_is_dir(cd) == 0) { return pkgs; }
     var entries = dir_list(idir);
+    # Byte order (1.5.3), not the filesystem's listing order. With two
+    # directories carrying the same manifest name, the first is the one
+    # registry_get returns, on every machine.
+    _nous_sort_strs(entries);
     var i = 0;
     while (i < vec_len(entries)) {
         var entry = vec_get(entries, i);
@@ -94,9 +92,9 @@ fn scan_installed(base_dir): i64 {
             i = i + 1;
             continue;
         }
-        var pdir = join_path(idir, entry);
-        var mpath = join_path(pdir, str_from("manifest.json"));
-        var cm = to_cstr(mpath);
+        var pdir = path_join(idir, entry);
+        var mpath = path_join(pdir, str_from("manifest.json"));
+        var cm = _nous_cstr(mpath);
         # Read directly — no TOCTOU gap from file_exists+read
         var manifest = parse_manifest_file(mpath);
         if (manifest != 0) {
@@ -117,7 +115,7 @@ fn registry_new(base_dir): i64 {
     # the recipe DB. (Previously this hard-errored, which forced callers to
     # return a sentinel resolver and then deref a non-error payload — a
     # SIGSEGV on any host without the marketplace dir.)
-    if (our_is_dir(to_cstr(base_dir)) == 0) {
+    if (our_is_dir(_nous_cstr(base_dir)) == 0) {
         return Ok(registry_make(base_dir, vec_new()));
     }
     return Ok(registry_make(base_dir, scan_installed(base_dir)));
@@ -138,7 +136,7 @@ fn registry_search(reg, query): i64 {
     return results;
 }
 
-fn registry_get(reg, name): i64 {
+fn nous_registry_get(reg, name): i64 {
     var pkgs = rg_pkgs(reg);
     var i = 0;
     while (i < vec_len(pkgs)) {
@@ -149,7 +147,14 @@ fn registry_get(reg, name): i64 {
     return 0;
 }
 
-fn registry_list(reg): i64 { return rg_pkgs(reg); }
+# Deprecated (1.5.3), removed in 2.0.0: bote, hoosh, szal and thoth define
+# `registry_get` too.
+#deprecated("use nous_registry_get; registry_get collides with bote/hoosh/szal/thoth (removed in 2.0.0)")
+fn registry_get(reg, name): i64 { return nous_registry_get(reg, name); }
+
+fn nous_registry_list(reg): i64 { return rg_pkgs(reg); }
+#deprecated("use nous_registry_list; registry_list collides with bote/hoosh/szal/thoth (removed in 2.0.0)")
+fn registry_list(reg): i64 { return nous_registry_list(reg); }
 
 fn registry_reload(reg): i64 {
     var dir = rg_dir(reg);

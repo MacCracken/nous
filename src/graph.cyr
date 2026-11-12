@@ -18,7 +18,7 @@ fn dg_nodes(g): i64 { return load64(g); }
 fn dg_edges(g): i64 { return load64(g + 8); }
 
 fn dep_graph_add(g, pkg): i64 {
-    var cname = to_cstr(rp_name(pkg));
+    var cname = _nous_cstr(rp_name(pkg));
     map_set(dg_nodes(g), cname, pkg);
     # Add edges from this pkg's deps
     var deps = rp_deps(pkg);
@@ -35,78 +35,174 @@ fn dep_graph_add(g, pkg): i64 {
 # P1: Cycle Detection (DFS with 3-color marking)
 # ===================================================================
 
-# Colors: 0=white (unvisited), 1=gray (in progress), 2=black (done)
+# 1.5.3: cycles and install order come from one ITERATIVE Tarjan pass
+# (R. E. Tarjan, "Depth-first search and linear graph algorithms", SIAM J.
+# Comput. 1(2), 1972; see docs/sources.md). It replaces the recursive DFS colour
+# walk, which crashed on 50k+ chains (stack depth) and misreported a self-loop
+# reached through another node as [xx, aa, aa]. Tarjan emits each strongly
+# connected component after every component reachable from it, so with edges
+# pointing package -> dependency the emission order is install order
+# (dependencies first). Nodes are visited in byte order and edges in dep-list
+# order, so the result is deterministic.
 
-fn detect_cycle_dfs(g, name, color, path, result_cycle): i64 {
-    var cname = to_cstr(name);
-    map_set(color, cname, 1);
-    vec_push(path, name);
-
-    var edges = dg_edges(g);
-    if (map_has(edges, cname) == 1) {
-        var deps = map_get(edges, cname);
-        var i = 0;
-        while (i < vec_len(deps)) {
-            var dep = vec_get(deps, i);
-            var cdep = to_cstr(dep);
-            var dep_color = map_get(color, cdep);
-            if (dep_color == 1) {
-                # Found a back edge — cycle! Build cycle path.
-                var cycle = vec_new();
-                var j = vec_len(path) - 1;
-                while (j >= 0) {
-                    vec_push(cycle, vec_get(path, j));
-                    if (str_eq(vec_get(path, j), dep) == 1 && j < vec_len(path) - 1) {
-                        break;
-                    }
-                    j = j - 1;
-                }
-                # Reverse the cycle
-                var rev = vec_new();
-                var k = vec_len(cycle) - 1;
-                while (k >= 0) {
-                    vec_push(rev, vec_get(cycle, k));
-                    k = k - 1;
-                }
-                vec_push(rev, dep);
-                # Store in result_cycle (vec at index 0)
-                store64(result_cycle, rev);
-                vec_pop(path);
-                return 1;
+# Tarjan over `g`. Returns a vec of components in emission (install) order;
+# each component is a vec of node indexes. *names_out gets the node names (cstr,
+# byte order), *adj_out the adjacency (vec of index vecs, graph nodes only).
+fn _nous_tarjan(g, names_out, adj_out): i64 {
+    var names = _nous_sorted_keys(dg_nodes(g));
+    var n = vec_len(names);
+    var idx = map_new();
+    var i = 0;
+    while (i < n) { map_set(idx, vec_get(names, i), i + 1); i = i + 1; }
+    var adj = vec_new();
+    i = 0;
+    while (i < n) {
+        var out = vec_new();
+        var cn = vec_get(names, i);
+        if (map_has(dg_edges(g), cn) == 1) {
+            var deps = map_get(dg_edges(g), cn);
+            var j = 0;
+            while (j < vec_len(deps)) {
+                var t = map_get(idx, _nous_cstr(vec_get(deps, j)));
+                if (t > 0) { vec_push(out, t - 1); }
+                j = j + 1;
             }
-            if (dep_color == 0) {
-                if (detect_cycle_dfs(g, dep, color, path, result_cycle) == 1) {
-                    vec_pop(path);
-                    return 1;
-                }
-            }
-            i = i + 1;
         }
+        vec_push(adj, out);
+        i = i + 1;
     }
+    store64(names_out, names);
+    store64(adj_out, adj);
+    var comps = vec_new();
+    if (n == 0) { return comps; }
+    var index = alloc(n * 8);
+    var low = alloc(n * 8);
+    var onst = alloc(n * 8);
+    i = 0;
+    while (i < n) { store64(index + i * 8, 0 - 1); store64(onst + i * 8, 0); i = i + 1; }
+    var tstack = vec_new();
+    var fr_v = vec_new();          # call frames: node, next edge position
+    var fr_e = vec_new();
+    var counter = 0;
+    var root = 0;
+    while (root < n) {
+        if (load64(index + root * 8) < 0) {
+            store64(index + root * 8, counter); store64(low + root * 8, counter);
+            counter = counter + 1;
+            vec_push(tstack, root); store64(onst + root * 8, 1);
+            vec_push(fr_v, root); vec_push(fr_e, 0);
+            while (vec_len(fr_v) > 0) {
+                var top = vec_len(fr_v) - 1;
+                var v = vec_get(fr_v, top);
+                var ei = vec_get(fr_e, top);
+                var av = vec_get(adj, v);
+                if (ei < vec_len(av)) {
+                    vec_set(fr_e, top, ei + 1);
+                    var w = vec_get(av, ei);
+                    if (load64(index + w * 8) < 0) {
+                        store64(index + w * 8, counter); store64(low + w * 8, counter);
+                        counter = counter + 1;
+                        vec_push(tstack, w); store64(onst + w * 8, 1);
+                        vec_push(fr_v, w); vec_push(fr_e, 0);
+                    } elif (load64(onst + w * 8) == 1) {
+                        var wi = load64(index + w * 8);
+                        if (wi < load64(low + v * 8)) { store64(low + v * 8, wi); }
+                    }
+                } else {
+                    vec_pop(fr_v);
+                    vec_pop(fr_e);
+                    if (vec_len(fr_v) > 0) {
+                        var pv = vec_get(fr_v, vec_len(fr_v) - 1);
+                        if (load64(low + v * 8) < load64(low + pv * 8)) { store64(low + pv * 8, load64(low + v * 8)); }
+                    }
+                    if (load64(low + v * 8) == load64(index + v * 8)) {
+                        var comp = vec_new();
+                        var go = 1;
+                        while (go == 1) {
+                            var x = vec_pop(tstack);
+                            store64(onst + x * 8, 0);
+                            vec_push(comp, x);
+                            if (x == v) { go = 0; }
+                        }
+                        vec_push(comps, comp);
+                    }
+                }
+            }
+        }
+        root = root + 1;
+    }
+    return comps;
+}
 
-    map_set(color, cname, 2);
-    vec_pop(path);
+# 1 when component `comp` is a cycle: 2+ nodes, or one node with a self-edge.
+fn _nous_comp_cyclic(comp, adj): i64 {
+    if (vec_len(comp) > 1) { return 1; }
+    var v = vec_get(comp, 0);
+    var av = vec_get(adj, v);
+    var i = 0;
+    while (i < vec_len(av)) {
+        if (vec_get(av, i) == v) { return 1; }
+        i = i + 1;
+    }
     return 0;
 }
 
-fn dep_graph_detect_cycle(g): i64 {
-    var color = map_new();
-    var nodes = map_keys(dg_nodes(g));
-    var i = 0;
-    while (i < vec_len(nodes)) {
-        var cname = vec_get(nodes, i);
-        map_set(color, cname, 0);
+# A concrete cycle through the component's byte-first member s, as Strs
+# [s, ..., s]: a breadth-first search inside the component back to s.
+fn _nous_comp_cycle_path(comp, adj, names): i64 {
+    var s = vec_get(comp, 0);
+    var i = 1;
+    while (i < vec_len(comp)) {
+        if (vec_get(comp, i) < s) { s = vec_get(comp, i); }
         i = i + 1;
     }
-    var result_holder = alloc(8);
-    store64(result_holder, 0);
+    var inc = map_new();
     i = 0;
-    while (i < vec_len(nodes)) {
-        var name = str_from(vec_get(nodes, i));
-        if (map_get(color, vec_get(nodes, i)) == 0) {
-            if (detect_cycle_dfs(g, name, color, vec_new(), result_holder) == 1) {
-                return load64(result_holder);
+    while (i < vec_len(comp)) { map_set(inc, vec_get(names, vec_get(comp, i)), 1); i = i + 1; }
+    var parent = map_new();
+    var q = vec_new();
+    vec_push(q, s);
+    var qh = 0;
+    var last = 0 - 1;
+    while (qh < vec_len(q) && last < 0) {
+        var u = vec_get(q, qh);
+        qh = qh + 1;
+        var au = vec_get(adj, u);
+        var j = 0;
+        while (j < vec_len(au) && last < 0) {
+            var w = vec_get(au, j);
+            if (w == s) { last = u; }
+            elif (map_has(inc, vec_get(names, w)) == 1 && map_has(parent, vec_get(names, w)) == 0) {
+                map_set(parent, vec_get(names, w), u + 1);
+                vec_push(q, w);
             }
+            j = j + 1;
+        }
+    }
+    var rev = vec_new();
+    var cur = last;
+    while (cur >= 0 && cur != s) {
+        vec_push(rev, cur);
+        cur = map_get(parent, vec_get(names, cur)) - 1;
+    }
+    var path = vec_new();
+    vec_push(path, str_from(vec_get(names, s)));
+    var k = vec_len(rev) - 1;
+    while (k >= 0) { vec_push(path, str_from(vec_get(names, vec_get(rev, k)))); k = k - 1; }
+    vec_push(path, str_from(vec_get(names, s)));
+    return path;
+}
+
+# The first cycle in `g` (byte order), as a vec of Str names [a, ..., a], or 0.
+fn dep_graph_detect_cycle(g): i64 {
+    var nb = alloc(8);
+    var ab = alloc(8);
+    var comps = _nous_tarjan(g, nb, ab);
+    var i = 0;
+    while (i < vec_len(comps)) {
+        var comp = vec_get(comps, i);
+        if (_nous_comp_cyclic(comp, load64(ab)) == 1) {
+            return _nous_comp_cycle_path(comp, load64(ab), load64(nb));
         }
         i = i + 1;
     }
@@ -118,7 +214,7 @@ fn dep_graph_detect_cycle(g): i64 {
 # ===================================================================
 
 fn dep_graph_topo_sort(g): i64 {
-    var nodes = map_keys(dg_nodes(g));
+    var nodes = _nous_sorted_keys(dg_nodes(g));
     var in_degree = map_new();
     # Initialize in-degree to 0
     var i = 0;
@@ -134,7 +230,7 @@ fn dep_graph_topo_sort(g): i64 {
             var deps = map_get(dg_edges(g), cname);
             var j = 0;
             while (j < vec_len(deps)) {
-                var dep = to_cstr(vec_get(deps, j));
+                var dep = _nous_cstr(vec_get(deps, j));
                 if (map_has(in_degree, dep) == 1) {
                     map_set(in_degree, dep, map_get(in_degree, dep) + 1);
                 }
@@ -153,15 +249,18 @@ fn dep_graph_topo_sort(g): i64 {
         i = i + 1;
     }
     var order = vec_new();
-    while (vec_len(queue) > 0) {
-        var cname = vec_get(queue, 0);
-        vec_remove(queue, 0);
+    # FIFO through a head index: vec_remove(queue, 0) shifted the whole queue on
+    # every pop, which is O(n²) on a wide graph (1.5.3; same order).
+    var qh = 0;
+    while (qh < vec_len(queue)) {
+        var cname = vec_get(queue, qh);
+        qh = qh + 1;
         vec_push(order, str_from(cname));
         if (map_has(dg_edges(g), cname) == 1) {
             var deps = map_get(dg_edges(g), cname);
             var j = 0;
             while (j < vec_len(deps)) {
-                var dep = to_cstr(vec_get(deps, j));
+                var dep = _nous_cstr(vec_get(deps, j));
                 if (map_has(in_degree, dep) == 1) {
                     var nd = map_get(in_degree, dep) - 1;
                     map_set(in_degree, dep, nd);
@@ -179,29 +278,13 @@ fn dep_graph_topo_sort(g): i64 {
 # P1: Conflict Detection
 # ===================================================================
 
-# Check if two constraints on the same package are satisfiable.
-# Returns 1 if they can both be satisfied, 0 if conflict.
+# 1 if some version satisfies both constraints, else 0. 1.5.3: a true range
+# intersection. It used to try about five sample versions, so ">1.2.0" with
+# "<1.3.0" read as a conflict (1.2.1 satisfies both), and swapping the
+# arguments changed the answer.
 fn constraints_compatible(c1, c2): i64 {
-    # Test a range of versions to see if any satisfies both.
-    # For exact matches this is definitive. For ranges, we test
-    # the constraint versions and nearby versions.
-    var v1 = ct_ver(c1);
-    var v2 = ct_ver(c2);
-    # Test both constraint versions
-    if (constraint_matches(c1, v1) == 1 && constraint_matches(c2, v1) == 1) { return 1; }
-    if (constraint_matches(c1, v2) == 1 && constraint_matches(c2, v2) == 1) { return 1; }
-    # Test the higher of the two
-    if (semver_cmp(v1, v2) >= 0) {
-        if (constraint_matches(c1, v1) == 1 && constraint_matches(c2, v1) == 1) { return 1; }
-    } else {
-        if (constraint_matches(c1, v2) == 1 && constraint_matches(c2, v2) == 1) { return 1; }
-    }
-    # Test a few incremented versions
-    var test_v = semver_new(sv_major(v2), sv_minor(v2), sv_patch(v2) + 1);
-    if (constraint_matches(c1, test_v) == 1 && constraint_matches(c2, test_v) == 1) { return 1; }
-    test_v = semver_new(sv_major(v1), sv_minor(v1) + 1, 0);
-    if (constraint_matches(c1, test_v) == 1 && constraint_matches(c2, test_v) == 1) { return 1; }
-    return 0;
+    if (_nous_range_intersect(_nous_range_of(c1), _nous_range_of(c2)) == 0) { return 0; }
+    return 1;
 }
 
 # ===================================================================
@@ -210,54 +293,26 @@ fn constraints_compatible(c1, c2): i64 {
 
 # ResPlan: pl_packages(0) pl_order(8)
 fn res_plan_new(packages, order): i64 {
-    var p = alloc(16);
-    store64(p, packages); store64(p + 8, order);
+    var p = alloc(24);
+    store64(p, packages); store64(p + 8, order); store64(p + 16, vec_new());
     return p;
 }
 fn pl_packages(p): i64 { return load64(p); }
 fn pl_order(p): i64 { return load64(p + 8); }
 
-# Resolve a list of package names transitively.
-# Returns Ok(ResPlan) or Err(NousError).
-fn resolver_resolve_all(r, names): i64 {
-    var graph = dep_graph_new();
-    var pending = vec_new();
-    var visited = map_new();
-
-    # Seed the queue
-    var i = 0;
-    while (i < vec_len(names)) {
-        vec_push(pending, vec_get(names, i));
-        i = i + 1;
-    }
-
-    # BFS: resolve each package, add its deps to the queue
-    while (vec_len(pending) > 0) {
-        var name = vec_get(pending, 0);
-        vec_remove(pending, 0);
-        var cname = to_cstr(name);
-        if (map_has(visited, cname) == 1) { continue; }
-        map_set(visited, cname, 1);
-
-        var res_t, res = resolver_resolve(r, name);
-        if (is_err_result(res_t) == 1) { return Err(res); }
-        var pkg = res;
-        if (pkg == 0) { continue; }
-
-        dep_graph_add(graph, pkg);
-
-        # Enqueue dependencies
-        var deps = rp_deps(pkg);
-        var j = 0;
-        while (j < vec_len(deps)) {
-            var dep = vec_get(deps, j);
-            if (map_has(visited, to_cstr(dep)) == 0) {
-                vec_push(pending, dep);
-            }
-            j = j + 1;
-        }
-    }
-
-    return finalize_graph(r, graph);
+# Names an apt package depends on that apt itself could not show: virtual
+# packages, alternatives (1.5.3, decision D4). They are listed, not fatal,
+# because apt resolves them. Each entry: nous_unres_name / nous_unres_requirer.
+fn nous_pl_unresolved(p): i64 { return load64(p + 16); }
+fn _nous_unres_new(name, requirer): i64 {
+    var u = alloc(16);
+    store64(u, name); store64(u + 8, requirer);
+    return u;
 }
+fn nous_unres_name(u): i64 { return load64(u); }
+fn nous_unres_requirer(u): i64 { return load64(u + 8); }
+
+# Resolve a list of package names transitively.
+# Returns Ok(ResPlan) or Err(NousError). See `_nous_resolve_closure`.
+fn resolver_resolve_all(r, names): i64 { return _nous_resolve_closure(r, names, 0); }
 

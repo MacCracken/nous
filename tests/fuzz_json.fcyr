@@ -1,0 +1,117 @@
+# Fuzz: every *_from_json and the manifest parser (untrusted marketplace
+# manifest.json; nous's own JSON coming back). Mutated JSON must not crash. A
+# property on top: a ResolvedPkg built from random printable / control-char
+# strings must survive to_json -> from_json exactly (escaping, 1.5.3).
+include "src/types.cyr"
+include "src/util.cyr"
+include "src/error.cyr"
+include "src/strategy.cyr"
+include "src/source.cyr"
+include "src/command.cyr"
+include "src/sort.cyr"
+include "src/registry.cyr"
+include "src/sysdb.cyr"
+include "src/resolver.cyr"
+include "src/json.cyr"
+include "src/version.cyr"
+include "src/graph.cyr"
+include "src/recipe.cyr"
+include "src/updates.cyr"
+include "tests/fz_driver.cyr"
+
+# Join up to four cstr pieces into one Str (keeps long fixtures under lint's
+# 120-character line limit).
+fn j4(a, b, c, d): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    str_builder_add_cstr(sb, c);
+    str_builder_add_cstr(sb, d);
+    return str_builder_build(sb);
+}
+fn j4c(a, b, c, d): i64 { return _nous_cstr(j4(a, b, c, d)); }
+
+var _js_buf = 0;
+var _js_seeds = 0;
+const _JS_CAP = 8192;
+
+# A random string: printable ASCII, sometimes quotes / backslashes / controls.
+fn _js_rand_str(): i64 {
+    var sb = str_builder_new();
+    var n = fz_below(24);
+    var i = 0;
+    while (i < n) {
+        var c = 32 + fz_below(95);
+        if (fz_one_in(6) == 1) { c = fz_below(32); }
+        if (fz_one_in(8) == 1) { c = 34; }
+        if (fz_one_in(8) == 1) { c = 92; }
+        str_builder_putc(sb, c);
+        i = i + 1;
+    }
+    return str_builder_build(sb);
+}
+
+fn _js_case(k): i64 {
+    if (k % 3 == 0) {
+        # Roundtrip property.
+        var deps = vec_new();
+        vec_push(deps, _js_rand_str());
+        var p = resolved_pkg_new(_js_rand_str(), _js_rand_str(), SOURCE_MARKETPLACE, _js_rand_str(),
+          fz_below(100000), deps, fz_below(2));
+        if (str_len(rp_name(p)) == 0) { return 0; }
+        var b = resolved_from_json(resolved_to_json(p));
+        if (b == 0) { syscall(60, 21); }
+        if (str_eq(rp_name(b), rp_name(p)) == 0) { syscall(60, 22); }
+        if (str_eq(rp_desc(b), rp_desc(p)) == 0) { syscall(60, 23); }
+        if (str_eq(vec_get(rp_deps(b), 0), vec_get(deps, 0)) == 0) { syscall(60, 24); }
+        if (rp_size(b) != rp_size(p) || rp_trust(b) != rp_trust(p)) { syscall(60, 25); }
+        fz_mix(rp_size(b));
+        return 0;
+    }
+    var seed = vec_get(_js_seeds, k % vec_len(_js_seeds));
+    var n = strlen(seed);
+    memcpy(_js_buf, seed, n);
+    n = fz_mutate(_js_buf, n, _JS_CAP);
+    var s = str_new(fz_exact(fz_arena(), _js_buf, n), n);
+    var m = manifest_from_json(s);
+    if (m != 0) { fz_mix(map_count(mf_deps(m))); }
+    var r = resolved_from_json(s);
+    if (r != 0) { fz_mix(vec_len(rp_deps(r))); }
+    installed_from_json(s);
+    update_from_json(s);
+    var sr = search_result_from_json(s);
+    if (sr != 0) { fz_mix(vec_len(sr_results(sr))); }
+    error_kind_from_json(s);
+    agent_info_from_json(s);
+    strategy_from_json(s);
+    json_extract_str(s, "name");
+    json_extract_deps(s);
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _js_buf = alloc(_JS_CAP + 16);
+    _js_seeds = vec_new();
+    vec_push(_js_seeds, j4c(
+        "{\"agent\":{\"name\":\"a\",\"version\":\"1.0\",\"description\":\"d\"},",
+        "\"dependencies\":{\"b\":\">=1.0\",\"c\":\"*\"},\"runtime\":\"native\"}",
+        "",
+        ""));
+    vec_push(_js_seeds, j4c(
+        "{\"name\":\"p\",\"version\":\"1\",\"source\":\"system\",\"description\":\"x\\\"y\",",
+        "\"size_bytes\":9,\"dependencies\":[\"a\",\"b\"],\"trusted\":true}",
+        "",
+        ""));
+    vec_push(_js_seeds, "{\"results\":[{\"name\":\"q\"}],\"sources\":[\"marketplace\"],\"total_matches\":1}");
+    vec_push(_js_seeds, "{\"kind\":7,\"message\":\"m\",\"detail\":null}");
+    vec_push(_js_seeds, "{\"OnlySource\":\"system\"}");
+    manifest_from_json(str_from(""));
+    manifest_from_json(str_from("{"));
+    resolved_from_json(str_from("[1,2"));
+    json_extract_str(str_from("{\"name\":\"abc\\"), "name");
+    return fz_run("json fuzz", 6000, &_js_case);
+}
+
+var _ec = main();
+syscall(60, _ec);

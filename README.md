@@ -96,13 +96,14 @@ Nous uses heuristics to detect package source when no explicit source is provide
 
 ```bash
 cyrius build src/main.cyr build/nous    # compile
-cyrius test tests/nous.tcyr             # 314 assertions
-cyrius bench tests/nous.bcyr            # 19 benchmarks
+cyrius test tests/nous.tcyr             # 493 assertions
+cyrius bench tests/nous.bcyr            # 23 benchmarks
+cyrius fuzz --poison=ab tests/          # 5 fuzz harnesses
 ```
 
 Requires Cyrius 6.7.18 (pinned in `cyrius.cyml`) and one git dependency,
-bayan's `dist/bayan-toml.cyr` profile, which `cyrius deps` fetches. Release
-binary (`CYRIUS_DCE=1`): ~37 KB x86_64 ELF.
+bayan (its `dist/bayan-toml.cyr` and `dist/bayan-json.cyr` profiles), which
+`cyrius deps` fetches. Release binary (`CYRIUS_DCE=1`): ~41 KB x86_64 ELF.
 
 ## Related
 

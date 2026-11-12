@@ -1,0 +1,82 @@
+# Fuzz: nous_cyml_parse + cyml_get + parse_toml_array, the zugot recipe parser
+# (untrusted .cyml). Seeded mutations of real recipe shapes: multi-line arrays,
+# triple quotes, comments, [[array]] headers. Must not crash; the digest folds
+# the section and pair counts (1.5.3).
+include "src/types.cyr"
+include "src/util.cyr"
+include "src/error.cyr"
+include "src/strategy.cyr"
+include "src/source.cyr"
+include "src/command.cyr"
+include "src/sort.cyr"
+include "src/registry.cyr"
+include "src/sysdb.cyr"
+include "src/resolver.cyr"
+include "src/json.cyr"
+include "src/version.cyr"
+include "src/graph.cyr"
+include "src/recipe.cyr"
+include "src/updates.cyr"
+include "tests/fz_driver.cyr"
+
+# Join up to four cstr pieces into one Str (keeps long fixtures under lint's
+# 120-character line limit).
+fn j4(a, b, c, d): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    str_builder_add_cstr(sb, c);
+    str_builder_add_cstr(sb, d);
+    return str_builder_build(sb);
+}
+fn j4c(a, b, c, d): i64 { return _nous_cstr(j4(a, b, c, d)); }
+
+var _cy_buf = 0;
+var _cy_seeds = 0;
+const _CY_CAP = 8192;
+
+fn _cy_case(k): i64 {
+    var seed = vec_get(_cy_seeds, k % vec_len(_cy_seeds));
+    var n = strlen(seed);
+    memcpy(_cy_buf, seed, n);
+    n = fz_mutate(_cy_buf, n, _CY_CAP);
+    var secs = nous_cyml_parse(str_new(fz_exact(fz_arena(), _cy_buf, n), n));
+    fz_mix(vec_len(secs));
+    var pkg = cyml_section_by_name(secs, "package");
+    if (pkg != 0) {
+        fz_mix(vec_len(pkg));
+        var nm = cyml_get(pkg, "name");
+        if (nm != 0) { fz_mix(str_len(nm)); }
+    }
+    var dep = cyml_section_by_name(secs, "depends");
+    if (dep != 0) { fz_mix(vec_len(parse_toml_array(cyml_get(dep, "runtime")))); }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _cy_buf = alloc(_CY_CAP + 16);
+    _cy_seeds = vec_new();
+    vec_push(_cy_seeds, j4c(
+        "[package]\nname = \"dbus\"\nversion = \"1.14\"\n\n[depends]\nruntime = [\n",
+        "    \"glibc\",   # libc\n    \"expat\",\n]\nbuild = [\"gcc\"]  # \"x\"\n",
+        "",
+        ""));
+    vec_push(_cy_seeds, j4c(
+        "[package]\nname = \"x\"\ndescription = \"\"\"\nmulti\nline\n\"\"\"\n[[patches]]\n",
+        "name = \"p\"\n",
+        "",
+        ""));
+    vec_push(_cy_seeds, "[source]\nurl = \"https://e.org/x.tar.gz\"\nsha256 = \"ab\"\ngithub_release = \"o/r\"\n");
+    vec_push(_cy_seeds, "[package]\nname=\"a\"\nrelease=3\ngroups=[\"g\",\"h\"]\n");
+    # Degenerate inputs must not crash.
+    nous_cyml_parse(str_from(""));
+    nous_cyml_parse(str_from("["));
+    nous_cyml_parse(str_from("[[[[]]]]"));
+    nous_cyml_parse(str_from("k = [\n\"a\\\"\n"));
+    nous_cyml_parse(str_from("k = \"\"\""));
+    return fz_run("cyml fuzz", 6000, &_cy_case);
+}
+
+var _ec = main();
+syscall(60, _ec);

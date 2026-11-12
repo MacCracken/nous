@@ -28,6 +28,8 @@
 
 var NOUS_CAPTURE_INIT = 65536;
 var NOUS_CAPTURE_MAX = 16777216;
+# Idle deadline nous applies when the caller set none (1.5.3); 0 disables it.
+var NOUS_CAPTURE_IDLE_MS = 60000;
 
 # Scratch buffer, shared by every capture. Grown, never shrunk. Results are
 # copied out of it, so reusing it is safe.
@@ -76,7 +78,26 @@ fn _nous_cap_overflow(args, max): i64 {
 #            pre-1.5.1 contract, which callers read as "nothing found")
 #   Err(e)   NOUS_ERR_COMMAND_EXEC: the output did not fit in `max` bytes, or
 #            the idle deadline cut the run short
+#
+# Idle deadline (1.5.3): when the caller has set none (proc_timeout_ms() == 0,
+# the stdlib default, which waits forever), nous applies NOUS_CAPTURE_IDLE_MS
+# around its own runs and then restores 0. A hung apt-cache / dpkg-query used to
+# block the caller indefinitely. A caller's own non-zero deadline always wins.
+# Set NOUS_CAPTURE_IDLE_MS = 0 to turn the default off.
 fn nous_capture_n(args, init, max): i64 {
+    var prev = proc_timeout_ms();
+    var applied = 0;
+    if (prev == 0 && NOUS_CAPTURE_IDLE_MS > 0) {
+        proc_set_timeout_ms(NOUS_CAPTURE_IDLE_MS);
+        applied = 1;
+    }
+    var t, v = _nous_capture_run(args, init, max);
+    if (applied == 1) { proc_set_timeout_ms(prev); }
+    if (is_err_result(t) == 1) { return Err(v); }
+    return Ok(v);
+}
+
+fn _nous_capture_run(args, init, max): i64 {
     var st[16];
     var cap = init;
     if (cap > max) { cap = max; }
@@ -114,7 +135,7 @@ fn nous_cmd_capture(cmd_str): i64 {
     var args = vec_new();
     vec_push(args, "/bin/sh");
     vec_push(args, "-c");
-    vec_push(args, to_cstr(cmd_str));
+    vec_push(args, _nous_cstr(cmd_str));
     return nous_capture(args);
 }
 
@@ -149,6 +170,12 @@ fn which_exists(name): i64 {
 # 127, no output, integration_apt asserts fail in CI). Resolving in the
 # parent (which has PATH) and handing the child a full path is the fix.
 # See docs/development/issues/0002-sysdb-exec-bare-name-path.md.
+#
+# 1.5.3 (security): only ABSOLUTE PATH entries are searched, and only a regular
+# file the caller may execute is accepted. A relative entry (`.`, an empty
+# segment, `bin`) let a binary in the current directory stand in for
+# apt-cache. A directory named `apt-cache` was also accepted; it then failed
+# to run and read as "no output".
 fn which_path(name): i64 {
     var pe = getenv("PATH");
     if (pe == 0) { return 0; }
@@ -156,13 +183,22 @@ fn which_path(name): i64 {
     var i = 0;
     while (i < vec_len(dirs)) {
         var dir = vec_get(dirs, i);
-        if (str_len(dir) > 0) {
-            var full = to_cstr(join_path(dir, str_from(name)));
-            if (file_exists(full) == 1) { return full; }
+        if (str_len(dir) > 0 && load8(str_data(dir)) == 47) {
+            var full = _nous_cstr(path_join(dir, str_from(name)));
+            if (_nous_is_exec_file(full) == 1) { return full; }
         }
         i = i + 1;
     }
     return 0;
+}
+
+# 1 when `cpath` is a regular file the caller may execute (stat + access X_OK).
+fn _nous_is_exec_file(cpath): i64 {
+    var st[144];
+    if (syscall(SYS_STAT, cpath, &st) < 0) { return 0; }
+    if ((load32(&st + 24) & 61440) != 32768) { return 0; }   # S_IFREG
+    if (sys_access(cpath, 1) != 0) { return 0; }              # X_OK
+    return 1;
 }
 
 # Absolute path of a system tool for exec_capture, falling back to the

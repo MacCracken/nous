@@ -3,50 +3,30 @@
 What's next for nous. Shipped work is recorded in [CHANGELOG.md](../../CHANGELOG.md),
 not here.
 
-**Current state (1.5.2, cyrius 6.7.18).**
+**Current state (1.5.3, cyrius 6.7.18).**
 - **Resolution:** transitive resolution across system, marketplace, Flutter and
   community sources, with 4 strategies.
-- **Graph:** Kahn topological sort, DFS cycle detection, and conflict reporting.
-- **Inputs:** 8 constraint operators and the zugot recipe DB.
-- **Plumbing:** JSON for every public type, and complete child-output capture.
-- **Size:** 15 modules, 314 assertions, 19 benchmarks, and a ~37 KB release smoke binary.
+- **Determinism:** byte-ordered everywhere; results never depend on the hash seed.
+- **Sources:** apt dependencies resolve from apt, and SearchAll errors on a
+  cross-source name collision.
+- **Graph:** iterative Tarjan for cycles (apt-only cycles accepted, ADR 0005) and
+  for install order.
+- **Versions:** constraints intersected as ranges, plus a check on the version
+  chosen. Debian ordering for apt and community, SemVer for the rest.
+- **Inputs:** the zugot recipe DB (all categories, duplicates reported), and
+  manifests and JSON via bayan's parser.
+- **Plumbing:** complete child-output capture with a default idle deadline, and
+  apt queries batched per breadth-first wave.
+- **Size:** 15 modules, 493 assertions, 23 benchmarks, 5 fuzz harnesses
+  (`--poison=ab`), and a ~41 KB release smoke binary.
 
 ---
 
-## 1.5.2 — Quick fixes: done, ready to release
+## 1.5.3 — P(-1) sweep: done, ready to release
 
-Every item shipped; [CHANGELOG 1.5.2](../../CHANGELOG.md) has the details.
-
-## 1.5.3 — P(-1) sweep: audit, refactor, hardening, optimization, security
-
-Starts after 1.5.2 ships. It is the full CLAUDE.md P(-1) process (steps 0–10):
-test and benchmark baseline, cleanliness, internal deep review, external
-research, fixes, post-review benchmarks, and a docs audit. Repairs land in this
-release.
-
-Known starting points:
-
-- **Namespace audit** of every public name (fns, globals, enum members) against
-  the pinned stdlib and every sibling repo, plus a `nous_*` prefix plan for 2.0.0.
-  1.5.1 / 1.5.2 handled the nine names found so far (seven `ERR_*`, two fns).
-- **Capture copy cost.** The owned copy runs through the stdlib's byte-wise
-  `memcpy`: about 2 ns a byte, or +~120 µs per 60 KB. The choice is a word-wise
-  copy in nous (which hand-rolls a stdlib primitive) or an upstream fix. **Needs
-  a decision.**
-- **Return annotations.** Result-returning public fns are declared `: i64`.
-  `cyrius header` refuses that shape since 6.7.12, though the compiled bytes are
-  the same. Assess moving them to `: Result`, the way 1.2.3 swept the return types.
-- **Input hardening.** Review the CYML recipe parser, manifest JSON, apt/dpkg
-  output parsing, `which_path` PATH resolution, and the registry directory scan.
-  Each one gets a fuzz target (`tests/nous.fcyr` covers a subset today).
-- **Security re-review** against the 1.1.1 attack categories, on current code.
-  `validate_package_name` must run before every argv. `/bin/sh -c` may only take
-  constant command strings. Check `sysdb` parsing of untrusted tool output.
-- **Retire `our_is_dir`.** nous keeps a hand-rolled stat-based copy from when
-  the stdlib `is_dir` was broken. The stdlib one works on 6.7.18 (checked in
-  1.5.2), and the copy is where the 1.3.1 stack smash happened.
-- **Idiom check** against the cyrius 6.7.x library conventions (typed `Str` /
-  `bool` returns, `const`), applied only where the code calls for it.
+Every repair and decision is in [CHANGELOG 1.5.3](../../CHANGELOG.md) and
+[the audit](../audit/2026-11-12-1.5.3-p-1.md). What it found but did not
+repair is placed below.
 
 ## 1.6.0 — Documentation completeness
 
@@ -62,6 +42,19 @@ Known starting points:
       deps feed the solver, because recipe deps carry no version constraints.
 - [ ] **`github_release` URL resolution.** `recipe_parse_file` builds a
       placeholder (`https://github.com/<owner>/<repo>/releases`), not an asset URL.
+- [ ] **Version selection with backtracking** (PubGrub-style; Dart pub, uv,
+      Cargo). Prefer locked versions, allow several major versions side by side,
+      and explain failures as causal chains. Today each name has one candidate,
+      checked rather than chosen, so a set solvable by an older version is
+      rejected (1.5.3 audit, research #18).
+- [ ] **SemVer pre-release and build ordering** (§9–§11), plus pub_semver build
+      ordering for Flutter (`1.0.0+2`). Today `1.0.0-rc.1` compares as `1.0.0`,
+      and a pre-release tag in a constraint is an error.
+- [ ] **Compound ranges**: npm AND by whitespace, Cargo AND by comma, `||`,
+      hyphen ranges. They are refused with an error today.
+- [ ] **Lockfile integrity.** Every node, transitive ones included, records
+      name, source, exact version and artifact hash; locked mode refuses any
+      unlocked node (pip / Cargo practice).
 
 ## 1.8.x — Sovereign native resolver (ark v2 M2)
 
@@ -89,6 +82,9 @@ Acceptance (with ark): with apt absent from PATH, nous resolves a name to
 `SOURCE_NATIVE` from the signed index, and ark installs it from the local store
 with a committed lock (1.7.x).
 
+- [ ] **Rollback and freeze protection.** Track the highest version seen per
+      (name, source), and use signed, expiring index metadata (TUF §1.5.2).
+
 ## 1.9.x — Marketplace (mela) integration
 
 - [ ] **Replace the registry stub.** Today `registry.cyr` scans a local directory
@@ -105,11 +101,24 @@ with a committed lock (1.7.x).
 - [ ] **Index caching** for marketplace and system packages.
 - [ ] **Incremental resolution:** re-resolve only the affected subgraph.
 - [ ] **Parallel resolution** across sources.
+- [ ] **The system leg through apt's own solver** (`apt-get -s install <pkg>`
+      `Inst` lines) instead of re-deriving `Depends`. That would handle
+      alternatives and virtual packages, which are listed in
+      `nous_pl_unresolved` today.
+- [ ] **Faster capture copy-out.** The stdlib `memcpy` is byte-wise (~2 ns/byte);
+      suggest a word-wise version upstream (decision D11: accepted for now).
 
 ## 2.0.0 backlog (breaking)
 
-- [ ] Remove the deprecated bare names: `which_exists`, `cmd_run`, and whatever
-      the 1.5.3 namespace audit adds.
+- [ ] Remove the nine deprecated bare names: `which_exists`, `cmd_run` (1.5.2);
+      `to_cstr`, `join_path`, `registry_get`, `registry_list`, `search_result_new`,
+      `recipe_parse_file` (1.5.3).
+- [ ] Decide on prefixing the rest of the public API (`nous_*`), as mela 0.9.3
+      did. The 1.5.3 audit found no other live or latent collision.
+- [ ] `: Result` annotations on Result-returning public fns (`cyrius header`
+      refuses `: i64`; the bytes are the same). Planned with the 1.6.0 docs pass
+      (decision D13).
+- [ ] Portability: the `struct stat` offsets in `src/util.cyr` are x86_64-only.
 - [ ] A plugin system for additional package sources (likely reshapes the
       resolver API).
 - [ ] A resolver constraint language specification, if it changes the
@@ -119,7 +128,16 @@ with a committed lock (1.7.x).
 
 - **ark → nous 1.5.1+:** rename `ERR_INVALID_PACKAGE_NAME` to
   `NOUS_ERR_INVALID_PACKAGE_NAME` at `ark/src/engine.cyr:41` and `:514`. No bayan
-  change is needed: ark already lists stdlib `bayan`, which defines the
-  `bayan_toml_*` functions.
+  change is needed: ark already lists stdlib `bayan`, which defines both the
+  `bayan_toml_*` and `bayan_json_*` functions.
+- **ark → nous 1.5.3:** behaviour changes to absorb (CHANGELOG 1.5.3):
+  - A missing dependency or root is now `NOUS_ERR_NOT_FOUND`, no longer
+    silently dropped.
+  - Unparseable constraints are `NOUS_ERR_INVALID_VERSION_CONSTRAINT`.
+  - SearchAll can return `NOUS_ERR_AMBIGUOUS_SOURCE`.
+  - Marketplace packages report `trusted = 0`.
+  - `pl_order` is now install order. ark's "deps-first" print at
+    `src/engine.cyr:524` becomes correct.
+  - Seven more names are deprecated, but none is called by ark.
 - **zugot:** the nous recipe (`marketplace/nous.cyml`) is still at 1.2.6. Bump it
   after each release tag, since it needs the release asset and its checksum.

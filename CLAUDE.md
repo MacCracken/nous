@@ -75,7 +75,9 @@ ark (dependency resolution). Nous is the single source of truth for resolving pa
 - Zero panic/abort paths in library code; surface errors via `Result` (Ok/Err)
 - All public types have JSON roundtrip tests
 - Resolution must be deterministic — same inputs always produce same dependency graph
-- Cycle detection is mandatory — never allow circular dependencies to pass resolution
+- Cycle detection is mandatory. A cycle passes resolution only when every package in it
+  comes from the system (apt), as Debian allows (Policy §7.2); any cycle touching a
+  marketplace / community / Flutter package is an error. See ADR 0005.
 - Version conflict reporting must be clear and actionable
 
 ## DO NOT

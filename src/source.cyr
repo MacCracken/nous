@@ -15,30 +15,46 @@ fn source_to_str(src): i64 {
 # Source detection
 # ===================================================================
 
+# 1 when the `n` bytes at `d` are exactly the `ln`-byte literal `lit`.
+fn _nous_seg_is(d, n, lit, ln): i64 {
+    if (n != ln) { return 0; }
+    return memeq(d, lit, ln);
+}
+
+# Heuristic source from the name's shape. Precedence: a '/' anywhere means
+# marketplace ("publisher/name"); a ".flutter" suffix, or a reverse-DNS name
+# with 2+ dots and a known first label (com., org., net., io., dev., app., me.),
+# means a Flutter app; anything else is unknown.
+#
+# 1.5.3: no allocation. It used to build a Str for every literal it compared
+# against (8 `str_from` calls plus a `str_sub` per call). Now it makes one pass
+# over the bytes and compares in place with `memeq`. Same results (test
+# `detect_source`, the smoke checks, `fuzz_detect`).
 fn detect_source(name): i64 {
-    if (str_len(name) == 0) { return SOURCE_UNKNOWN; }
-    if (str_index_of(name, 47) >= 0) { return SOURCE_MARKETPLACE; }
-    if (str_ends_with(name, str_from(".flutter")) == 1) { return SOURCE_FLUTTER_APP; }
-    var d = str_data(name);
     var len = str_len(name);
+    if (len == 0) { return SOURCE_UNKNOWN; }
+    var d = str_data(name);
     var dots = 0;
+    var first_dot = 0 - 1;
     var i = 0;
     while (i < len) {
-        if (load8(d + i) == 46) { dots = dots + 1; }
+        var c = load8(d + i);
+        if (c == 47) { return SOURCE_MARKETPLACE; }
+        if (c == 46) {
+            if (first_dot < 0) { first_dot = i; }
+            dots = dots + 1;
+        }
         i = i + 1;
     }
-    if (dots >= 2) {
-        var dp = str_index_of(name, 46);
-        if (dp > 0) {
-            var first = str_sub(name, 0, dp);
-            if (str_eq(first, str_from("com")) == 1) { return SOURCE_FLUTTER_APP; }
-            if (str_eq(first, str_from("org")) == 1) { return SOURCE_FLUTTER_APP; }
-            if (str_eq(first, str_from("net")) == 1) { return SOURCE_FLUTTER_APP; }
-            if (str_eq(first, str_from("io")) == 1) { return SOURCE_FLUTTER_APP; }
-            if (str_eq(first, str_from("dev")) == 1) { return SOURCE_FLUTTER_APP; }
-            if (str_eq(first, str_from("app")) == 1) { return SOURCE_FLUTTER_APP; }
-            if (str_eq(first, str_from("me")) == 1) { return SOURCE_FLUTTER_APP; }
-        }
+    if (len >= 8 && memeq(d + len - 8, ".flutter", 8) == 1) { return SOURCE_FLUTTER_APP; }
+    if (dots >= 2 && first_dot > 0) {
+        if (_nous_seg_is(d, first_dot, "com", 3) == 1) { return SOURCE_FLUTTER_APP; }
+        if (_nous_seg_is(d, first_dot, "org", 3) == 1) { return SOURCE_FLUTTER_APP; }
+        if (_nous_seg_is(d, first_dot, "net", 3) == 1) { return SOURCE_FLUTTER_APP; }
+        if (_nous_seg_is(d, first_dot, "io", 2) == 1) { return SOURCE_FLUTTER_APP; }
+        if (_nous_seg_is(d, first_dot, "dev", 3) == 1) { return SOURCE_FLUTTER_APP; }
+        if (_nous_seg_is(d, first_dot, "app", 3) == 1) { return SOURCE_FLUTTER_APP; }
+        if (_nous_seg_is(d, first_dot, "me", 2) == 1) { return SOURCE_FLUTTER_APP; }
     }
     return SOURCE_UNKNOWN;
 }
@@ -127,7 +143,7 @@ fn collect_known_names(r): i64 {
     }
     # From recipe DB if attached
     if (rs_rdb(r) != 0) {
-        var rkeys = map_keys(rdb_recipes(rs_rdb(r)));
+        var rkeys = _nous_sorted_keys(rdb_recipes(rs_rdb(r)));
         i = 0;
         while (i < vec_len(rkeys)) {
             var rk = vec_get(rkeys, i);

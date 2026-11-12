@@ -25,27 +25,46 @@ fn sv_major(v): i64 { return load64(v); }
 fn sv_minor(v): i64 { return load64(v + 8); }
 fn sv_patch(v): i64 { return load64(v + 16); }
 
-# Constraint: ct_op(0) ct_ver(8)
+# Constraint: ct_op(0) ct_ver(8) ct_prec(16) ct_err(24) ct_range(32) = 40 bytes (1.5.3: +prec,
+# the number of version components written, "1.2" = 2; +err, a Str reason
+# when the text is not a supported constraint, else 0).
 fn constraint_new(op, ver): i64 {
-    var p = alloc(16);
-    store64(p, op); store64(p + 8, ver);
+    var p = alloc(40);
+    store64(p, op); store64(p + 8, ver); store64(p + 16, 3); store64(p + 24, 0);
+    store64(p + 32, 0);     # cached range (see _nous_range_of)
     return p;
 }
 fn ct_op(c): i64 { return load64(c); }
 fn ct_ver(c): i64 { return load64(c + 8); }
+fn ct_prec(c): i64 { return load64(c + 16); }
+# 0 for a supported constraint, else why it is not (a Str). 1.5.3.
+fn nous_constraint_error(c): i64 { return load64(c + 24); }
+fn _nous_ct_fail(op, why): i64 {
+    var c = constraint_new(op, 0);
+    store64(c + 24, str_from(why));
+    return c;
+}
 
 # Parse "1.2.3" into SemVer. Returns 0 on failure.
 fn semver_parse(s): i64 {
     var d = str_data(s);
     var len = str_len(s);
     var pos = 0;
-    # Max safe value for overflow check: 922337203685477580 (INT64_MAX / 10)
-    var MAX_SAFE = 922337203685477580;
+    # 1.5.3: a leading 'v' / 'V' is accepted ("v2.0.0"), as npm does. It parsed
+    # as 0.0.0, so update_is_newer("v2.0.0", "1.0.0") missed a real update
+    # and update_is_newer("1.0.0", "v2.0.0") reported a downgrade as one.
+    if (len > 0 && (load8(d) == 118 || load8(d) == 86)) { pos = 1; }
+    # Overflow guard (1.5.3: exact). `x * 10 + d` fits in i64 iff
+    # x <= (INT64_MAX - d) / 10. The old `x > INT64_MAX / 10` test ran before
+    # the multiply-add, so 9223372036854775808 wrapped to INT64_MIN and
+    # compared below 0.0.1.
+    var I64MAX = 9223372036854775807;
     # Parse major
     var major = 0;
     while (pos < len && load8(d + pos) >= 48 && load8(d + pos) <= 57) {
-        if (major > MAX_SAFE) { return 0; }
-        major = major * 10 + load8(d + pos) - 48;
+        var dg_major = load8(d + pos) - 48;
+        if (major > (I64MAX - dg_major) / 10) { return 0; }
+        major = major * 10 + dg_major;
         pos = pos + 1;
     }
     if (pos >= len || load8(d + pos) != 46) {
@@ -55,8 +74,9 @@ fn semver_parse(s): i64 {
     # Parse minor
     var minor = 0;
     while (pos < len && load8(d + pos) >= 48 && load8(d + pos) <= 57) {
-        if (minor > MAX_SAFE) { return 0; }
-        minor = minor * 10 + load8(d + pos) - 48;
+        var dg_minor = load8(d + pos) - 48;
+        if (minor > (I64MAX - dg_minor) / 10) { return 0; }
+        minor = minor * 10 + dg_minor;
         pos = pos + 1;
     }
     if (pos >= len || load8(d + pos) != 46) {
@@ -66,8 +86,9 @@ fn semver_parse(s): i64 {
     # Parse patch
     var patch = 0;
     while (pos < len && load8(d + pos) >= 48 && load8(d + pos) <= 57) {
-        if (patch > MAX_SAFE) { return 0; }
-        patch = patch * 10 + load8(d + pos) - 48;
+        var dg_patch = load8(d + pos) - 48;
+        if (patch > (I64MAX - dg_patch) / 10) { return 0; }
+        patch = patch * 10 + dg_patch;
         pos = pos + 1;
     }
     return semver_new(major, minor, patch);
@@ -96,81 +117,371 @@ fn semver_to_str(v): i64 {
     return str_builder_build(sb);
 }
 
-# Parse ">=1.2.3", "^1.0", "~1.2", "=1.0.0", ">2.0", "*"
+# A version at d[pos..len): "M[.m[.p]]", optionally "v"-prefixed, where a part
+# may be a wildcard x / X / *. Writes the SemVer (missing and wildcard parts 0)
+# to out+0, the PRECISION (numeric parts before the first wildcard or the end)
+# to out+8, and the end position to out+16. Returns 1, or 0 when there is no
+# number at pos or a part overflows i64.
+fn _nous_ver_parse_p(d, len, pos, out): i64 {
+    var I64MAX = 9223372036854775807;
+    if (pos < len && (load8(d + pos) == 118 || load8(d + pos) == 86)) { pos = pos + 1; }
+    var parts = alloc(24);
+    store64(parts, 0); store64(parts + 8, 0); store64(parts + 16, 0);
+    var prec = 0;
+    var wild = 0;
+    var k = 0;
+    while (k < 3) {
+        if (pos < len && (load8(d + pos) == 120 || load8(d + pos) == 88 || load8(d + pos) == 42)) {
+            wild = 1;
+            pos = pos + 1;
+        } else {
+            var start = pos;
+            var x = 0;
+            while (pos < len && load8(d + pos) >= 48 && load8(d + pos) <= 57) {
+                var dg = load8(d + pos) - 48;
+                if (x > (I64MAX - dg) / 10) { return 0; }
+                x = x * 10 + dg;
+                pos = pos + 1;
+            }
+            if (pos == start) {
+                if (k == 0) { return 0; }
+                k = 3;
+            } else {
+                store64(parts + k * 8, x);
+                if (wild == 0) { prec = prec + 1; }
+            }
+        }
+        if (k < 3) {
+            k = k + 1;
+            if (k < 3) {
+                if (pos < len && load8(d + pos) == 46) { pos = pos + 1; }
+                else { k = 3; }
+            }
+        }
+    }
+    store64(out, semver_new(load64(parts), load64(parts + 8), load64(parts + 16)));
+    store64(out + 8, prec);
+    store64(out + 16, pos);
+    return 1;
+}
+
+# Parse a version constraint (1.5.3, decision D1).
+#   *  x  ""            any version
+#   =V  or bare V        exactly V; a partial is an X-range ("1.2" = >=1.2.0 <1.3.0)
+#   >=V  >V  <=V  <V     comparators (partials as Cargo: ">1.2" = >=1.3.0)
+#   ^V   ~V              caret / tilde with npm/Cargo zero-major rules; partials
+#                        "^0" = <1.0.0, "^0.0" = <0.1.0, "~1" = <2.0.0
+# A leading "v" is accepted. Anything else sets nous_constraint_error() and
+# never matches: unknown or doubled operators ("!=", "==", "~>", ">>"),
+# pre-release / build tags in a constraint and compound ranges (">=1 <2", ",",
+# "||"; both are roadmap 1.7.x), and trailing text. Before 1.5.3 these were
+# accepted silently: "!=1.0.0" became "=0.0.0", and ">=1.0, <2.0" matched 3.0.0.
 fn constraint_parse(s): i64 {
     var d = str_data(s);
     var len = str_len(s);
-    if (len == 0) { return constraint_new(OP_ANY, semver_new(0, 0, 0)); }
     var pos = 0;
-    # Skip leading whitespace
-    while (pos < len && load8(d + pos) == 32) { pos = pos + 1; }
-    if (pos >= len) { return constraint_new(OP_ANY, semver_new(0, 0, 0)); }
-    var c = load8(d + pos);
-    var op = OP_EQ;
-    if (c == 42) {
-        return constraint_new(OP_ANY, semver_new(0, 0, 0));
-    } elif (c == 94) {
-        op = OP_CARET;
-        pos = pos + 1;
-    } elif (c == 126) {
-        op = OP_TILDE;
-        pos = pos + 1;
-    } elif (c == 62) {
-        pos = pos + 1;
-        if (pos < len && load8(d + pos) == 61) {
-            op = OP_GTE;
-            pos = pos + 1;
-        } else {
-            op = OP_GT;
-        }
-    } elif (c == 60) {
-        pos = pos + 1;
-        if (pos < len && load8(d + pos) == 61) {
-            op = OP_LTE;
-            pos = pos + 1;
-        } else {
-            op = OP_LT;
-        }
-    } elif (c == 61) {
-        op = OP_EQ;
-        pos = pos + 1;
+    while (pos < len && (load8(d + pos) == 32 || load8(d + pos) == 9)) { pos = pos + 1; }
+    var end = len;
+    while (end > pos && (load8(d + end - 1) == 32 || load8(d + end - 1) == 9)) { end = end - 1; }
+    if (pos >= end) { return constraint_new(OP_ANY, semver_new(0, 0, 0)); }
+    if (end - pos == 1) {
+        var only = load8(d + pos);
+        if (only == 42 || only == 120 || only == 88) { return constraint_new(OP_ANY, semver_new(0, 0, 0)); }
     }
-    # Skip whitespace after operator
-    while (pos < len && load8(d + pos) == 32) { pos = pos + 1; }
-    var ver_str = str_sub(s, pos, len - pos);
-    var ver = semver_parse(ver_str);
-    return constraint_new(op, ver);
+    var op = OP_EQ;
+    var c = load8(d + pos);
+    if (c == 94) { op = OP_CARET; pos = pos + 1; }
+    elif (c == 126) { op = OP_TILDE; pos = pos + 1; }
+    elif (c == 62) {
+        pos = pos + 1;
+        if (pos < end && load8(d + pos) == 61) { op = OP_GTE; pos = pos + 1; } else { op = OP_GT; }
+    }
+    elif (c == 60) {
+        pos = pos + 1;
+        if (pos < end && load8(d + pos) == 61) { op = OP_LTE; pos = pos + 1; } else { op = OP_LT; }
+    }
+    elif (c == 61) { op = OP_EQ; pos = pos + 1; }
+    elif (c == 33) { return _nous_ct_fail(OP_EQ, "'!=' is not supported"); }
+    while (pos < end && load8(d + pos) == 32) { pos = pos + 1; }
+    if (pos < end) {
+        var c2 = load8(d + pos);
+        if (c2 == 61 || c2 == 62 || c2 == 60 || c2 == 126 || c2 == 94 || c2 == 33) {
+            return _nous_ct_fail(op, "doubled or unknown operator");
+        }
+    }
+    var out = alloc(24);
+    if (_nous_ver_parse_p(d, end, pos, out) == 0) {
+        if (pos < end && load8(d + pos) >= 48 && load8(d + pos) <= 57) {
+            return _nous_ct_fail(op, "version number too large");
+        }
+        return _nous_ct_fail(op, "missing or malformed version");
+    }
+    var vend = load64(out + 16);
+    if (vend < end) {
+        var t = load8(d + vend);
+        var pre_msg = "pre-release / build tags in a constraint are not supported yet (roadmap 1.7.x)";
+        if (t == 45 || t == 43) { return _nous_ct_fail(op, pre_msg); }
+        var cmp_msg = "compound ranges are not supported yet (roadmap 1.7.x)";
+        if (t == 44 || t == 32 || t == 124) { return _nous_ct_fail(op, cmp_msg); }
+        return _nous_ct_fail(op, "unexpected text after the version");
+    }
+    var prec = load64(out + 8);
+    if (prec == 0) { return constraint_new(OP_ANY, semver_new(0, 0, 0)); }
+    var ct = constraint_new(op, load64(out));
+    store64(ct + 16, prec);
+    return ct;
 }
 
-# Check if version v satisfies constraint c.
-fn constraint_matches(c, v): i64 {
+# ---- version ranges (1.5.3) -------------------------------------------
+# Range: lo(0) lo_incl(8) hi(16) hi_incl(24); lo / hi are SemVers, or 0 for
+# unbounded.
+fn _nous_range_new(lo, lo_incl, hi, hi_incl): i64 {
+    var p = alloc(32);
+    store64(p, lo); store64(p + 8, lo_incl); store64(p + 16, hi); store64(p + 24, hi_incl);
+    return p;
+}
+fn _rg_lo(r): i64 { return load64(r); }
+fn _rg_lo_incl(r): i64 { return load64(r + 8); }
+fn _rg_hi(r): i64 { return load64(r + 16); }
+fn _rg_hi_incl(r): i64 { return load64(r + 24); }
+
+# The range a supported constraint denotes (npm / Cargo desugaring; see
+# docs/sources.md). 0 for a constraint with an error.
+fn _nous_range_of(c): i64 {
+    if (nous_constraint_error(c) != 0 || ct_ver(c) == 0) { return 0; }
+    # Computed once per constraint (1.5.3, perf): matching against the same
+    # constraint must not allocate a range on every call.
+    if (load64(c + 32) != 0) { return load64(c + 32); }
+    var rg = _nous_range_build(c);
+    store64(c + 32, rg);
+    return rg;
+}
+
+fn _nous_range_build(c): i64 {
     var op = ct_op(c);
-    var cv = ct_ver(c);
-    if (op == OP_ANY) { return 1; }
-    var cmp = semver_cmp(v, cv);
-    if (op == OP_EQ) { return cmp == 0; }
-    if (op == OP_GTE) { return cmp >= 0; }
-    if (op == OP_GT) { return cmp > 0; }
-    if (op == OP_LTE) { return cmp <= 0; }
-    if (op == OP_LT) { return cmp < 0; }
+    if (op == OP_ANY) { return _nous_range_new(0, 1, 0, 1); }
+    var v = ct_ver(c);
+    var M = sv_major(v);
+    var m = sv_minor(v);
+    var pt = sv_patch(v);
+    var P = ct_prec(c);
+    if (op == OP_EQ) {
+        if (P >= 3) { return _nous_range_new(v, 1, v, 1); }
+        if (P == 2) { return _nous_range_new(semver_new(M, m, 0), 1, semver_new(M, m + 1, 0), 0); }
+        return _nous_range_new(semver_new(M, 0, 0), 1, semver_new(M + 1, 0, 0), 0);
+    }
+    if (op == OP_GTE) { return _nous_range_new(v, 1, 0, 1); }
+    if (op == OP_GT) {
+        if (P >= 3) { return _nous_range_new(v, 0, 0, 1); }
+        if (P == 2) { return _nous_range_new(semver_new(M, m + 1, 0), 1, 0, 1); }
+        return _nous_range_new(semver_new(M + 1, 0, 0), 1, 0, 1);
+    }
+    if (op == OP_LT) { return _nous_range_new(0, 1, v, 0); }
+    if (op == OP_LTE) {
+        if (P >= 3) { return _nous_range_new(0, 1, v, 1); }
+        if (P == 2) { return _nous_range_new(0, 1, semver_new(M, m + 1, 0), 0); }
+        return _nous_range_new(0, 1, semver_new(M + 1, 0, 0), 0);
+    }
     if (op == OP_CARET) {
-        # ^1.2.3 means >=1.2.3, <2.0.0 (for major>0)
-        # ^0.2.3 means >=0.2.3, <0.3.0 (for major==0, minor>0)
-        # ^0.0.3 means >=0.0.3, <0.0.4 (for major==0, minor==0)
-        if (cmp < 0) { return 0; }
-        if (sv_major(cv) > 0) {
-            return sv_major(v) == sv_major(cv);
-        }
-        if (sv_minor(cv) > 0) {
-            return sv_major(v) == 0 && sv_minor(v) == sv_minor(cv);
-        }
-        return sv_major(v) == 0 && sv_minor(v) == 0 && sv_patch(v) == sv_patch(cv);
+        if (P == 1) { return _nous_range_new(v, 1, semver_new(M + 1, 0, 0), 0); }
+        if (M > 0) { return _nous_range_new(v, 1, semver_new(M + 1, 0, 0), 0); }
+        if (P == 2 || m > 0) { return _nous_range_new(v, 1, semver_new(0, m + 1, 0), 0); }
+        return _nous_range_new(v, 1, semver_new(0, 0, pt + 1), 0);
     }
     if (op == OP_TILDE) {
-        # ~1.2.3 means >=1.2.3, <1.3.0
-        if (cmp < 0) { return 0; }
-        return sv_major(v) == sv_major(cv) && sv_minor(v) == sv_minor(cv);
+        if (P == 1) { return _nous_range_new(v, 1, semver_new(M + 1, 0, 0), 0); }
+        return _nous_range_new(v, 1, semver_new(M, m + 1, 0), 0);
     }
     return 0;
 }
 
+# 1 when SemVer `v` lies in range `rg`.
+fn _nous_range_contains(rg, v): i64 {
+    if (rg == 0 || v == 0) { return 0; }
+    if (_rg_lo(rg) != 0) {
+        var a = semver_cmp(v, _rg_lo(rg));
+        if (a < 0 || (a == 0 && _rg_lo_incl(rg) == 0)) { return 0; }
+    }
+    if (_rg_hi(rg) != 0) {
+        var b = semver_cmp(v, _rg_hi(rg));
+        if (b > 0 || (b == 0 && _rg_hi_incl(rg) == 0)) { return 0; }
+    }
+    return 1;
+}
+
+# The intersection of two ranges, or 0 when it is empty.
+fn _nous_range_intersect(a, b): i64 {
+    if (a == 0 || b == 0) { return 0; }
+    var lo = _rg_lo(a);
+    var lo_i = _rg_lo_incl(a);
+    if (_rg_lo(b) != 0) {
+        if (lo == 0) { lo = _rg_lo(b); lo_i = _rg_lo_incl(b); }
+        else {
+            var c = semver_cmp(_rg_lo(b), lo);
+            if (c > 0) { lo = _rg_lo(b); lo_i = _rg_lo_incl(b); }
+            elif (c == 0 && _rg_lo_incl(b) == 0) { lo_i = 0; }
+        }
+    }
+    var hi = _rg_hi(a);
+    var hi_i = _rg_hi_incl(a);
+    if (_rg_hi(b) != 0) {
+        if (hi == 0) { hi = _rg_hi(b); hi_i = _rg_hi_incl(b); }
+        else {
+            var c2 = semver_cmp(_rg_hi(b), hi);
+            if (c2 < 0) { hi = _rg_hi(b); hi_i = _rg_hi_incl(b); }
+            elif (c2 == 0 && _rg_hi_incl(b) == 0) { hi_i = 0; }
+        }
+    }
+    if (lo != 0 && hi != 0) {
+        var e = semver_cmp(lo, hi);
+        if (e > 0) { return 0; }
+        if (e == 0 && (lo_i == 0 || hi_i == 0)) { return 0; }
+    }
+    return _nous_range_new(lo, lo_i, hi, hi_i);
+}
+
+# Check if version v satisfies constraint c. 1.5.3: through the constraint's
+# range, so partials and zero-major carets are right and an unsupported
+# constraint never matches.
+fn constraint_matches(c, v): i64 {
+    if (ct_op(c) == OP_ANY && nous_constraint_error(c) == 0) { return 1; }
+    if (v == 0) { return 0; }
+    return _nous_range_contains(_nous_range_of(c), v);
+}
+
+# ---- Debian version comparison (1.5.3, decision D2) -------------------
+# deb-version(7) / Debian Policy §5.6.12, following dpkg's
+# lib/dpkg/version.c (`verrevcmp`). [epoch:]upstream[-revision]: the epoch is
+# compared numerically, then upstream, then revision, each by alternating
+# non-digit runs (ordered: '~' before everything, even the end; then the end;
+# then letters; then other characters) and digit runs (numerically).
+
+fn _nous_isdig(c): i64 {
+    if (c >= 48 && c <= 57) { return 1; }
+    return 0;
+}
+
+fn _nous_deb_order(c): i64 {
+    if (c >= 48 && c <= 57) { return 0; }
+    if ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) { return c; }
+    if (c == 126) { return 0 - 1; }
+    if (c != 0) { return c + 256; }
+    return 0;
+}
+
+# dpkg's verrevcmp over byte ranges [a, a+al) and [b, b+bl).
+fn _nous_verrevcmp(a, al, b, bl): i64 {
+    var i = 0;
+    var j = 0;
+    while (i < al || j < bl) {
+        var first_diff = 0;
+        while ((i < al && _nous_isdig(load8(a + i)) == 0) || (j < bl && _nous_isdig(load8(b + j)) == 0)) {
+            var ac = 0;
+            if (i < al) { ac = _nous_deb_order(load8(a + i)); }
+            var bc = 0;
+            if (j < bl) { bc = _nous_deb_order(load8(b + j)); }
+            if (ac != bc) { return ac - bc; }
+            i = i + 1;
+            j = j + 1;
+        }
+        while (i < al && load8(a + i) == 48) { i = i + 1; }
+        while (j < bl && load8(b + j) == 48) { j = j + 1; }
+        while (i < al && j < bl && _nous_isdig(load8(a + i)) == 1 && _nous_isdig(load8(b + j)) == 1) {
+            if (first_diff == 0) { first_diff = load8(a + i) - load8(b + j); }
+            i = i + 1;
+            j = j + 1;
+        }
+        if (i < al && load8(a + i) >= 48 && load8(a + i) <= 57) { return 1; }
+        if (j < bl && load8(b + j) >= 48 && load8(b + j) <= 57) { return 0 - 1; }
+        if (first_diff != 0) { return first_diff; }
+    }
+    return 0;
+}
+
+# Split a Debian version Str: out+0 epoch (number), out+8/16 upstream
+# start/length, out+24/32 revision start/length (0 length when absent).
+fn _nous_deb_split(s, out): i64 {
+    var d = str_data(s);
+    var n = str_len(s);
+    var colon = str_index_of(s, 58);
+    var epoch = 0;
+    var us = 0;
+    if (colon > 0) {
+        var k = 0;
+        while (k < colon && load8(d + k) >= 48 && load8(d + k) <= 57) {
+            if (epoch < 92233720368547758) { epoch = epoch * 10 + load8(d + k) - 48; }
+            k = k + 1;
+        }
+        us = colon + 1;
+    }
+    var dash = 0 - 1;
+    var k2 = n - 1;
+    while (k2 >= us && dash < 0) {
+        if (load8(d + k2) == 45) { dash = k2; }
+        k2 = k2 - 1;
+    }
+    store64(out, epoch);
+    store64(out + 8, d + us);
+    if (dash >= 0) {
+        store64(out + 16, dash - us);
+        store64(out + 24, d + dash + 1);
+        store64(out + 32, n - dash - 1);
+    } else {
+        store64(out + 16, n - us);
+        store64(out + 24, d);
+        store64(out + 32, 0);
+    }
+    return 0;
+}
+
+# Compare two Debian version strings: negative / 0 / positive (deb-version(7)).
+# 1.5.3: nous compared these as SemVer, missing revision-only security updates
+# (7.81.0-1ubuntu1.16 vs .15), '~' pre-releases and letter suffixes (0.9.8zh),
+# and offering an epoch downgrade (2.0-1 over 1:1.0-1).
+fn nous_deb_version_cmp(a, b): i64 {
+    var pa = alloc(40);
+    var pb = alloc(40);
+    _nous_deb_split(a, pa);
+    _nous_deb_split(b, pb);
+    if (load64(pa) != load64(pb)) {
+        if (load64(pa) < load64(pb)) { return 0 - 1; }
+        return 1;
+    }
+    var u = _nous_verrevcmp(load64(pa + 8), load64(pa + 16), load64(pb + 8), load64(pb + 16));
+    if (u != 0) { return u; }
+    return _nous_verrevcmp(load64(pa + 24), load64(pa + 32), load64(pb + 24), load64(pb + 32));
+}
+
+# A SemVer bound as a Debian-comparable string: trailing zero parts dropped
+# ("2.36.0" -> "2.36", "3.0.0" -> "3"), so "2.36-9" >= bound 2.36.0 holds.
+fn _nous_bound_deb_str(v): i64 {
+    var sb = str_builder_new();
+    str_builder_add_int(sb, sv_major(v));
+    if (sv_minor(v) != 0 || sv_patch(v) != 0) {
+        str_builder_add_cstr(sb, ".");
+        str_builder_add_int(sb, sv_minor(v));
+    }
+    if (sv_patch(v) != 0) {
+        str_builder_add_cstr(sb, ".");
+        str_builder_add_int(sb, sv_patch(v));
+    }
+    return str_builder_build(sb);
+}
+
+# 1 when version STRING `ver` of a package from `src` lies in range `rg`: apt
+# and community versions compare as Debian versions, the rest as SemVer.
+fn _nous_range_contains_ver(rg, ver, src): i64 {
+    if (rg == 0) { return 0; }
+    if (src == SOURCE_SYSTEM || src == SOURCE_COMMUNITY) {
+        if (_rg_lo(rg) != 0) {
+            var a = nous_deb_version_cmp(ver, _nous_bound_deb_str(_rg_lo(rg)));
+            if (a < 0 || (a == 0 && _rg_lo_incl(rg) == 0)) { return 0; }
+        }
+        if (_rg_hi(rg) != 0) {
+            var b = nous_deb_version_cmp(ver, _nous_bound_deb_str(_rg_hi(rg)));
+            if (b > 0 || (b == 0 && _rg_hi_incl(rg) == 0)) { return 0; }
+        }
+        return 1;
+    }
+    return _nous_range_contains(rg, semver_parse(ver));
+}

@@ -172,8 +172,15 @@ jobs:
           echo "cyrius test exit code: $rc"
           echo "$out" | grep -a -E "passed,.*failed" | grep -a -q "0 failed"
 
-      - name: Fuzz harness
-        run: cyrius test tests/nous.fcyr
+      - name: Fuzz harnesses
+        # 1.5.3: real seeded-mutation targets (tests/fuzz_*.fcyr on the vendored
+        # sandhi driver) for the CYML recipe parser, manifest / *_from_json,
+        # versions and constraints, and apt / dpkg output. Each also checks
+        # invariants: a JSON roundtrip property, symmetric compatibility, an
+        # antisymmetric Debian comparison, clean dependency names.
+        # --poison=ab runs every harness under two allocation fills and fails
+        # when the digests differ, i.e. a parser read memory it should not.
+        run: cyrius fuzz --poison=ab tests/
 
       - name: Bench
         # Non-fatal: numbers go to bench-history.csv and the artifact upload.

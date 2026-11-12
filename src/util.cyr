@@ -21,15 +21,19 @@ fn our_is_dir(cpath): i64 {
 # Utility functions
 # ===================================================================
 
-fn to_cstr(s): i64 {
+# A NUL-terminated copy of Str `s`; "" for 0 or on OOM. 1.5.3: the copy is the
+# stdlib's `str_cstr`; this adds only nous's null-safety.
+fn _nous_cstr(s): i64 {
     if (s == 0) { return ""; }
-    var data = str_data(s);
-    var len = str_len(s);
-    var buf = alloc(len + 1);
-    memcpy(buf, data, len);
-    store8(buf + len, 0);
-    return buf;
+    var c = str_cstr(s);
+    if (c == 0) { return ""; }
+    return c;
 }
+
+# Deprecated (1.5.3), removed in 2.0.0: hadara, hoosh and vidya each define a
+# one-argument `to_cstr` too.
+#deprecated("use the stdlib str_cstr; to_cstr collides with hadara/hoosh/vidya (removed in 2.0.0)")
+fn to_cstr(s): i64 { return _nous_cstr(s); }
 
 fn str_compare(a, b): i64 {
     var ad = str_data(a);
@@ -88,6 +92,10 @@ fn json_extract_str(data, key): i64 {
                         if (load8(d + j) == 92) { j = j + 1; }
                         j = j + 1;
                     }
+                    # 1.5.3: a trailing backslash stepped j past the end, and the
+                    # Str covered one byte beyond the input. nous parses manifests
+                    # with bayan-json now; this public helper is kept, bounded.
+                    if (j > dl) { j = dl; }
                     return str_new(d + start, j - start);
                 }
             }
@@ -121,27 +129,66 @@ fn file_stat_size(cpath): i64 {
     return load64(&statbuf + 48);
 }
 
-fn dir_size_recursive(path): i64 {
-    var cp = to_cstr(path);
-    if (our_is_dir(cp) == 0) { return file_stat_size(cp); }
+# Deepest directory level `dir_size_recursive` descends to (1.5.3).
+var NOUS_DIR_DEPTH_MAX = 64;
+
+# Total size in bytes of the files under `path`.
+#
+# 1.5.3 (P1, security): symlinks are NOT followed, and depth is capped at
+# NOUS_DIR_DEPTH_MAX. It used `stat`, which follows links, with no limit, so a
+# marketplace package directory holding `a -> .` and `b -> .` made
+# `resolver_new` / `registry_reload` walk 2^40 paths. That was measured at
+# 500 MB and growing after 10 s. A link to `/` walked the whole filesystem. A
+# link now counts as 0 bytes.
+fn dir_size_recursive(path): i64 { return _nous_dir_size(path, 0); }
+
+fn _nous_dir_size(path, depth): i64 {
+    var statbuf[144];
+    if (sys_lstat(_nous_cstr(path), &statbuf) < 0) { return 0; }
+    var kind = load32(&statbuf + 24) & 61440;
+    if (kind == 40960) { return 0; }                          # S_IFLNK
+    if (kind != 16384) { return load64(&statbuf + 48); }      # not S_IFDIR: its size
+    if (depth >= NOUS_DIR_DEPTH_MAX) { return 0; }
     var entries = dir_list(path);
     var total = 0;
     var i = 0;
     while (i < vec_len(entries)) {
-        var full = join_path(path, vec_get(entries, i));
-        total = total + dir_size_recursive(full);
+        total = total + _nous_dir_size(path_join(path, vec_get(entries, i)), depth + 1);
         i = i + 1;
     }
     return total;
 }
 
-fn join_path(dir, name): i64 {
-    var sb = str_builder_new();
-    str_builder_add(sb, dir);
-    str_builder_add_cstr(sb, "/");
-    str_builder_add(sb, name);
-    return str_builder_build(sb);
+# Deprecated (1.5.3), removed in 2.0.0: use the stdlib's path_join (same
+# result, and no doubled '/' when `dir` already ends in one). commandress
+# defines a two-argument `join_path` too.
+#deprecated("use the stdlib path_join; join_path collides with commandress (removed in 2.0.0)")
+fn join_path(dir, name): i64 { return path_join(dir, name); }
+
+# Largest manifest / recipe / build-order file nous will read (1.5.3).
+var NOUS_FILE_MAX = 1048576;
+
+# The whole of file `path` (a Str) as an owned Str, or 0 when it is missing,
+# empty, unreadable, larger than `cap` bytes, or grew while being read.
+#
+# 1.5.3 (P1): callers read manifests into an 8 KiB buffer and recipes and
+# build-order.txt into 64 KiB, then parsed the PREFIX of a larger file as if it
+# were whole. A long description before `"dependencies"` / `[depends]` lost
+# every dependency with no error, proven with a 9,107-byte manifest and a
+# 72 KB recipe. The 2026-04-16 audit's "truncation → parse failure" was wrong.
+# The buffer is now the file's own size plus one byte, so a file that grew is
+# caught instead of half-read. That is also less memory: 563 recipes used to
+# take 64 KiB each, about 36 MB, never freed.
+fn _nous_read_file(path, cap): i64 {
+    var cp = _nous_cstr(path);
+    var sz = file_stat_size(cp);
+    if (sz <= 0 || sz > cap) { return 0; }
+    var buf = alloc(sz + 1);
+    if (buf == 0) { return 0; }
+    var n = file_read_all(cp, buf, sz + 1);
+    if (n <= 0 || n > sz) { return 0; }
+    return str_new(buf, n);
 }
 
-fn mkdir_str(path): i64 { sys_mkdir(to_cstr(path), 493); }
+fn mkdir_str(path): i64 { sys_mkdir(_nous_cstr(path), 493); }
 

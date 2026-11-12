@@ -53,7 +53,7 @@ fn setup_resolver(n) {
     str_builder_add_int(sb, sys_getpid());
     var c = str_builder_build(sb);
     mkdir_str(c);
-    var inst = join_path(d, str_from("installed"));
+    var inst = path_join(d, str_from("installed"));
     mkdir_str(inst);
     var i = 0;
     while (i < n) {
@@ -61,9 +61,9 @@ fn setup_resolver(n) {
         str_builder_add_cstr(nsb, "bench-pkg-");
         str_builder_add_int(nsb, i);
         var name = str_builder_build(nsb);
-        var pd = join_path(inst, name);
+        var pd = path_join(inst, name);
         mkdir_str(pd);
-        var mp = join_path(pd, str_from("manifest.json"));
+        var mp = path_join(pd, str_from("manifest.json"));
         var jsb = str_builder_new();
         str_builder_add_cstr(jsb, "{\"agent\":{\"name\":\"");
         str_builder_add(jsb, name);
@@ -71,7 +71,7 @@ fn setup_resolver(n) {
         str_builder_add(jsb, name);
         str_builder_add_cstr(jsb, "\"},\"dependencies\":{},\"runtime\":\"native\"}");
         var json = str_builder_build(jsb);
-        file_write_all(to_cstr(mp), to_cstr(json), str_len(json));
+        file_write_all(_nous_cstr(mp), _nous_cstr(json), str_len(json));
         i = i + 1;
     }
     var rr_t, rr = resolver_new(d, c);
@@ -116,7 +116,7 @@ fn b_graph_resolve() {
 # Recipe parse benchmark
 fn b_recipe_parse() {
     if (file_exists("/home/macro/Repos/zugot/base/curl.cyml") == 1) {
-        recipe_parse_file(str_from("/home/macro/Repos/zugot/base/curl.cyml"));
+        nous_recipe_parse_file(str_from("/home/macro/Repos/zugot/base/curl.cyml"));
     }
     return 0;
 }
@@ -191,6 +191,26 @@ fn b_capture() {
     nous_capture(cap_args);
     return 0;
 }
+
+# Sort 2,000 installed packages (1.5.3 merge sort; was O(n^2) insertion).
+var sort_src = 0;
+fn b_sort_2000() {
+    var v = vec_new();
+    var i = 0;
+    while (i < vec_len(sort_src)) { vec_push(v, vec_get(sort_src, i)); i = i + 1; }
+    sort_installed(v);
+    return 0;
+}
+
+# 1.5.3: Debian version comparison, a constraint range intersection, and the
+# bayan-json manifest parse every registry scan now uses.
+fn b_deb_cmp() { nous_deb_version_cmp(str_from("1:7.81.0-1ubuntu1.16"), str_from("1:7.81.0-1ubuntu1.15")); return 0; }
+fn b_range() {
+    constraints_compatible(constraint_parse(str_from(">=1.2.0")), constraint_parse(str_from("^1.4")));
+    return 0;
+}
+var bench_manifest = 0;
+fn b_manifest() { manifest_from_json(bench_manifest); return 0; }
 
 # Serde roundtrip benchmark
 fn b_serde() {
@@ -292,6 +312,37 @@ fn main() {
     var b12 = bench_new("serde_roundtrip");
     bench_run(b12, &b_serde, 100000);
     vec_push(benches, b12);
+
+    var bm1 = bench_new("deb_version_cmp");
+    bench_run(bm1, &b_deb_cmp, 100000);
+    vec_push(benches, bm1);
+    var bm2 = bench_new("constraint_range");
+    bench_run(bm2, &b_range, 100000);
+    vec_push(benches, bm2);
+    var mfs = str_builder_new();
+    str_builder_add_cstr(mfs, "{\"agent\":{\"name\":\"acme/scanner\",\"version\":\"2.1.0\",");
+    str_builder_add_cstr(mfs, "\"description\":\"A scanner\"},\"dependencies\":{\"libfoo\":\"^1.2\",");
+    str_builder_add_cstr(mfs, "\"libbar\":\">=0.9\"},\"runtime\":\"native\"}");
+    bench_manifest = str_builder_build(mfs);
+    var bm3 = bench_new("manifest_parse");
+    bench_run(bm3, &b_manifest, 20000);
+    vec_push(benches, bm3);
+
+    # Sort 2,000 installed packages (1.5.3)
+    sort_src = vec_new();
+    var sx = 12345;
+    var si = 0;
+    while (si < 2000) {
+        sx = (sx * 1103515245 + 12345) % 2147483648;
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "lib");
+        str_builder_add_int(sb, sx % 100000);
+        vec_push(sort_src, installed_pkg_new(str_builder_build(sb), str_from("1.0"), SOURCE_SYSTEM, 0, 0, 0));
+        si = si + 1;
+    }
+    var b20 = bench_new("sort_installed_2000");
+    bench_run(b20, &b_sort_2000, 100);
+    vec_push(benches, b20);
 
     # Child-output capture, 200,000 bytes (1.5.1)
     cap_args = vec_new();

@@ -68,11 +68,21 @@ the complete layout of all 12 struct types.
   `include "lib/<leaf>.cyr"` lines (cyrius 6.6.18+). The bundle does not embed
   stdlib content: consumers vendor the leaves listed in `dist/nous.deps`.
   CI fails if the committed bundle drifts.
-- **bayan** — nous's one git dependency, `[deps.bayan]` → `dist/bayan-toml.cyr`,
-  for the CYML parser's `bayan_toml_section_*` / `bayan_toml_pair_*` records
-  ([ADR-0004](../adr/0004-bayan-toml-profile-dependency.md)). A consumer of
-  `dist/nous.cyr` supplies those functions, from the same profile or the full
-  stdlib `bayan` fold, never both.
+- **bayan** — nous's one git dependency, `[deps.bayan]`. Two of its profiles
+  are used ([ADR-0004](../adr/0004-bayan-toml-profile-dependency.md)):
+  - `dist/bayan-toml.cyr`, for the CYML parser's `bayan_toml_section_*` /
+    `bayan_toml_pair_*` records;
+  - `dist/bayan-json.cyr` (1.5.3), for manifests and every `*_from_json`.
+
+  A consumer of `dist/nous.cyr` supplies those functions, from the same
+  profiles or the full stdlib `bayan` fold, never both.
+- **Resolution (1.5.3).** A breadth-first closure where an apt package's
+  dependencies resolve from apt only. Apt-side names are fetched one wave per
+  `apt-cache` call. Then one iterative Tarjan pass gives the cycles (accepted
+  only when apt-only; ADR-0005) and the install order. Every manifest
+  constraint is intersected as a version range and checked against the chosen
+  version: Debian order for apt and community, SemVer otherwise.
+  Iteration order is byte order everywhere, never hash order.
 - **Child processes** — every apt/dpkg query goes through `nous_capture*`
   (`src/command.cyr`), which captures the complete output as an owned Str. It
   returns `Err(NOUS_ERR_COMMAND_EXEC)` past 16 MiB or on an idle-deadline cut,
