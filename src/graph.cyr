@@ -7,6 +7,8 @@
 # nodes = hashmap: pkg_name -> ResolvedPkg
 # edges = hashmap: pkg_name -> vec of dep_name Strs
 # versions = hashmap: pkg_name -> vec of Constraint
+#
+# Empty DepGraph.
 fn dep_graph_new(): i64 {
     var p = alloc(24);
     store64(p, map_new());
@@ -14,9 +16,12 @@ fn dep_graph_new(): i64 {
     store64(p + 16, map_new());
     return p;
 }
+# DepGraph field: map cstr name -> ResolvedPkg.
 fn dg_nodes(g): i64 { return load64(g); }
+# DepGraph field: map cstr name -> vec of dependency-name Strs.
 fn dg_edges(g): i64 { return load64(g + 8); }
 
+# Add ResolvedPkg pkg to DepGraph g as a node, with an edge to each of its rp_deps names.
 fn dep_graph_add(g, pkg): i64 {
     var cname = _nous_cstr(rp_name(pkg));
     map_set(dg_nodes(g), cname, pkg);
@@ -32,7 +37,7 @@ fn dep_graph_add(g, pkg): i64 {
 }
 
 # ===================================================================
-# P1: Cycle Detection (DFS with 3-color marking)
+# Cycle detection and install order (iterative Tarjan SCC)
 # ===================================================================
 
 # 1.5.3: cycles and install order come from one ITERATIVE Tarjan pass
@@ -213,6 +218,7 @@ fn dep_graph_detect_cycle(g): i64 {
 # P1: Topological Sort (Kahn's Algorithm)
 # ===================================================================
 
+# Kahn order of g's node names (Strs), dependents first; partial on a cyclic graph.
 fn dep_graph_topo_sort(g): i64 {
     var nodes = _nous_sorted_keys(dg_nodes(g));
     var in_degree = map_new();
@@ -282,6 +288,8 @@ fn dep_graph_topo_sort(g): i64 {
 # intersection. It used to try about five sample versions, so ">1.2.0" with
 # "<1.3.0" read as a conflict (1.2.1 satisfies both), and swapping the
 # arguments changed the answer.
+#
+# 1 when some version satisfies both Constraints c1 and c2 (range intersection), else 0.
 fn constraints_compatible(c1, c2): i64 {
     if (_nous_range_intersect(_nous_range_of(c1), _nous_range_of(c2)) == 0) { return 0; }
     return 1;
@@ -291,28 +299,34 @@ fn constraints_compatible(c1, c2): i64 {
 # P1: Full Resolution — resolver_resolve_all
 # ===================================================================
 
-# ResPlan: pl_packages(0) pl_order(8)
+# ResPlan constructor: packages (vec of ResolvedPkg), order (vec of Str); no unresolved names.
 fn res_plan_new(packages, order): i64 {
     var p = alloc(24);
     store64(p, packages); store64(p + 8, order); store64(p + 16, vec_new());
     return p;
 }
+# ResPlan field: the ResolvedPkgs in install order (dependencies first).
 fn pl_packages(p): i64 { return load64(p); }
+# ResPlan field: the package names (Strs) in install order, matching pl_packages.
 fn pl_order(p): i64 { return load64(p + 8); }
 
 # Names an apt package depends on that apt itself could not show: virtual
 # packages, alternatives (1.5.3, decision D4). They are listed, not fatal,
 # because apt resolves them. Each entry: nous_unres_name / nous_unres_requirer.
+#
+# ResPlan field: a vec of unresolved entries (nous_unres_name / nous_unres_requirer).
 fn nous_pl_unresolved(p): i64 { return load64(p + 16); }
 fn _nous_unres_new(name, requirer): i64 {
     var u = alloc(16);
     store64(u, name); store64(u + 8, requirer);
     return u;
 }
+# Unresolved entry: the dependency name apt could not show (Str).
 fn nous_unres_name(u): i64 { return load64(u); }
+# Unresolved entry: the package that depends on it (Str).
 fn nous_unres_requirer(u): i64 { return load64(u + 8); }
 
-# Resolve a list of package names transitively.
-# Returns Ok(ResPlan) or Err(NousError). See `_nous_resolve_closure`.
-fn resolver_resolve_all(r, names): i64 { return _nous_resolve_closure(r, names, 0); }
+# Resolve a list of package names transitively; see `_nous_resolve_closure`.
+# Ok(ResPlan) for the transitive closure of a vec of Str names, or Err(NousError).
+fn resolver_resolve_all(r, names): Result { return _nous_resolve_closure(r, names, 0); }
 

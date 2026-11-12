@@ -5,6 +5,8 @@
 
 # Extract the "dependencies":{...} object from raw JSON into a hashmap.
 # Keys are dep names (C strings in map), values are version constraint Strs.
+#
+# Map cstr name -> constraint Str from the "dependencies" object of raw JSON Str data.
 fn json_extract_deps(data): i64 {
     var deps = map_new();
     var d = str_data(data);
@@ -66,6 +68,8 @@ fn json_extract_deps(data): i64 {
 # `{"author":{"name":"mallory"},"name":"real"}` read as mallory. A string
 # value "dependencies" hijacked the deps scan. Escapes were never decoded. A
 # file that is not one JSON object is not a manifest (0).
+#
+# Manifest from the JSON file at Str file_path (at most NOUS_FILE_MAX bytes), or 0.
 fn parse_manifest_file(file_path): i64 {
     # Whole file or nothing (1.5.3): never a half-read prefix.
     var content = _nous_read_file(file_path, NOUS_FILE_MAX);
@@ -73,6 +77,7 @@ fn parse_manifest_file(file_path): i64 {
     return manifest_from_json(content);
 }
 
+# Read every <base_dir>/installed/<pkg>/manifest.json; a byte-sorted vec of InstalledMPkg.
 fn scan_installed(base_dir): i64 {
     var pkgs = vec_new();
     var idir = path_join(base_dir, str_from("installed"));
@@ -108,7 +113,8 @@ fn scan_installed(base_dir): i64 {
     return pkgs;
 }
 
-fn registry_new(base_dir): i64 {
+# Ok(Registry) over Str base_dir; a missing directory gives an empty registry, not an Err.
+fn registry_new(base_dir): Result {
     # A missing marketplace directory is not an error: on a fresh system the
     # marketplace may simply not be provisioned yet. Treat it as an empty
     # registry so resolution can still fall through to the system layer and
@@ -121,6 +127,7 @@ fn registry_new(base_dir): i64 {
     return Ok(registry_make(base_dir, scan_installed(base_dir)));
 }
 
+# InstalledMPkgs whose name or description contains Str query (substring), in byte order.
 fn registry_search(reg, query): i64 {
     var results = vec_new();
     var pkgs = rg_pkgs(reg);
@@ -136,6 +143,7 @@ fn registry_search(reg, query): i64 {
     return results;
 }
 
+# The InstalledMPkg named Str name, or 0 when the registry has no such package.
 fn nous_registry_get(reg, name): i64 {
     var pkgs = rg_pkgs(reg);
     var i = 0;
@@ -149,13 +157,18 @@ fn nous_registry_get(reg, name): i64 {
 
 # Deprecated (1.5.3), removed in 2.0.0: bote, hoosh, szal and thoth define
 # `registry_get` too.
+#
+# Deprecated alias of nous_registry_get.
 #deprecated("use nous_registry_get; registry_get collides with bote/hoosh/szal/thoth (removed in 2.0.0)")
 fn registry_get(reg, name): i64 { return nous_registry_get(reg, name); }
 
+# Every InstalledMPkg in the registry, a byte-sorted vec (the registry's own; do not mutate).
 fn nous_registry_list(reg): i64 { return rg_pkgs(reg); }
+# Deprecated alias of nous_registry_list.
 #deprecated("use nous_registry_list; registry_list collides with bote/hoosh/szal/thoth (removed in 2.0.0)")
 fn registry_list(reg): i64 { return nous_registry_list(reg); }
 
+# Rescan the registry directory in place, replacing its package list.
 fn registry_reload(reg): i64 {
     var dir = rg_dir(reg);
     var new_pkgs = scan_installed(dir);
@@ -163,7 +176,7 @@ fn registry_reload(reg): i64 {
 }
 
 # Stub — real implementation lives in mela. Kept for interface parity.
-fn registry_install_package(reg, tarball, dest): i64 {
+fn registry_install_package(reg, tarball, dest): Result {
     return Ok(0);
 }
 

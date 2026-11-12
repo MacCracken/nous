@@ -3,12 +3,16 @@
 # Error constructors
 # ===================================================================
 
-fn nous_err(kind, msg, detail): i64 {
+# Err(NousError{kind, msg, detail}): the one way nous builds an error Result.
+fn nous_err(kind, msg, detail): Result {
     return Err(nous_error_new(kind, msg, detail));
 }
-fn err_registry_io(path, detail): i64 { return nous_err(NOUS_ERR_REGISTRY_IO, path, detail); }
-fn err_invalid_name(name, reason): i64 { return nous_err(NOUS_ERR_INVALID_PACKAGE_NAME, name, reason); }
+# Err(NOUS_ERR_REGISTRY_IO) for registry path `path` (Str) with detail Str.
+fn err_registry_io(path, detail): Result { return nous_err(NOUS_ERR_REGISTRY_IO, path, detail); }
+# Err(NOUS_ERR_INVALID_PACKAGE_NAME) for `name` (Str) with reason Str.
+fn err_invalid_name(name, reason): Result { return nous_err(NOUS_ERR_INVALID_PACKAGE_NAME, name, reason); }
 
+# Join a vec of Str names with " -> " (the cycle report text).
 fn format_cycle(cycle): i64 {
     var sb = str_builder_new();
     var i = 0;
@@ -20,6 +24,7 @@ fn format_cycle(cycle): i64 {
     return str_builder_build(sb);
 }
 
+# Human-readable, actionable message (Str) for a NousError, one branch per ErrKind.
 fn nous_error_msg(e): i64 {
     var kind = ne_kind(e);
     var msg = ne_msg(e);
@@ -72,7 +77,7 @@ fn nous_error_msg(e): i64 {
     return str_builder_build(sb);
 }
 
-# Serializable error kind companion (mirrors NousErrorKind in Rust)
+# A copy of NousError e (kind, msg, detail), the record error_kind_to_json writes.
 fn nous_error_to_kind(e): i64 {
     return nous_error_new(ne_kind(e), ne_msg(e), ne_detail(e));
 }
@@ -81,6 +86,7 @@ fn nous_error_to_kind(e): i64 {
 # Package name validation
 # ===================================================================
 
+# 1 when byte c may appear in a package name: [A-Za-z0-9] or one of - _ . / @ +.
 fn is_valid_name_char(c): i64 {
     if (c >= 97 && c <= 122) { return 1; }
     if (c >= 65 && c <= 90) { return 1; }
@@ -89,7 +95,8 @@ fn is_valid_name_char(c): i64 {
     return 0;
 }
 
-fn validate_package_name(name): i64 {
+# Ok when Str name is a valid package name, else Err(NOUS_ERR_INVALID_PACKAGE_NAME) saying why.
+fn validate_package_name(name): Result {
     if (str_len(name) == 0) {
         return err_invalid_name(name, str_from("package name cannot be empty"));
     }

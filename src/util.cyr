@@ -1,8 +1,9 @@
 # nous/util — filesystem, string, path helpers
 # ===================================================================
-# Filesystem helpers (is_dir from fs.cyr is broken, use stat directly)
+# Filesystem helpers (a one-stat is_dir; the stdlib is_dir opens the directory)
 # ===================================================================
 
+# 1 when cstr path cpath is a directory (one stat(2), follows symlinks); 0 otherwise.
 fn our_is_dir(cpath): i64 {
     # struct stat is 144 B on x86-64 (mode@24, size@48, mtime@88). At function
     # scope `var X[N]` is N BYTES on the stack since cyrius 6.3.13, so this MUST
@@ -32,9 +33,12 @@ fn _nous_cstr(s): i64 {
 
 # Deprecated (1.5.3), removed in 2.0.0: hadara, hoosh and vidya each define a
 # one-argument `to_cstr` too.
+#
+# Deprecated: a null-safe str_cstr. Use str_cstr.
 #deprecated("use the stdlib str_cstr; to_cstr collides with hadara/hoosh/vidya (removed in 2.0.0)")
 fn to_cstr(s): i64 { return _nous_cstr(s); }
 
+# Byte-wise three-way compare of Strs a and b: -1, 0 or 1 (a shorter prefix sorts first).
 fn str_compare(a, b): i64 {
     var ad = str_data(a);
     var al = str_len(a);
@@ -55,6 +59,7 @@ fn str_compare(a, b): i64 {
     return 0;
 }
 
+# Byte offset of the first `needle` in `haystack` (Strs); 0 for an empty needle, -1 if absent.
 fn str_find(haystack, needle): i64 {
     var hd = str_data(haystack);
     var hl = str_len(haystack);
@@ -71,6 +76,7 @@ fn str_find(haystack, needle): i64 {
     return (0 - 1);
 }
 
+# Raw (still-escaped) Str value of the first "key": "..." in JSON Str data; 0 if absent.
 fn json_extract_str(data, key): i64 {
     var d = str_data(data);
     var dl = str_len(data);
@@ -105,6 +111,7 @@ fn json_extract_str(data, key): i64 {
     return 0;
 }
 
+# mtime of cstr path cpath in seconds since the epoch (stat(2), x86_64 layout); 0 on error.
 fn file_mtime(cpath): i64 {
     # struct stat is 144 B on x86-64 (mode@24, size@48, mtime@88). At function
     # scope `var X[N]` is N BYTES on the stack since cyrius 6.3.13, so this MUST
@@ -117,6 +124,7 @@ fn file_mtime(cpath): i64 {
     return load64(&statbuf + 88);
 }
 
+# Size in bytes of cstr path cpath (stat(2), x86_64 layout); 0 on error.
 fn file_stat_size(cpath): i64 {
     # struct stat is 144 B on x86-64 (mode@24, size@48, mtime@88). At function
     # scope `var X[N]` is N BYTES on the stack since cyrius 6.3.13, so this MUST
@@ -132,14 +140,14 @@ fn file_stat_size(cpath): i64 {
 # Deepest directory level `dir_size_recursive` descends to (1.5.3).
 var NOUS_DIR_DEPTH_MAX = 64;
 
-# Total size in bytes of the files under `path`.
-#
 # 1.5.3 (P1, security): symlinks are NOT followed, and depth is capped at
 # NOUS_DIR_DEPTH_MAX. It used `stat`, which follows links, with no limit, so a
 # marketplace package directory holding `a -> .` and `b -> .` made
 # `resolver_new` / `registry_reload` walk 2^40 paths. That was measured at
 # 500 MB and growing after 10 s. A link to `/` walked the whole filesystem. A
 # link now counts as 0 bytes.
+#
+# Total size in bytes of the files under `path`.
 fn dir_size_recursive(path): i64 { return _nous_dir_size(path, 0); }
 
 fn _nous_dir_size(path, depth): i64 {
@@ -162,6 +170,8 @@ fn _nous_dir_size(path, depth): i64 {
 # Deprecated (1.5.3), removed in 2.0.0: use the stdlib's path_join (same
 # result, and no doubled '/' when `dir` already ends in one). commandress
 # defines a two-argument `join_path` too.
+#
+# Deprecated alias of the stdlib path_join.
 #deprecated("use the stdlib path_join; join_path collides with commandress (removed in 2.0.0)")
 fn join_path(dir, name): i64 { return path_join(dir, name); }
 
@@ -190,5 +200,6 @@ fn _nous_read_file(path, cap): i64 {
     return str_new(buf, n);
 }
 
+# mkdir(2) Str path with mode 0755; returns the syscall result (negative errno on failure).
 fn mkdir_str(path): i64 { sys_mkdir(_nous_cstr(path), 493); }
 

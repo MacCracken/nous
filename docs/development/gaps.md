@@ -1,6 +1,6 @@
 # Nous — Known Gaps & Hardening Targets
 
-> **Status**: Active | **Last Updated**: 2026-11-12 (1.5.3, cyrius 6.7.18)
+> **Status**: Active | **Last Updated**: 2026-11-12 (1.6.0, cyrius 6.7.18)
 >
 > This page tracks the gaps between what nous does and what a production
 > resolver needs. The prioritized, versioned plan lives in
@@ -14,13 +14,14 @@ nous has 15 `src/` modules behind a barrel (`src/nous.cyr`) and ships a
 single-file `dist/nous.cyr` bundle (`cyrius distlib`). It depends on bayan's
 `dist/bayan-toml.cyr` and `dist/bayan-json.cyr` profiles
 ([ADR 0004](../adr/0004-bayan-toml-profile-dependency.md)). Struct layouts are
-manual, and every function carries an explicit `: i64` return type.
+manual. Every function carries an explicit return type (`: Result` or `: i64`),
+and every public function has a doc comment that CI checks (1.6.0).
 
 **Works today:**
 - Transitive resolution across 4 sources (System, Marketplace, FlutterApp,
   Community), with 4 strategies.
-- Version constraints: 8 operators. Kahn topological sort, DFS 3-colour cycle
-  detection, and conflict reporting.
+- Version constraints: 8 operators, intersected as ranges. Tarjan SCC for
+  cycles and install order (apt-only cycles allowed), and conflict reporting.
 - Zugot recipe parsing, a recipe DB, `build-order.txt`, and recipe fallback in
   resolution.
 - Cross-source search with marketplace-priority dedup, and installed-package
@@ -28,8 +29,8 @@ manual, and every function carries an explicit `: i64` return type.
 - Update detection: the apt leg plus a pluggable lookup for the other sources.
 - Complete child-output capture. Errors surface as `Result` and are never a
   partial result.
-- JSON for every public type. Error display for all 7 kinds, typo suggestions,
-  and a resolution trace.
+- JSON for every public type, both ways. Error display for all 9 kinds, typo
+  suggestions, and a resolution trace.
 
 **Closed since this page began (1.x):** all of the old P1 (graph resolution), P2
 recipe parsing and build order, and P5 error quality (conflict explanation,

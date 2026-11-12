@@ -126,8 +126,11 @@ fn _nous_sort_by_key(v, key_fn): i64 {
     return 0;
 }
 
+# Stable in-place byte-order sort of a vec of ResolvedPkg by name.
 fn sort_resolved(v): i64 { return _nous_sort_by_key(v, &rp_name); }
+# Stable in-place byte-order sort of a vec of InstalledPkg by name.
 fn sort_installed(v): i64 { return _nous_sort_by_key(v, &ip_name); }
+# Stable in-place byte-order sort of a vec of InstalledMPkg by manifest name.
 fn sort_mpkg(v): i64 { return _nous_sort_by_key(v, &mpkg_name); }
 
 # The keys of hashmap `m` (cstrs) in byte order. Use this, never raw `map_keys`,

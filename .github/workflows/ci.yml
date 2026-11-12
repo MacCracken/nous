@@ -119,12 +119,23 @@ jobs:
         run: cyrius deny src/main.cyr
 
       - name: Doc check
-        # 1.2.2: `cyrius doc --check` exits with the undocumented-function
-        # count. Run against the barrel (src/nous.cyr) — it has no functions
-        # of its own, so it passes; this mirrors the local cleanliness order.
-        # Per-function doc comments (and promoting this to per-module) are a
-        # 1.2.4 item.
-        run: cyrius doc --check src/nous.cyr
+        # `cyrius doc --check <f>` exits with the count of undocumented public
+        # fns (a name not starting with `_` whose line directly above, past any
+        # `#deprecated(...)` attribute, is not a `#` comment). 1.6.0: run per
+        # module, not just the barrel (src/nous.cyr has no fns of its own, so
+        # checking it alone always passed). Every module must report 0.
+        run: |
+          undoc=0
+          for f in src/*.cyr; do
+            # `|| n=$?`, not a bare call: the step shell runs with -e.
+            n=0
+            cyrius doc --check "$f" >/dev/null 2>&1 || n=$?
+            if [ $n -ne 0 ]; then
+              echo "::error::$f: $n undocumented public fn(s) (run 'cyrius doc $f')"
+              undoc=$((undoc + n))
+            fi
+          done
+          [ $undoc -eq 0 ] || { echo "undocumented public fns: $undoc"; exit 1; }
 
       - name: Verify dist bundle in sync
         # dist/nous.cyr is committed (nous's consumer-facing bundle).

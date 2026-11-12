@@ -3,14 +3,17 @@
 # NousResolver
 # ===================================================================
 
-fn resolver_new(mkt_dir, cache_dir): i64 {
+# Ok(Resolver) over marketplace dir mkt_dir and cache_dir (Strs), MarketplaceFirst; Err if the registry fails.
+fn resolver_new(mkt_dir, cache_dir): Result {
     var rr_t, rr = registry_new(mkt_dir);
     if (is_err_result(rr_t) == 1) { return Err(rr); }
     return Ok(resolver_make(strategy_default(), cache_dir, rr, sysdb_new()));
 }
 
+# Set Resolver r's Strategy to strat; returns r.
 fn resolver_with_strategy(r, strat): i64 { rs_set_strat(r, strat); return r; }
 
+# ResolvedPkg for InstalledMPkg pkg labelled src: deps byte-sorted, trust 0 (unverified).
 fn mpkg_to_resolved(pkg, src): i64 {
     var dk = _nous_sorted_keys(mpkg_deps(pkg));
     var ds = vec_new();
@@ -27,6 +30,7 @@ fn mpkg_to_resolved(pkg, src): i64 {
     return resolved_pkg_new(mpkg_name(pkg), mpkg_version(pkg), src, mpkg_desc(pkg), mp_size(pkg), ds, 0);
 }
 
+# ResolvedPkg for `name` from the marketplace registry (Flutter runtime labelled FlutterApp), or 0.
 fn resolve_mkt(r, name): i64 {
     var pkg = nous_registry_get(rs_reg(r), name);
     if (pkg == 0) {
@@ -44,7 +48,8 @@ fn resolve_mkt(r, name): i64 {
     return mpkg_to_resolved(pkg, SOURCE_MARKETPLACE);
 }
 
-fn resolve_sys(r, name): i64 {
+# Ok(ResolvedPkg) for `name` from apt, Ok(0) when apt has none; Err on capture failure.
+fn resolve_sys(r, name): Result {
     var result_t, result = sysdb_info(rs_sys(r), name);
     if (is_ok(result_t) == 1 && result != 0) {
         trace_msg(r, "system: ", name, "hit");
@@ -57,6 +62,7 @@ fn resolve_sys(r, name): i64 {
     return Ok(result);
 }
 
+# ResolvedPkg (FlutterApp) for a Flutter-runtime marketplace package `name`, or 0.
 fn resolve_flutter(r, name): i64 {
     var pkg = nous_registry_get(rs_reg(r), name);
     if (pkg == 0) {
@@ -71,7 +77,8 @@ fn resolve_flutter(r, name): i64 {
     return 0;
 }
 
-fn resolver_resolve(r, name): i64 {
+# Ok(ResolvedPkg) for one name by the Strategy, Ok(0) when no source has it; Err if invalid/ambiguous.
+fn resolver_resolve(r, name): Result {
     var v_t, v = validate_package_name(name);
     if (is_err_result(v_t) == 1) { return Err(v); }
     var k = st_kind(rs_strat(r));
@@ -117,7 +124,8 @@ fn resolver_resolve(r, name): i64 {
     return Ok(0);
 }
 
-fn resolver_search(r, query): i64 {
+# Ok(SearchResult): marketplace then apt matches for Str query, deduped by name, byte-sorted.
+fn resolver_search(r, query): Result {
     var results = vec_new();
     var sources = vec_new();
     var seen = map_new();
@@ -150,7 +158,8 @@ fn resolver_search(r, query): i64 {
     return Ok(nous_search_result_new(results, sources, vec_len(results)));
 }
 
-fn resolver_list(r): i64 {
+# Ok(vec of InstalledPkg): marketplace plus dpkg packages, byte-sorted; Err on capture failure.
+fn resolver_list(r): Result {
     var pkgs = vec_new();
     var ml = nous_registry_list(rs_reg(r));
     var i = 0;
@@ -170,6 +179,8 @@ fn resolver_list(r): i64 {
     return Ok(pkgs);
 }
 
-fn resolver_updates(r): i64 { return sysdb_updates(rs_sys(r)); }
+# Ok(vec of AvailUpdate) for apt only (sysdb_updates). See resolver_check_updates for all sources.
+fn resolver_updates(r): Result { return sysdb_updates(rs_sys(r)); }
+# 1 when the marketplace registry has a package named `name`, else 0.
 fn resolver_is_mkt(r, name): i64 { if (nous_registry_get(rs_reg(r), name) != 0) { return 1; } return 0; }
 

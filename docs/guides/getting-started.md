@@ -12,7 +12,8 @@ builds a small smoke binary.
   vendor it from the version-pinned snapshot (`~/.cyrius/versions/<pin>/lib/`)
   and record each file's sha256 in `cyrius.lock`. Don't commit `lib/`.
 - `cyrius deps` also fetches nous's one git dependency, bayan's
-  `dist/bayan-toml.cyr` (tag pinned in `[deps.bayan]`, commit in `cyrius.lock`).
+  `dist/bayan-toml.cyr` and `dist/bayan-json.cyr` profiles (tag pinned in
+  `[deps.bayan]`, commit in `cyrius.lock`).
   It needs network access the first time.
 - After changing the pin, run `cyrius deps` on its own. On 6.7.9, running
   `cyrius lib sync` first broke the lock. Since 6.7.13 it refuses safely, but
@@ -29,8 +30,8 @@ CYRIUS_DCE=1 cyrius build src/main.cyr build/nous
 ## Test, fuzz, benchmark
 
 ```sh
-cyrius test tests/nous.tcyr     # 271 assertions, expect "0 failed"
-cyrius test tests/nous.fcyr     # fuzz harness
+cyrius test tests/nous.tcyr     # 493 assertions, expect "0 failed"
+cyrius fuzz --poison=ab tests/  # 5 fuzz harnesses, as CI runs them
 sh scripts/bench-history.sh local   # benchmarks (appends to bench-history.csv)
 ```
 
@@ -43,7 +44,7 @@ for f in src/*.cyr tests/*.tcyr tests/*.bcyr tests/*.fcyr; do cyrius fmt "$f" --
 for f in src/*.cyr tests/*.tcyr tests/*.bcyr tests/*.fcyr; do cyrius lint "$f"; done          # no "warn " lines
 cyrius vet src/main.cyr
 cyrius deny src/main.cyr        # project policy (0 violations)
-cyrius doc --check src/nous.cyr # barrel doc check
+for f in src/*.cyr; do cyrius doc --check "$f"; done              # 0 undocumented per module
 ```
 
 ## The `dist/nous.cyr` bundle

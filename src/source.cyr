@@ -3,6 +3,7 @@
 # Source display
 # ===================================================================
 
+# Display name (Str) of a PackageSource: system, marketplace, flutter-app, community, unknown.
 fn source_to_str(src): i64 {
     if (src == SOURCE_SYSTEM) { return str_from("system"); }
     if (src == SOURCE_MARKETPLACE) { return str_from("marketplace"); }
@@ -30,6 +31,8 @@ fn _nous_seg_is(d, n, lit, ln): i64 {
 # against (8 `str_from` calls plus a `str_sub` per call). Now it makes one pass
 # over the bytes and compares in place with `memeq`. Same results (test
 # `detect_source`, the smoke checks, `fuzz_detect`).
+#
+# Heuristic PackageSource from the shape of Str name: marketplace, Flutter app, or unknown.
 fn detect_source(name): i64 {
     var len = str_len(name);
     if (len == 0) { return SOURCE_UNKNOWN; }
@@ -63,6 +66,7 @@ fn detect_source(name): i64 {
 # Typo suggestion engine (Levenshtein distance)
 # ===================================================================
 
+# Unit-cost byte-wise edit distance between Strs a and b (Wagner-Fischer, two rows).
 fn levenshtein(a, b): i64 {
     var al = str_len(a);
     var bl = str_len(b);

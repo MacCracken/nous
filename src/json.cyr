@@ -18,6 +18,7 @@
 # The wire format is unchanged except for escaping (now valid JSON) and
 # SearchResult's new "sources" field.
 
+# JSON string literal (cstr, quotes included) for a PackageSource, e.g. "\"system\"".
 fn source_json(src): i64 {
     if (src == SOURCE_SYSTEM) { return "\"system\""; }
     if (src == SOURCE_MARKETPLACE) { return "\"marketplace\""; }
@@ -26,6 +27,7 @@ fn source_json(src): i64 {
     return "\"unknown\"";
 }
 
+# PackageSource for its JSON name (Str, unquoted); SOURCE_UNKNOWN for 0 or an unknown name.
 fn source_from_json(s): i64 {
     if (s == 0) { return SOURCE_UNKNOWN; }
     if (str_eq_cstr(s, "system") == 1) { return SOURCE_SYSTEM; }
@@ -35,6 +37,7 @@ fn source_from_json(s): i64 {
     return SOURCE_UNKNOWN;
 }
 
+# "true" when v is 1, else "false" (cstr).
 fn bool_json(v): i64 {
     if (v == 1) { return "true"; }
     return "false";
@@ -54,6 +57,7 @@ fn _nj_field_str(sb, key, s): i64 {
     return _nj_put_str(sb, s);
 }
 
+# JSON array (Str) of a vec of Str, each element escaped; a 0 (NULL) element is written as null.
 fn json_str_vec(v): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "[");
@@ -102,6 +106,7 @@ fn _nj_str_vec(o, key): i64 {
 
 # --- ResolvedPkg ---
 
+# JSON object (Str) for a ResolvedPkg; inverse of resolved_from_json.
 fn resolved_to_json(pkg): i64 {
     var sb = str_builder_new();
     _nj_field_str(sb, "{\"name\":", rp_name(pkg));
@@ -127,6 +132,7 @@ fn _nj_resolved(o): i64 {
       _nj_int(o, "size_bytes"), _nj_str_vec(o, "dependencies"), _nj_bool(o, "trusted"));
 }
 
+# ResolvedPkg from JSON Str data (as resolved_to_json writes); 0 when not a valid object.
 fn resolved_from_json(data): i64 {
     var o = _nj_obj(data);
     if (o == 0) { return 0; }
@@ -135,6 +141,7 @@ fn resolved_from_json(data): i64 {
 
 # --- InstalledPkg ---
 
+# JSON object (Str) for an InstalledPkg; inverse of installed_from_json.
 fn installed_to_json(pkg): i64 {
     var sb = str_builder_new();
     _nj_field_str(sb, "{\"name\":", ip_name(pkg));
@@ -151,6 +158,7 @@ fn installed_to_json(pkg): i64 {
     return str_builder_build(sb);
 }
 
+# InstalledPkg from JSON Str data (as installed_to_json writes); 0 when invalid or unnamed.
 fn installed_from_json(data): i64 {
     var o = _nj_obj(data);
     if (o == 0) { return 0; }
@@ -163,6 +171,7 @@ fn installed_from_json(data): i64 {
 
 # --- AvailUpdate ---
 
+# JSON object (Str) for an AvailUpdate; inverse of update_from_json.
 fn update_to_json(u): i64 {
     var sb = str_builder_new();
     _nj_field_str(sb, "{\"name\":", load64(u));
@@ -175,7 +184,7 @@ fn update_to_json(u): i64 {
     return str_builder_build(sb);
 }
 
-# 1.5.3: new (AvailUpdate had no from_json).
+# AvailUpdate from JSON Str data (as update_to_json writes); 0 when invalid or unnamed. 1.5.3.
 fn update_from_json(data): i64 {
     var o = _nj_obj(data);
     if (o == 0) { return 0; }
@@ -188,6 +197,7 @@ fn update_from_json(data): i64 {
 
 # --- Strategy ---
 
+# JSON object (Str) for a Strategy; inverse of strategy_from_json.
 fn strategy_to_json(s): i64 {
     var k = st_kind(s);
     if (k == STRAT_MARKETPLACE_FIRST) { return str_from("\"MarketplaceFirst\""); }
@@ -206,6 +216,8 @@ fn strategy_to_json(s): i64 {
 # A JSON string ("SystemFirst", ...) or {"OnlySource": "<source>"}. 1.5.3:
 # parsed, not substring-matched. Anything unrecognised is still the default
 # strategy, as documented.
+#
+# Strategy from JSON Str data (as strategy_to_json writes); strategy_default() when unrecognised.
 fn strategy_from_json(data): i64 {
     if (data == 0) { return strategy_default(); }
     var v = bayan_json_v_parse(data);
@@ -224,6 +236,7 @@ fn strategy_from_json(data): i64 {
 
 # --- SearchResult ---
 
+# JSON object (Str) for a SearchResult, with results and sources; inverse of search_result_from_json.
 fn search_result_to_json(sr): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"results\":[");
@@ -249,7 +262,7 @@ fn search_result_to_json(sr): i64 {
     return str_builder_build(sb);
 }
 
-# 1.5.3: new (SearchResult had no from_json).
+# SearchResult from JSON Str data (as search_result_to_json writes); 0 when invalid. 1.5.3.
 fn search_result_from_json(data): i64 {
     var o = _nj_obj(data);
     if (o == 0) { return 0; }
@@ -275,6 +288,7 @@ fn search_result_from_json(data): i64 {
 
 # --- NousErrorKind ---
 
+# JSON object (Str) for a NousError: kind, message, detail; inverse of error_kind_from_json.
 fn error_kind_to_json(e): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"kind\":");
@@ -285,6 +299,7 @@ fn error_kind_to_json(e): i64 {
     return str_builder_build(sb);
 }
 
+# NousError from JSON Str data; an empty kind-0 error when data is not a valid object.
 fn error_kind_from_json(data): i64 {
     var o = _nj_obj(data);
     if (o == 0) { return nous_error_new(0, str_from(""), 0); }
@@ -293,6 +308,7 @@ fn error_kind_from_json(data): i64 {
 
 # --- AgentInfo ---
 
+# JSON object (Str) for an AgentInfo; inverse of agent_info_from_json.
 fn agent_info_to_json(a): i64 {
     var sb = str_builder_new();
     _nj_field_str(sb, "{\"name\":", ai_name(a));
@@ -307,7 +323,7 @@ fn _nj_agent(o): i64 {
       _nj_or_empty(_nj_str(o, "version")), _nj_or_empty(_nj_str(o, "description")));
 }
 
-# 1.5.3: new (AgentInfo had no from_json).
+# AgentInfo from JSON Str data (as agent_info_to_json writes); 0 when not an object. 1.5.3.
 fn agent_info_from_json(data): i64 {
     var o = _nj_obj(data);
     if (o == 0) { return 0; }
@@ -316,6 +332,7 @@ fn agent_info_from_json(data): i64 {
 
 # --- Manifest ---
 
+# JSON object (Str) for a Manifest; inverse of manifest_from_json.
 fn manifest_to_json(m): i64 {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "{\"agent\":");
@@ -362,7 +379,7 @@ fn _nj_manifest(o): i64 {
     return manifest_new(agent, deps, runtime);
 }
 
-# 1.5.3: new (Manifest had no from_json); also what the registry uses.
+# Manifest from JSON Str data (as manifest_to_json writes; the registry reads these); 0 when invalid.
 fn manifest_from_json(data): i64 {
     var o = _nj_obj(data);
     if (o == 0) { return 0; }

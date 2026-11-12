@@ -58,11 +58,11 @@ fn _nous_cap_cmdline(args): i64 {
     return str_builder_build(sb);
 }
 
-fn _nous_cap_fail(args, detail): i64 {
+fn _nous_cap_fail(args, detail): Result {
     return nous_err(NOUS_ERR_COMMAND_EXEC, _nous_cap_cmdline(args), str_from(detail));
 }
 
-fn _nous_cap_overflow(args, max): i64 {
+fn _nous_cap_overflow(args, max): Result {
     var sb = str_builder_new();
     str_builder_add_cstr(sb, "output exceeds the ");
     str_builder_add_int(sb, max);
@@ -84,7 +84,9 @@ fn _nous_cap_overflow(args, max): i64 {
 # around its own runs and then restores 0. A hung apt-cache / dpkg-query used to
 # block the caller indefinitely. A caller's own non-zero deadline always wins.
 # Set NOUS_CAPTURE_IDLE_MS = 0 to turn the default off.
-fn nous_capture_n(args, init, max): i64 {
+#
+# Ok(Str) all stdout of argv `args` (init..max byte buffer), Ok(0) for none; Err past max or on a deadline cut.
+fn nous_capture_n(args, init, max): Result {
     var prev = proc_timeout_ms();
     var applied = 0;
     if (prev == 0 && NOUS_CAPTURE_IDLE_MS > 0) {
@@ -97,7 +99,7 @@ fn nous_capture_n(args, init, max): i64 {
     return Ok(v);
 }
 
-fn _nous_capture_run(args, init, max): i64 {
+fn _nous_capture_run(args, init, max): Result {
     var st[16];
     var cap = init;
     if (cap > max) { cap = max; }
@@ -123,7 +125,9 @@ fn _nous_capture_run(args, init, max): i64 {
 # nous_capture_n with the default limits. It starts from the scratch buffer's
 # current size, so a command that once needed more room does not re-run next
 # time.
-fn nous_capture(args): i64 {
+#
+# Ok(Str) all stdout of argv `args`, Ok(0) for none; nous_capture_n with the default limits.
+fn nous_capture(args): Result {
     var init = NOUS_CAPTURE_INIT;
     if (_nous_cap_size - 1 > init) { init = _nous_cap_size - 1; }
     return nous_capture_n(args, init, NOUS_CAPTURE_MAX);
@@ -131,7 +135,9 @@ fn nous_capture(args): i64 {
 
 # Run a shell command line (`/bin/sh -c`) and capture all of stdout: same
 # results as `nous_capture`.
-fn nous_cmd_capture(cmd_str): i64 {
+#
+# Ok(Str) all stdout of `/bin/sh -c cmd_str`, Ok(0) for none; Err as nous_capture.
+fn nous_cmd_capture(cmd_str): Result {
     var args = vec_new();
     vec_push(args, "/bin/sh");
     vec_push(args, "-c");
@@ -143,6 +149,8 @@ fn nous_cmd_capture(cmd_str): i64 {
 # any failure. Since 1.5.1 it never truncates and the Str is an owned copy, but
 # it still cannot tell "failed" from "said nothing". Its bare name also collides
 # with thoth's one-argument `cmd_run(line)` in the flat namespace.
+#
+# Deprecated: stdout Str of shell line cmd_str, 0 for no output or any failure. Use nous_cmd_capture.
 #deprecated("use nous_cmd_capture; cmd_run hides failures and collides with thoth (removed in 2.0.0)")
 fn cmd_run(cmd_str): i64 {
     var r_t, r = nous_cmd_capture(cmd_str);
@@ -158,12 +166,13 @@ fn nous_which_exists(name): i64 {
 # Deprecated (1.5.2), removed in 2.0.0. kavach defines its own one-argument
 # `which_exists(name)` with a different lookup, and the flat namespace keeps
 # only one of them ("last definition wins").
+#
+# Deprecated alias of nous_which_exists.
 #deprecated("use nous_which_exists; which_exists collides with kavach (removed in 2.0.0)")
 fn which_exists(name): i64 {
     return nous_which_exists(name);
 }
 
-# Resolve `name` to its absolute path on PATH (cstr), or 0 if not found.
 # sysdb passes the result to exec_capture: its child execve's argv[0]
 # directly with an empty envp, so it cannot search PATH itself — a bare
 # command name like "dpkg-query" silently fails to launch (child exits
@@ -176,6 +185,8 @@ fn which_exists(name): i64 {
 # segment, `bin`) let a binary in the current directory stand in for
 # apt-cache. A directory named `apt-cache` was also accepted; it then failed
 # to run and read as "no output".
+#
+# Resolve `name` to its absolute path on PATH (cstr), or 0 if not found.
 fn which_path(name): i64 {
     var pe = getenv("PATH");
     if (pe == 0) { return 0; }
@@ -201,8 +212,7 @@ fn _nous_is_exec_file(cpath): i64 {
     return 1;
 }
 
-# Absolute path of a system tool for exec_capture, falling back to the
-# bare name if PATH resolution fails (preserves prior behaviour).
+# Absolute path (cstr) of system tool `name` (which_path), or the bare name when it is not on PATH.
 fn tool_path(name): i64 {
     var p = which_path(name);
     if (p != 0) { return p; }

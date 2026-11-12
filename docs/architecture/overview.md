@@ -11,28 +11,33 @@ src/
   error.cyr           Error constructors, display, name validation
   strategy.cyr        Resolution strategy constructors
   source.cyr          Source display, detection, typo suggestions
-  command.cyr         Shell command execution, PATH scanning
-  sort.cyr            Insertion sort by name
+  command.cyr         Child-output capture (complete, or Err), PATH lookup
+  sort.cyr            Stable natural merge sort by name; sorted map keys
   registry.cyr        Marketplace package registry
   sysdb.cyr           apt/dpkg system package database
-  resolver.cyr        Main resolver engine, trace
-  json.cyr            JSON serialization and deserialization
-  version.cyr         SemVer parsing, constraint matching
-  graph.cyr           Dependency graph, cycle detection, topological sort
-  recipe.cyr          Zugot CYML parsing, recipe DB, recipe-based resolution
+  resolver.cyr        Main resolver engine (single-name resolve, search, list)
+  json.cyr            JSON serialization (escaped) and deserialization (bayan-json)
+  version.cyr         SemVer, constraint ranges (npm/Cargo), Debian version order
+  graph.cyr           Dependency graph, Tarjan SCC (cycles + install order), Kahn sort
+  recipe.cyr          Zugot CYML parsing, recipe DB, trace, transitive resolution
+  updates.cyr         Update detection: apt leg + a pluggable lookup per source
 
 tests/
-  nous.tcyr           Test suite (271 assertions)
-  nous.bcyr           Benchmarks (18 benches)
-  nous.fcyr           Fuzz harnesses (3 harnesses)
+  nous.tcyr           Test suite (493 assertions)
+  nous.bcyr           Benchmarks (23 benches)
+  nous.fcyr           Fuzz smoke harness
+  fuzz_*.fcyr         Mutation fuzz targets: cyml, json, version, apt (4)
+  fz_driver.cyr       Fuzz driver, vendored from sandhi
 
 dist/
   nous.cyr            Consumer-facing single-file bundle (cyrius distlib; ADR-0002)
 ```
 
-All `src/*.cyr` functions carry explicit `: i64` return types (Cyrius 6.0.1
-idiom). `lib/` (stdlib) is gitignored — resolved from the version-pinned
-`~/.cyrius/versions/<v>/lib/` snapshot, not committed.
+Every `src/*.cyr` function carries an explicit return type: `: Result` for the
+31 that return `Ok(..)` / `Err(..)`, `: i64` for the rest (1.6.0). Every public
+function has a one-line doc comment, which `cyrius doc src/<module>.cyr` prints
+and CI enforces per module (1.6.0). `lib/` (stdlib) is gitignored — resolved from
+the version-pinned `~/.cyrius/versions/<v>/lib/` snapshot, not committed.
 
 ## Data Flow
 
@@ -49,7 +54,7 @@ idiom). `lib/` (stdlib) is gitignored — resolved from the version-pinned
 1. Consumer (ark) calls `resolver_resolve(r, name)` or `resolver_search(r, query)`
 2. Resolver applies the configured Strategy to determine source order
 3. Each source is queried in order:
-   - **System**: shells out to `apt-cache` / `dpkg-query` via `exec_capture`
+   - **System**: runs `apt-cache` / `dpkg-query` (array-form, absolute path) via `nous_capture`
    - **Marketplace**: reads `installed/<pkg>/manifest.json` from the registry directory
    - **Flutter**: checks marketplace packages with `runtime: "flutter"`
 4. First match (or all matches for `SearchAll`) is returned as a ResolvedPkg
@@ -57,8 +62,8 @@ idiom). `lib/` (stdlib) is gitignored — resolved from the version-pinned
 ## Struct Layout
 
 All structs use manual `alloc` + `store64` construction with `load64` accessors.
-Fields are at `field_index * 8` byte offsets. See `src/nous.cyr` header comments for
-the complete layout of all 12 struct types.
+Fields are at `field_index * 8` byte offsets. The layout of every struct type is
+listed at the top of `src/types.cyr`.
 
 ## Build & Distribution
 
@@ -105,8 +110,8 @@ the complete layout of all 12 struct types.
 - **Strategy pattern**: resolution order is configurable per-call, not hardcoded.
 - **Source-agnostic types**: ResolvedPkg / InstalledPkg are the same regardless of source.
 - **Stub registry**: LocalRegistry is intentionally minimal — it will be replaced by the real mela marketplace client.
-- **Manual struct layout**: Cyrius struct constructors only work in `main()`, so all types use `alloc`+`store64` constructors with `load64` accessor functions.
-- **Custom `our_is_dir()`**: The stdlib `is_dir()` from fs.cyr is broken; nous uses a direct stat syscall.
+- **Manual struct layout**: all types use `alloc`+`store64` constructors with `load64` accessor functions. That dates from early Cyrius, where struct literals worked only in `main()`; Cyrius 6.x has full structs, and adopting them is not scheduled.
+- **Custom `our_is_dir()`**: one `stat` syscall. The stdlib `is_dir()` works (checked in 1.5.2), but it opens and reads the directory, and nous calls this once per directory entry.
 - **`dir_list()` takes Str**: fs.cyr's `dir_list` expects Str type arguments, not C strings.
 
 ## Future Modules (planned)

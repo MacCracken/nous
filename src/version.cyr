@@ -15,27 +15,35 @@ enum ConstraintOp {
     OP_ANY = 7;
 }
 
-# SemVer: sv_major(0) sv_minor(8) sv_patch(16)
+# SemVer constructor: major, minor, patch (i64). Layout sv_major(0) sv_minor(8) sv_patch(16).
 fn semver_new(major, minor, patch): i64 {
     var p = alloc(24);
     store64(p, major); store64(p + 8, minor); store64(p + 16, patch);
     return p;
 }
+# SemVer field: major component.
 fn sv_major(v): i64 { return load64(v); }
+# SemVer field: minor component.
 fn sv_minor(v): i64 { return load64(v + 8); }
+# SemVer field: patch component.
 fn sv_patch(v): i64 { return load64(v + 16); }
 
 # Constraint: ct_op(0) ct_ver(8) ct_prec(16) ct_err(24) ct_range(32) = 40 bytes (1.5.3: +prec,
 # the number of version components written, "1.2" = 2; +err, a Str reason
 # when the text is not a supported constraint, else 0).
+#
+# Constraint constructor: op (ConstraintOp), ver (SemVer); precision 3, no error.
 fn constraint_new(op, ver): i64 {
     var p = alloc(40);
     store64(p, op); store64(p + 8, ver); store64(p + 16, 3); store64(p + 24, 0);
     store64(p + 32, 0);     # cached range (see _nous_range_of)
     return p;
 }
+# Constraint field: the ConstraintOp.
 fn ct_op(c): i64 { return load64(c); }
+# Constraint field: the SemVer bound (0.0.0 for OP_ANY; 0 for a refused constraint).
 fn ct_ver(c): i64 { return load64(c + 8); }
+# Constraint field: how many version components were written ("1.2" = 2), 1 to 3.
 fn ct_prec(c): i64 { return load64(c + 16); }
 # 0 for a supported constraint, else why it is not (a Str). 1.5.3.
 fn nous_constraint_error(c): i64 { return load64(c + 24); }
@@ -105,8 +113,10 @@ fn semver_cmp(a, b): i64 {
     return 0;
 }
 
+# 1 when SemVers a and b are equal (major, minor, patch).
 fn semver_eq(a, b): i64 { return semver_cmp(a, b) == 0; }
 
+# "major.minor.patch" text (Str) of SemVer v.
 fn semver_to_str(v): i64 {
     var sb = str_builder_new();
     str_builder_add_int(sb, sv_major(v));
@@ -176,6 +186,8 @@ fn _nous_ver_parse_p(d, len, pos, out): i64 {
 # pre-release / build tags in a constraint and compound ranges (">=1 <2", ",",
 # "||"; both are roadmap 1.7.x), and trailing text. Before 1.5.3 these were
 # accepted silently: "!=1.0.0" became "=0.0.0", and ">=1.0, <2.0" matched 3.0.0.
+#
+# Parse Str s into a Constraint; a refused one never matches and nous_constraint_error says why.
 fn constraint_parse(s): i64 {
     var d = str_data(s);
     var len = str_len(s);
@@ -343,6 +355,8 @@ fn _nous_range_intersect(a, b): i64 {
 # Check if version v satisfies constraint c. 1.5.3: through the constraint's
 # range, so partials and zero-major carets are right and an unsupported
 # constraint never matches.
+#
+# 1 when SemVer v satisfies Constraint c, else 0.
 fn constraint_matches(c, v): i64 {
     if (ct_op(c) == OP_ANY && nous_constraint_error(c) == 0) { return 1; }
     if (v == 0) { return 0; }
@@ -434,10 +448,11 @@ fn _nous_deb_split(s, out): i64 {
     return 0;
 }
 
-# Compare two Debian version strings: negative / 0 / positive (deb-version(7)).
 # 1.5.3: nous compared these as SemVer, missing revision-only security updates
 # (7.81.0-1ubuntu1.16 vs .15), '~' pre-releases and letter suffixes (0.9.8zh),
 # and offering an epoch downgrade (2.0-1 over 1:1.0-1).
+#
+# Compare two Debian version strings: negative / 0 / positive (deb-version(7)).
 fn nous_deb_version_cmp(a, b): i64 {
     var pa = alloc(40);
     var pb = alloc(40);

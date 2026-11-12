@@ -19,6 +19,7 @@ include "src/recipe.cyr"
 # all (before this, updates.cyr was outside both gates).
 include "src/updates.cyr"
 
+# Smoke binary: prints the banner (VERSION), runs the self-checks; 0 when all pass.
 fn main(): i64 {
     alloc_init();
     args_init();

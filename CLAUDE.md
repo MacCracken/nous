@@ -24,7 +24,7 @@ ark (dependency resolution). Nous is the single source of truth for resolving pa
 
 0. Read roadmap, CHANGELOG, and open issues — know what was intended before auditing what was built
 1. Test + benchmark sweep of existing code
-2. Cleanliness check (Cyrius): `cyrius fmt <file> --check` per source file (diff against in-place), `cyrius lint <file>` (auto-discover `src/*.cyr` and `tests/*.{tcyr,bcyr,fcyr}`; treat any `warn ` line as failure), `cyrius vet src/main.cyr` (include-graph audit), `cyrius deny src/main.cyr` (project policy enforcement), `cyrius doc --check src/nous.cyr` (doc warnings as errors). Mirrors the CI step order — a clean local run should green-light CI.
+2. Cleanliness check (Cyrius): `cyrius fmt <file> --check` per source file (exit-code based: 0 = formatted; it prints nothing), `cyrius lint <file>` (auto-discover `src/*.cyr` and `tests/*.{tcyr,bcyr,fcyr}`; treat any `warn ` line as failure), `cyrius vet src/main.cyr` (include-graph audit), `cyrius deny src/main.cyr` (project policy enforcement), `cyrius doc --check <file>` per `src/*.cyr` module (its exit code is the undocumented public fn count; must be 0). Mirrors the CI step order — a clean local run should green-light CI.
 3. Get baseline benchmarks (`./scripts/bench-history.sh`)
 4. Internal deep review — gaps, optimizations, security, logging/errors, docs
 5. External research — domain completeness, missing capabilities, best practices, world-class accuracy
@@ -37,7 +37,7 @@ ark (dependency resolution). Nous is the single source of truth for resolving pa
 ### Work Loop / Working Loop (continuous)
 
 1. Work phase — new features, roadmap items, bug fixes
-2. Cleanliness check (Cyrius): `cyrius fmt <file> --check` per source file (diff against in-place), `cyrius lint <file>` (auto-discover `src/*.cyr` and `tests/*.{tcyr,bcyr,fcyr}`; treat any `warn ` line as failure), `cyrius vet src/main.cyr` (include-graph audit), `cyrius deny src/main.cyr` (project policy enforcement), `cyrius doc --check src/nous.cyr` (doc warnings as errors). Mirrors the CI step order — a clean local run should green-light CI.
+2. Cleanliness check (Cyrius): `cyrius fmt <file> --check` per source file (exit-code based: 0 = formatted; it prints nothing), `cyrius lint <file>` (auto-discover `src/*.cyr` and `tests/*.{tcyr,bcyr,fcyr}`; treat any `warn ` line as failure), `cyrius vet src/main.cyr` (include-graph audit), `cyrius deny src/main.cyr` (project policy enforcement), `cyrius doc --check <file>` per `src/*.cyr` module (its exit code is the undocumented public fn count; must be 0). Mirrors the CI step order — a clean local run should green-light CI.
 3. Test + benchmark additions for new code
 4. Run benchmarks (`./scripts/bench-history.sh`)
 5. Internal review — performance, memory, security, throughput, correctness

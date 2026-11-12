@@ -48,7 +48,7 @@ enum ErrKind {
 # Strategy:     st_kind(0) st_only(8)                      = 16 bytes
 # Resolver:     rs_strat(0) rs_cache(8) rs_reg(16) rs_sys(24) rs_rdb(32) rs_trace(40) rs_trace_on(48) = 56 bytes
 # SemVer:       sv_major(0) sv_minor(8) sv_patch(16)         = 24 bytes
-# Constraint:   ct_op(0) ct_ver(8)                           = 16 bytes
+# Constraint:   ct_op(0) ct_ver(8) ct_prec(16) ct_err(24) ct_range(32) = 40 bytes (src/version.cyr)
 # DepGraph:     dg_nodes(0) dg_edges(8) dg_versions(16)      = 24 bytes
 # ResPlan:      pl_packages(0) pl_order(8) pl_unresolved(16)   = 24 bytes
 # Recipe:       rc_name(0) rc_ver(8) rc_desc(16) rc_license(24) rc_arch(32)
@@ -60,6 +60,7 @@ enum ErrKind {
 # Constructors
 # ===================================================================
 
+# NousError constructor: kind (ErrKind), msg (Str), detail (Str or 0). Prefer nous_err.
 fn nous_error_new(kind, msg, detail): i64 {
     var p = alloc(24);
     store64(p, kind); store64(p + 8, msg); store64(p + 16, detail);
@@ -73,18 +74,21 @@ fn nous_error_new(kind, msg, detail): i64 {
 # makes an arity-disagreeing duplicate a hard error, which is how it surfaced.
 # agnostik keeps the bare name: it is the SHARED-types library for AGNOS and agent
 # identity/status is its domain. This one is package metadata, so it takes the prefix.
+# AgentInfo constructor: name, version, desc (Str each).
 fn nous_agent_info_new(name, version, desc): i64 {
     var p = alloc(24);
     store64(p, name); store64(p + 8, version); store64(p + 16, desc);
     return p;
 }
 
+# Manifest constructor: agent (AgentInfo), deps (map name -> constraint Str), runtime (Str).
 fn manifest_new(agent, deps, runtime): i64 {
     var p = alloc(24);
     store64(p, agent); store64(p + 8, deps); store64(p + 16, runtime);
     return p;
 }
 
+# InstalledMPkg constructor: manifest, size (bytes), path (Str dir), at (mtime, epoch s).
 fn installed_mpkg_new(manifest, size, path, at): i64 {
     var p = alloc(32);
     store64(p, manifest); store64(p + 8, size);
@@ -92,6 +96,7 @@ fn installed_mpkg_new(manifest, size, path, at): i64 {
     return p;
 }
 
+# ResolvedPkg constructor: name, ver, src (PackageSource), desc, size, deps (vec of Str), trusted.
 fn resolved_pkg_new(name, ver, src, desc, size, deps, trusted): i64 {
     var p = alloc(56);
     store64(p, name); store64(p + 8, ver); store64(p + 16, src);
@@ -100,6 +105,7 @@ fn resolved_pkg_new(name, ver, src, desc, size, deps, trusted): i64 {
     return p;
 }
 
+# InstalledPkg constructor: name, ver, src (PackageSource), date (epoch s or 0), size, auto_inst.
 fn installed_pkg_new(name, ver, src, date, size, auto_inst): i64 {
     var p = alloc(48);
     store64(p, name); store64(p + 8, ver); store64(p + 16, src);
@@ -107,6 +113,7 @@ fn installed_pkg_new(name, ver, src, date, size, auto_inst): i64 {
     return p;
 }
 
+# AvailUpdate constructor: name, src (PackageSource), inst_ver, avail_ver, changelog (Str or 0).
 fn avail_update_new(name, src, inst_ver, avail_ver, changelog): i64 {
     var p = alloc(40);
     store64(p, name); store64(p + 8, src); store64(p + 16, inst_ver);
@@ -114,6 +121,7 @@ fn avail_update_new(name, src, inst_ver, avail_ver, changelog): i64 {
     return p;
 }
 
+# SearchResult constructor: results (vec of ResolvedPkg), sources (vec of PackageSource), total.
 fn nous_search_result_new(results, sources, total): i64 {
     var p = alloc(24);
     store64(p, results); store64(p + 8, sources); store64(p + 16, total);
@@ -122,27 +130,33 @@ fn nous_search_result_new(results, sources, total): i64 {
 
 # Deprecated (1.5.3), removed in 2.0.0: daimon's `search_result_new` takes FIVE
 # arguments, so bundling both is a hard error (an arity-disagreeing duplicate).
+#
+# Deprecated alias of nous_search_result_new.
 #deprecated("use nous_search_result_new; search_result_new collides with daimon's 5-arg one (removed in 2.0.0)")
 fn search_result_new(results, sources, total): i64 { return nous_search_result_new(results, sources, total); }
 
+# SysDb constructor: apt_available is 1 when apt-cache and dpkg-query are usable. See sysdb_new.
 fn sysdb_make(apt_available): i64 {
     var p = alloc(8);
     store64(p, apt_available);
     return p;
 }
 
+# Registry constructor: base_dir (Str), packages (vec of InstalledMPkg). See registry_new.
 fn registry_make(base_dir, packages): i64 {
     var p = alloc(16);
     store64(p, base_dir); store64(p + 8, packages);
     return p;
 }
 
+# Strategy constructor: kind (StrategyKind), only_source (PackageSource, used by STRAT_ONLY_SOURCE).
 fn strategy_new(kind, only_source): i64 {
     var p = alloc(16);
     store64(p, kind); store64(p + 8, only_source);
     return p;
 }
 
+# Resolver constructor: strategy, cache dir, registry, sysdb; no recipe DB, trace empty and off.
 fn resolver_make(strat, cache, reg, sysdb): i64 {
     var p = alloc(56);
     store64(p, strat); store64(p + 8, cache);
@@ -156,58 +170,97 @@ fn resolver_make(strat, cache, reg, sysdb): i64 {
 # Accessors (field_index * 8)
 # ===================================================================
 
+# NousError field: the ErrKind.
 fn ne_kind(p): i64 { return load64(p); }
+# NousError field: the message (Str).
 fn ne_msg(p): i64 { return load64(p + 8); }
+# NousError field: the detail (Str, or 0 when there is none).
 fn ne_detail(p): i64 { return load64(p + 16); }
 
+# AgentInfo field: package name (Str).
 fn ai_name(p): i64 { return load64(p); }
+# AgentInfo field: version (Str).
 fn ai_version(p): i64 { return load64(p + 8); }
+# AgentInfo field: description (Str).
 fn ai_desc(p): i64 { return load64(p + 16); }
 
+# Manifest field: the AgentInfo.
 fn mf_agent(p): i64 { return load64(p); }
+# Manifest field: dependencies, a map of name (cstr) -> constraint (Str).
 fn mf_deps(p): i64 { return load64(p + 8); }
+# Manifest field: runtime (Str; "flutter" marks a Flutter app).
 fn mf_runtime(p): i64 { return load64(p + 16); }
 
+# InstalledMPkg field: the Manifest.
 fn mp_manifest(p): i64 { return load64(p); }
+# InstalledMPkg field: on-disk size of the package directory, in bytes.
 fn mp_size(p): i64 { return load64(p + 8); }
+# InstalledMPkg field: the package directory (Str).
 fn mp_path(p): i64 { return load64(p + 16); }
+# InstalledMPkg field: manifest mtime, seconds since the epoch.
 fn mp_at(p): i64 { return load64(p + 24); }
 
+# ResolvedPkg field: package name (Str).
 fn rp_name(p): i64 { return load64(p); }
+# ResolvedPkg field: version (Str).
 fn rp_ver(p): i64 { return load64(p + 8); }
+# ResolvedPkg field: the PackageSource.
 fn rp_src(p): i64 { return load64(p + 16); }
+# ResolvedPkg field: description (Str).
 fn rp_desc(p): i64 { return load64(p + 24); }
+# ResolvedPkg field: size in bytes (installed or download size).
 fn rp_size(p): i64 { return load64(p + 32); }
+# ResolvedPkg field: dependency names, a byte-sorted vec of Str.
 fn rp_deps(p): i64 { return load64(p + 40); }
+# ResolvedPkg field: trust flag (0 until a signature check sets it).
 fn rp_trust(p): i64 { return load64(p + 48); }
 
+# InstalledPkg field: package name (Str).
 fn ip_name(p): i64 { return load64(p); }
+# InstalledPkg field: installed version (Str).
 fn ip_ver(p): i64 { return load64(p + 8); }
+# InstalledPkg field: the PackageSource.
 fn ip_src(p): i64 { return load64(p + 16); }
+# InstalledPkg field: install date, seconds since the epoch (0 when unknown).
 fn ip_date(p): i64 { return load64(p + 24); }
+# InstalledPkg field: installed size in bytes.
 fn ip_size(p): i64 { return load64(p + 32); }
+# InstalledPkg field: 1 when installed automatically as a dependency.
 fn ip_auto(p): i64 { return load64(p + 40); }
 
+# SearchResult field: matches, a byte-sorted vec of ResolvedPkg.
 fn sr_results(p): i64 { return load64(p); }
+# SearchResult field: the sources searched, a vec of PackageSource.
 fn sr_sources(p): i64 { return load64(p + 8); }
+# SearchResult field: total match count.
 fn sr_total(p): i64 { return load64(p + 16); }
 
+# SysDb field: 1 when apt is available.
 fn sd_apt(p): i64 { return load64(p); }
 
+# Registry field: base directory (Str).
 fn rg_dir(p): i64 { return load64(p); }
+# Registry field: installed packages, a byte-sorted vec of InstalledMPkg.
 fn rg_pkgs(p): i64 { return load64(p + 8); }
 
+# Strategy field: the StrategyKind.
 fn st_kind(p): i64 { return load64(p); }
+# Strategy field: the PackageSource for STRAT_ONLY_SOURCE.
 fn st_only(p): i64 { return load64(p + 8); }
 
+# Resolver field: the Strategy.
 fn rs_strat(p): i64 { return load64(p); }
+# Resolver field: cache directory (Str).
 fn rs_cache(p): i64 { return load64(p + 8); }
+# Resolver field: the Registry.
 fn rs_reg(p): i64 { return load64(p + 16); }
+# Resolver field: the SysDb.
 fn rs_sys(p): i64 { return load64(p + 24); }
+# Resolver: replace the Strategy in place.
 fn rs_set_strat(p, v): i64 { store64(p, v); }
 
 # Shorthand for deep access: InstalledMPkg -> name/version/desc/runtime/deps
-# NULL-safe: returns 0 if any pointer in the chain is NULL
+# InstalledMPkg -> name (Str); 0 if any pointer in the chain is NULL.
 fn mpkg_name(p): i64 {
     if (p == 0) { return 0; }
     var m = mp_manifest(p);
@@ -216,6 +269,7 @@ fn mpkg_name(p): i64 {
     if (a == 0) { return 0; }
     return ai_name(a);
 }
+# InstalledMPkg -> version (Str); 0 if any pointer in the chain is NULL.
 fn mpkg_version(p): i64 {
     if (p == 0) { return 0; }
     var m = mp_manifest(p);
@@ -224,6 +278,7 @@ fn mpkg_version(p): i64 {
     if (a == 0) { return 0; }
     return ai_version(a);
 }
+# InstalledMPkg -> description (Str); 0 if any pointer in the chain is NULL.
 fn mpkg_desc(p): i64 {
     if (p == 0) { return 0; }
     var m = mp_manifest(p);
@@ -232,12 +287,14 @@ fn mpkg_desc(p): i64 {
     if (a == 0) { return 0; }
     return ai_desc(a);
 }
+# InstalledMPkg -> runtime (Str); 0 for NULL p, "" for a missing manifest.
 fn mpkg_runtime(p): i64 {
     if (p == 0) { return 0; }
     var m = mp_manifest(p);
     if (m == 0) { return str_from(""); }
     return mf_runtime(m);
 }
+# InstalledMPkg -> deps map; an empty map if any pointer in the chain is NULL.
 fn mpkg_deps(p): i64 {
     if (p == 0) { return map_new(); }
     var m = mp_manifest(p);

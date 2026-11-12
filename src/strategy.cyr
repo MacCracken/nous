@@ -3,11 +3,16 @@
 # Strategy
 # ===================================================================
 
+# Strategy: marketplace first, then system (STRAT_MARKETPLACE_FIRST).
 fn strategy_default(): i64 { return strategy_new(STRAT_MARKETPLACE_FIRST, 0); }
+# Strategy: system (apt) first, then marketplace (STRAT_SYSTEM_FIRST).
 fn strategy_system_first(): i64 { return strategy_new(STRAT_SYSTEM_FIRST, 0); }
+# Strategy: resolve from PackageSource src only (STRAT_ONLY_SOURCE).
 fn strategy_only(src): i64 { return strategy_new(STRAT_ONLY_SOURCE, src); }
+# Strategy: query every source; a name found in two is NOUS_ERR_AMBIGUOUS_SOURCE.
 fn strategy_search_all(): i64 { return strategy_new(STRAT_SEARCH_ALL, 0); }
 
+# 1 when Strategies a and b are equal (kind, plus the source for STRAT_ONLY_SOURCE).
 fn strategy_eq(a, b): i64 {
     if (st_kind(a) != st_kind(b)) { return 0; }
     if (st_kind(a) == STRAT_ONLY_SOURCE) { return st_only(a) == st_only(b); }

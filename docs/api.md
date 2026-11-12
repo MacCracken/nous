@@ -1,6 +1,6 @@
 # Nous API Reference
 
-> **Version**: 1.5.3 | **Language**: Cyrius 6.7.18 (pinned in `cyrius.cyml`)
+> **Version**: 1.6.0 | **Language**: Cyrius 6.7.18 (pinned in `cyrius.cyml`)
 >
 > **In-tree:** `include "src/nous.cyr"` (the barrel). **As a dependency:** pull
 > `dist/nous.cyr` (see [ADR 0002](adr/0002-flat-modules-dist-bundle.md)), and
@@ -14,6 +14,20 @@
 > tag with `is_ok(t)` / `is_err_result(t)`. To propagate, re-emit both halves:
 > `if (is_err_result(t) == 1) { return Err(v); }`. A bare `return v;` hands the
 > caller the payload as its tag, so an Err reads as Ok (CHANGELOG 1.3.2).
+>
+> **Which functions return a Result (1.6.0):** every one declared `: Result` in
+> `src/`. That is 26 public functions: `nous_err`, `err_*`,
+> `validate_package_name`, `nous_capture*`, `nous_cmd_capture`, `registry_new`,
+> `registry_install_package`, the seven `sysdb_*` queries (not `sysdb_new` or
+> `sysdb_available`), `resolve_sys`, `resolver_new`,
+> `resolver_resolve`, `resolver_search`, `resolver_list`, `resolver_updates`,
+> `resolver_resolve_all*`, `finalize_graph` and `resolver_check_updates`.
+> Everything else returns a plain `i64`. The compiler refuses a one-variable
+> bind of a Result (`var r = f();`) whether or not it is annotated.
+>
+> **Per-function reference:** `cyrius doc src/<module>.cyr` prints a one-line
+> summary for every public function. Each line is the comment directly above
+> the function, and CI fails if any public function lacks one (1.6.0).
 
 ---
 

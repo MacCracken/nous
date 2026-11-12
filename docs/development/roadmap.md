@@ -3,7 +3,7 @@
 What's next for nous. Shipped work is recorded in [CHANGELOG.md](../../CHANGELOG.md),
 not here.
 
-**Current state (1.5.3, cyrius 6.7.18).**
+**Current state (1.6.0, cyrius 6.7.18).**
 - **Resolution:** transitive resolution across system, marketplace, Flutter and
   community sources, with 4 strategies.
 - **Determinism:** byte-ordered everywhere; results never depend on the hash seed.
@@ -17,22 +17,20 @@ not here.
   manifests and JSON via bayan's parser.
 - **Plumbing:** complete child-output capture with a default idle deadline, and
   apt queries batched per breadth-first wave.
+- **Docs:** a one-line doc comment on every public fn (232), checked per module
+  in CI; every Result-returning fn is declared `: Result`.
 - **Size:** 15 modules, 493 assertions, 23 benchmarks, 5 fuzz harnesses
   (`--poison=ab`), and a ~41 KB release smoke binary.
 
 ---
 
-## 1.5.3 — P(-1) sweep: done, ready to release
+## 1.6.x — Follow-ups
 
-Every repair and decision is in [CHANGELOG 1.5.3](../../CHANGELOG.md) and
-[the audit](../audit/2026-11-12-1.5.3-p-1.md). What it found but did not
-repair is placed below.
-
-## 1.6.0 — Documentation completeness
-
-- [ ] A `#` doc comment on every public fn (~310).
-- [ ] Then promote CI's `cyrius doc --check` from the barrel, which has no fns and
-      so checks nothing today, to every module.
+- [ ] **Flutter label in search and list.** `resolve_mkt` labels a
+      Flutter-runtime registry package `SOURCE_FLUTTER_APP` (1.5.3), but
+      `resolver_search` and `resolver_list` still label it
+      `SOURCE_MARKETPLACE`, so the same package reports two sources depending
+      on the call. Found while documenting 1.6.0.
 
 ## 1.7.x — Reproducible resolution
 
@@ -115,9 +113,6 @@ with a committed lock (1.7.x).
       `recipe_parse_file` (1.5.3).
 - [ ] Decide on prefixing the rest of the public API (`nous_*`), as mela 0.9.3
       did. The 1.5.3 audit found no other live or latent collision.
-- [ ] `: Result` annotations on Result-returning public fns (`cyrius header`
-      refuses `: i64`; the bytes are the same). Planned with the 1.6.0 docs pass
-      (decision D13).
 - [ ] Portability: the `struct stat` offsets in `src/util.cyr` are x86_64-only.
 - [ ] A plugin system for additional package sources (likely reshapes the
       resolver API).
@@ -139,5 +134,7 @@ with a committed lock (1.7.x).
   - `pl_order` is now install order. ark's "deps-first" print at
     `src/engine.cyr:524` becomes correct.
   - Seven more names are deprecated, but none is called by ark.
+- **ark → nous 1.6.0:** nothing to absorb. The compiled code is byte-identical
+  to 1.5.3; only comments and return-type annotations changed.
 - **zugot:** the nous recipe (`marketplace/nous.cyml`) is still at 1.2.6. Bump it
   after each release tag, since it needs the release asset and its checksum.

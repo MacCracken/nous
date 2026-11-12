@@ -30,12 +30,14 @@
 # Tools run array-form (no shell) with absolute paths, an empty environment
 # (so the C locale), and nous's capture limits and idle deadline.
 
+# SysDb for this host; apt is available when both apt-cache and dpkg-query are on PATH.
 fn sysdb_new(): i64 {
     var ok = 0;
     if (nous_which_exists("apt-cache") == 1 && nous_which_exists("dpkg-query") == 1) { ok = 1; }
     return sysdb_make(ok);
 }
 
+# 1 when SysDb db can query apt/dpkg; every query returns empty when it is 0.
 fn sysdb_available(db): i64 { return sd_apt(db); }
 
 # ---- helpers --------------------------------------------------------
@@ -293,7 +295,8 @@ fn _sysdb_parse_info_many(output): i64 {
 
 # ---- queries --------------------------------------------------------
 
-fn sysdb_search(db, query): i64 {
+# Ok(vec of ResolvedPkg): apt packages whose name contains Str query (regex-escaped); Err on capture failure.
+fn sysdb_search(db, query): Result {
     if (sd_apt(db) == 0) { return Ok(vec_new()); }
     var vr_t, vr = validate_package_name(query);
     if (is_err_result(vr_t) == 1) { return Ok(vec_new()); }
@@ -309,14 +312,16 @@ fn sysdb_search(db, query): i64 {
 
 fn _sysdb_dpkg_fmt(): i64 { return "${Package}\t${Version}\t${Installed-Size}\t${db:Status-Status}\n"; }
 
-fn sysdb_is_installed(db, name): i64 {
+# Ok(1) when apt package Str name is installed, Ok(0) when not; Err on capture failure.
+fn sysdb_is_installed(db, name): Result {
     var t, p = sysdb_get_installed(db, name);
     if (is_err_result(t) == 1) { return Err(p); }
     if (p == 0) { return Ok(0); }
     return Ok(1);
 }
 
-fn sysdb_get_installed(db, name): i64 {
+# Ok(InstalledPkg) for installed apt package Str name, Ok(0) when not installed; Err on capture failure.
+fn sysdb_get_installed(db, name): Result {
     if (sd_apt(db) == 0) { return Ok(0); }
     if (_sysdb_debian_name(name) == 0) { return Ok(0); }
     var args = vec_new();
@@ -332,7 +337,8 @@ fn sysdb_get_installed(db, name): i64 {
     return Ok(vec_get(pkgs, 0));
 }
 
-fn sysdb_list(db): i64 {
+# Ok(vec of InstalledPkg): every installed dpkg package, in dpkg-query's order; Err on capture failure.
+fn sysdb_list(db): Result {
     if (sd_apt(db) == 0) { return Ok(vec_new()); }
     var args = vec_new();
     vec_push(args, tool_path("dpkg-query"));
@@ -344,7 +350,8 @@ fn sysdb_list(db): i64 {
     return Ok(_sysdb_parse_installed(output));
 }
 
-fn sysdb_updates(db): i64 {
+# Ok(vec of AvailUpdate) from a simulated apt-get dist-upgrade; Err on capture failure.
+fn sysdb_updates(db): Result {
     if (sd_apt(db) == 0) { return Ok(vec_new()); }
     var args = vec_new();
     vec_push(args, tool_path("apt-get"));
@@ -364,7 +371,9 @@ var NOUS_SYSDB_BATCH = 256;
 # ~430 ms loading its cache on every call, and 8 names cost the same as 1
 # (measured on Debian 12). Returns Ok(map: cstr name -> ResolvedPkg) holding
 # only the names apt knows. A name that is not Debian syntax is never passed.
-fn sysdb_info_many(db, names): i64 {
+#
+# Ok(map cstr name -> ResolvedPkg) for a vec of apt names in one apt-cache call; Err on capture failure.
+fn sysdb_info_many(db, names): Result {
     var out = map_new();
     if (sd_apt(db) == 0) { return Ok(out); }
     var i = 0;
@@ -397,7 +406,8 @@ fn sysdb_info_many(db, names): i64 {
     return Ok(out);
 }
 
-fn sysdb_info(db, name): i64 {
+# Ok(ResolvedPkg) for apt package Str name (candidate version), Ok(0) when unknown; Err on capture failure.
+fn sysdb_info(db, name): Result {
     if (sd_apt(db) == 0) { return Ok(0); }
     if (_sysdb_debian_name(name) == 0) { return Ok(0); }
     var args = vec_new();

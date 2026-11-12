@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-11-12
+
+**Documentation completeness. No behaviour change.** The smoke binary, its
+`CYRIUS_DCE=1` release build (40,936 B) and the test binary are all
+byte-identical to 1.5.3 (`cmp`, built from `git archive` of the 1.5.3 commit
+with the same toolchain). Only comments and return-type annotations changed.
+ark has nothing to absorb.
+
+### Added
+
+- **A doc comment on every public function.** 167 of the 232 public fns had
+  none. Each now has a one-line summary, which `cyrius doc src/<module>.cyr`
+  prints: what it returns, in which type (`Str`, cstr, `vec of X`), and its 0
+  and `Err` cases.
+- **Fragment summaries replaced.** cyrdoc shows only the comment line directly
+  above a function. For 50 functions that was the tail of a longer note, for
+  example "strategy, as documented." for `strategy_from_json` and "time." for
+  `nous_capture`. Each now ends with a real summary, and the history stays
+  above it.
+- **A per-module doc gate in CI.** `cyrius doc --check` now runs on every
+  `src/*.cyr`, and each must report 0 undocumented. Before, it ran only on the
+  barrel, which has no functions, so it always passed. The step is safe under
+  the runner's `bash -e`. Mutation-tested: deleting one doc line fails it.
+- **`: Result` on the 31 functions that return `Ok(..)` / `Err(..)`**
+  (decision D13). That is 26 public and 5 private, found by a cross-module
+  fixpoint over `return` sites. `cyrius header`, which refused 24 of them
+  before, now writes a prototype for every module.
+  - **Bytes are unchanged** (above).
+  - **Consumer diagnostics are unchanged.** The compiler already inferred the
+    pair from the body, so a one-variable bind (`var r = resolver_new(..);`)
+    is the same compile error against the 1.5.3 and the 1.6.0 `dist/nous.cyr`.
+    This was checked by compiling a consumer against both.
+
+### Changed
+
+- **CONTRIBUTING.md** is rewritten for Cyrius. It still described the Rust
+  crate (`cargo test`, clippy, MSRV). It now gives the gate commands, the
+  doc-comment rule and the `: Result` rule.
+- **CLAUDE.md** cleanliness step:
+  - the doc check is per module;
+  - the fmt check is described as exit-code based. It said "diff against
+    in-place", but `--check` prints nothing.
+- **Stale docs brought current:**
+  - `docs/architecture/overview.md`: the module map gains `updates.cyr`; sort,
+    graph, json, version and command are described as they are since 1.5.3;
+    the test counts go from 271 assertions / 18 benches / 3 harnesses to
+    493 / 23 / 5; the "stdlib `is_dir` is broken" note is corrected.
+  - `docs/guides/getting-started.md`: the assertion count, the fuzz command,
+    and both bayan profiles.
+  - `docs/development/gaps.md`: 9 error kinds, Tarjan rather than DFS.
+  - `docs/api.md`: which functions return a Result, and `cyrius doc`.
+- **Stale source comments:**
+  - the `src/util.cyr` section header (`is_dir` works; nous keeps a one-stat
+    version);
+  - the `src/graph.cyr` section header (Tarjan, not a DFS colour walk);
+  - the Constraint layout in `src/types.cyr` (40 bytes, not 16).
+- `dist/nous.cyr` is regenerated (the comments and annotations).
+
+### Found, not fixed
+
+- `resolver_search` and `resolver_list` label a Flutter-runtime registry
+  package `SOURCE_MARKETPLACE`. `resolve_mkt` labels it `SOURCE_FLUTTER_APP`
+  (1.5.3). Fixing this changes output, so it is left out of this no-behaviour
+  release; see roadmap 1.6.x.
+
+### Verification
+
+- **Tests and fuzzing:** 493 passed, 0 failed. 5/5 fuzz harnesses pass under
+  `--poison=ab`.
+- **Gates:** fmt, lint (no `warn ` lines), vet, deny, the per-module doc gate,
+  and `cyrius header` (0 errors) are all clean. `cyrius distlib` is in sync.
+- **Benchmarks:** recorded as `1.6.0-local` in `bench-history.csv`. No
+  performance claim: the code is identical, and the -13.5% to +15.6% spread
+  per bench against `1.5.3-local` is run-to-run noise.
+
 ## [1.5.3] - 2026-11-12
 
 **The P(-1) sweep: audit, hardening, security, correctness and optimization, with
