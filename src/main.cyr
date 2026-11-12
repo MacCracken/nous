@@ -15,6 +15,7 @@ include "src/json.cyr"
 include "src/version.cyr"
 include "src/graph.cyr"
 include "src/recipe.cyr"
+include "src/lock.cyr"
 # 1.5.2: every module, so `cyrius vet` / `cyrius deny src/main.cyr` cover them
 # all (before this, updates.cyr was outside both gates).
 include "src/updates.cyr"

@@ -28,6 +28,8 @@ enum ErrKind {
     NOUS_ERR_VERSION_CONFLICT = 6;
     NOUS_ERR_NOT_FOUND = 7;            # 1.5.3: a name no source has
     NOUS_ERR_AMBIGUOUS_SOURCE = 8;     # 1.5.3: SearchAll found it in 2+ sources
+    NOUS_ERR_INVALID_LOCKFILE = 9;     # 1.7.2: lockfile text nous cannot read, or a plan it cannot lock
+    NOUS_ERR_LOCK_MISMATCH = 10;       # 1.7.2: resolution differs from the lockfile
 }
 
 # ===================================================================

@@ -16,6 +16,7 @@ include "src/json.cyr"
 include "src/version.cyr"
 include "src/graph.cyr"
 include "src/recipe.cyr"
+include "src/lock.cyr"
 include "src/updates.cyr"
 include "tests/fz_driver.cyr"
 

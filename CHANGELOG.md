@@ -5,6 +5,116 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.2] - 2026-11-12
+
+**The lockfile.** A resolution can now be pinned and checked later: the same
+graph, or a clear refusal that names what moved. This is nous's half of
+milestone M2 on the ark v2 path. The four design points were the
+maintainer's decisions, recorded in
+[ADR 0008](docs/adr/0008-lockfile.md):
+
+- **CYML format** in the Cargo.lock shape;
+- **nous does text in and text out**, and ark owns the file;
+- **drift is a strict error**;
+- **apt packages are locked and enforced.**
+
+### Added
+
+- **`src/lock.cyr`**, the 16th module (in `[lib] modules` and the barrel):
+
+| Function | Does |
+|---|---|
+| `nous_lock_from_plan(plan, roots)` | `Ok(NousLock)`: every node (name, version, source, edges to other nodes) and the roots |
+| `nous_lock_to_str(lock)` | the lockfile text: byte-stable, byte-ordered, no timestamp |
+| `nous_lock_parse(text)` | `Ok(NousLock)`, or `Err(NOUS_ERR_INVALID_LOCKFILE)` saying what is wrong |
+| `nous_resolve_locked(r, lock)` | resolves the lock's roots; `Ok(ResPlan)` only when the graph is exactly the lock's, else `Err(NOUS_ERR_LOCK_MISMATCH)` |
+| `nous_lock_diff(was, now)` | the differences as `NousLockDiff`s, without failing |
+| `nous_lock_diff_text(d)` | `"curl: version 8.19.0 -> 8.20.0"` |
+| `nous_lock_get(lock, name)` | a locked package, by binary search |
+| `nous_lock_to_json` / `_from_json`, `nous_lock_diff_to_json` / `_from_json` | the JSON encoding (CLAUDE.md: every public type both ways) |
+
+- **New types and accessors:**
+  - `NousLock` (`nous_lock_version` / `_roots` / `_pkgs`);
+  - `NousLockPkg` (`nous_lp_name` / `_version` / `_source` / `_deps`);
+  - `NousLockDiff` (`nous_ld_kind` / `_name` / `_old` / `_new`), with the
+    `LockDiffKind` enum: `NOUS_LOCK_ADDED`, `_REMOVED`,
+    `_VERSION_CHANGED`, `_SOURCE_CHANGED`, `_DEPS_CHANGED`, `_ROOT_ADDED`
+    and `_ROOT_REMOVED`.
+- **Error kinds `NOUS_ERR_INVALID_LOCKFILE` (9) and `NOUS_ERR_LOCK_MISMATCH`
+  (10).** `nous_error_msg` writes each one. A mismatch lists up to 8
+  differences, then a count, and ends with "Regenerate the lockfile to accept
+  the change."
+
+### Lock semantics (ADR 0008)
+
+- **It pins and verifies; it does not choose.** nous has one candidate per
+  name, so a newer version is drift, not a fallback.
+- **A source change is drift**, which closes dependency confusion across time.
+- **Edges cover locked packages only.** A name apt could not show (a virtual
+  package) is not locked.
+- **The parser is strict about what it needs:**
+  - format version 1;
+  - each package's name (unique), version, source and dependency list;
+  - every dependency and root a locked package.
+- **It is lenient about the rest.** Unknown keys are ignored, so a 1.7.2
+  reader takes a 1.7.3 lock with checksums. Any order is accepted and put in
+  byte order.
+- **A name or version holding `"`, `\` or a byte outside printable ASCII is
+  refused** when locked or read. nous's CYML reader decodes no escapes, and
+  real names and versions never contain such bytes.
+
+### Performance
+
+- **Existing benches:** within ±3.1% of 1.7.1, from 7 alternating rounds.
+  No existing code path changed.
+- **New benches:** `lock_write_parse_100` (write and parse a 100-package
+  lock) about 420 µs; `lock_diff_100` about 14 µs.
+- **Scaling is linear.** A scratch run at 100 and 1000 packages gave:
+  - write: 0.11 → 1.07 ms;
+  - parse: 0.34 → 3.2 ms, of which the CYML reader is 0.11 → 1.0 ms.
+- **Release binary:** 45,392 → 46,504 B.
+
+### Verification
+
+- **Tests:** 718 passed, 0 failed (+67 assertions). They cover:
+  - the exact lockfile text, and that it is byte-stable across resolutions;
+  - a byte-for-byte text roundtrip, and a JSON roundtrip;
+  - locked resolution passing;
+  - version drift, with the message and the diff;
+  - an added package and a changed edge list, and the reverse removal;
+  - source drift from a hand-made lock;
+  - a vanished root, which comes through as `NOUS_ERR_NOT_FOUND`;
+  - 16 parse cases, strict and lenient, and normalization of an unordered
+    lock;
+  - an apt-only plan with Debian versions and a virtual dependency;
+  - refusing an unlockable value, and a root not in the plan;
+  - the recipe DB path (community packages).
+- **Mutation checks:** 13 targeted reversions each fail the suite:
+  - edges not filtered;
+  - packages unsorted;
+  - one-line arrays;
+  - no check that dependencies are locked;
+  - duplicates allowed;
+  - an unknown source accepted;
+  - any format version accepted;
+  - the diff ignoring source;
+  - the diff ignoring dependencies;
+  - locked mode never failing;
+  - locked mode ignoring recipes;
+  - quotes allowed;
+  - no check that roots are locked.
+- **Fuzzing:** a new harness, `tests/fuzz_lock.fcyr`, mutates lockfile text
+  and builds random valid locks in memory. Its invariants:
+  - reparse, with `to_str` a fixed point;
+  - no self-diff, before or after a JSON roundtrip;
+  - every dependency and root is locked;
+  - a random lock survives `to_str` + `parse`.
+
+  A mis-mapped source and a missing dependency check each fail it (exits 57
+  and 56). 6/6 harnesses pass under `--poison=ab`.
+- **Gates:** clean (fmt, lint, vet, deny, the per-module doc gate,
+  `cyrius header`). `cyrius distlib` is in sync.
+
 ## [1.7.1] - 2026-11-12
 
 **Compound version ranges, npm and Cargo forms.** Since 1.5.3 nous refused

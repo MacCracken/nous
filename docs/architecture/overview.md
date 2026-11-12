@@ -20,13 +20,14 @@ src/
   version.cyr         SemVer, constraint ranges (npm/Cargo), Debian version order
   graph.cyr           Dependency graph, Tarjan SCC (cycles + install order), Kahn sort
   recipe.cyr          Zugot CYML parsing, recipe DB, trace, transitive resolution
+  lock.cyr            Lockfile: generate, parse, diff, locked resolution (ADR 0008)
   updates.cyr         Update detection: apt leg + a pluggable lookup per source
 
 tests/
-  nous.tcyr           Test suite (651 assertions)
-  nous.bcyr           Benchmarks (24 benches)
+  nous.tcyr           Test suite (718 assertions)
+  nous.bcyr           Benchmarks (26 benches)
   nous.fcyr           Fuzz smoke harness
-  fuzz_*.fcyr         Mutation fuzz targets: cyml, json, version, apt (4)
+  fuzz_*.fcyr         Mutation fuzz targets: cyml, json, version, apt, lock (5)
   fz_driver.cyr       Fuzz driver, vendored from sandhi
 
 dist/
@@ -34,7 +35,7 @@ dist/
 ```
 
 Every `src/*.cyr` function carries an explicit return type: `: Result` for the
-31 that return `Ok(..)` / `Err(..)`, `: i64` for the rest (1.6.0). Every public
+35 that return `Ok(..)` / `Err(..)` (1.7.2), `: i64` for the rest (1.6.0). Every public
 function has a one-line doc comment, which `cyrius doc src/<module>.cyr` prints
 and CI enforces per module (1.6.0). `lib/` (stdlib) is gitignored — resolved from
 the version-pinned `~/.cyrius/versions/<v>/lib/` snapshot, not committed.
@@ -67,7 +68,7 @@ listed at the top of `src/types.cyr`.
 
 ## Build & Distribution
 
-- **Library bundle** — `[lib] modules` in `cyrius.cyml` lists the 15 `src/*.cyr`
+- **Library bundle** — `[lib] modules` in `cyrius.cyml` lists the 16 `src/*.cyr`
   in barrel order; `cyrius distlib` concatenates them into the committed
   `dist/nous.cyr`, behind a compile-verified `# Requires` block of
   `include "lib/<leaf>.cyr"` lines (cyrius 6.6.18+). The bundle does not embed
@@ -88,6 +89,12 @@ listed at the top of `src/types.cyr`.
   constraint is intersected as a version range and checked against the chosen
   version: Debian order for apt and community, SemVer otherwise.
   Iteration order is byte order everywhere, never hash order.
+- **Lockfile (1.7.2).** `nous_lock_from_plan` records a resolved graph (roots
+  and every package: name, version, source, edges), and `nous_lock_to_str`
+  writes it as byte-stable CYML in the Cargo.lock shape. `nous_lock_parse`
+  reads it back, strictly. `nous_resolve_locked` re-resolves the roots, and
+  any drift is `Err(NOUS_ERR_LOCK_MISMATCH)`. nous does no file I/O for it;
+  the consumer writes the file ([ADR-0008](../adr/0008-lockfile.md)).
 - **Child processes** — every apt/dpkg query goes through `nous_capture*`
   (`src/command.cyr`), which captures the complete output as an owned Str. It
   returns `Err(NOUS_ERR_COMMAND_EXEC)` past 16 MiB or on an idle-deadline cut,

@@ -43,6 +43,7 @@ modules = [
     "src/version.cyr",
     "src/graph.cyr",
     "src/recipe.cyr",
+    "src/lock.cyr",
     "src/updates.cyr",
 ]
 

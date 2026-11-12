@@ -1,0 +1,561 @@
+# nous/lock — the lockfile: generate, parse, diff, locked resolution (1.7.2)
+# ===================================================================
+# ADR 0008. A lock records a resolved graph: its roots and every package
+# (name, version, source, dependencies). nous has one candidate per name, so
+# a lock pins and verifies: nous_resolve_locked refuses a resolution that
+# differs from the lock (Err(NOUS_ERR_LOCK_MISMATCH)), and nous_lock_diff says
+# what would change without failing. The file format is CYML in the
+# Cargo.lock style, written by nous_lock_to_str and read by nous_lock_parse.
+# nous does no file I/O: the consumer (ark) picks the path and writes it.
+#
+# NousLock:     lk_version(0) lk_roots(8) lk_pkgs(16)                = 24 bytes
+# NousLockPkg:  lp_name(0) lp_version(8) lp_source(16) lp_deps(24)    = 32 bytes
+# NousLockDiff: ld_kind(0) ld_name(8) ld_old(16) ld_new(24)           = 32 bytes
+
+# The only lockfile format version (1.7.2).
+var NOUS_LOCK_FORMAT = 1;
+
+# How a lock differs from another (nous_lock_diff).
+enum LockDiffKind {
+    NOUS_LOCK_ADDED = 0;              # a package only the new lock has
+    NOUS_LOCK_REMOVED = 1;            # a package only the old lock has
+    NOUS_LOCK_VERSION_CHANGED = 2;
+    NOUS_LOCK_SOURCE_CHANGED = 3;
+    NOUS_LOCK_DEPS_CHANGED = 4;
+    NOUS_LOCK_ROOT_ADDED = 5;
+    NOUS_LOCK_ROOT_REMOVED = 6;
+}
+
+# ---- types ------------------------------------------------------------
+
+# NousLock constructor: format version (i64), roots (vec of Str), pkgs (vec of NousLockPkg).
+fn nous_lock_new(version, roots, pkgs): i64 {
+    var p = alloc(24);
+    store64(p, version); store64(p + 8, roots); store64(p + 16, pkgs);
+    return p;
+}
+# NousLock field: the format version (1).
+fn nous_lock_version(l): i64 { return load64(l); }
+# NousLock field: the root names, a byte-sorted vec of Str.
+fn nous_lock_roots(l): i64 { return load64(l + 8); }
+# NousLock field: the locked packages, a vec of NousLockPkg in byte order of name.
+fn nous_lock_pkgs(l): i64 { return load64(l + 16); }
+
+# NousLockPkg constructor: name, version (Str), source (PackageSource), deps (vec of Str).
+fn nous_lock_pkg_new(name, version, source, deps): i64 {
+    var p = alloc(32);
+    store64(p, name); store64(p + 8, version); store64(p + 16, source); store64(p + 24, deps);
+    return p;
+}
+# NousLockPkg field: package name (Str).
+fn nous_lp_name(p): i64 { return load64(p); }
+# NousLockPkg field: the exact version (Str; "" when the package has none).
+fn nous_lp_version(p): i64 { return load64(p + 8); }
+# NousLockPkg field: the PackageSource it resolved from.
+fn nous_lp_source(p): i64 { return load64(p + 16); }
+# NousLockPkg field: its dependencies on other locked packages, a byte-sorted vec of Str.
+fn nous_lp_deps(p): i64 { return load64(p + 24); }
+
+fn _nous_ld_new(kind, name, was, now): i64 {
+    var p = alloc(32);
+    store64(p, kind); store64(p + 8, name); store64(p + 16, was); store64(p + 24, now);
+    return p;
+}
+# NousLockDiff field: the LockDiffKind.
+fn nous_ld_kind(d): i64 { return load64(d); }
+# NousLockDiff field: the package (or root) name it is about (Str).
+fn nous_ld_name(d): i64 { return load64(d + 8); }
+# NousLockDiff field: the old value as text (Str), or 0 for an addition.
+fn nous_ld_old(d): i64 { return load64(d + 16); }
+# NousLockDiff field: the new value as text (Str), or 0 for a removal.
+fn nous_ld_new(d): i64 { return load64(d + 24); }
+
+# The NousLockPkg named Str name in a lock (binary search), or 0.
+fn nous_lock_get(lock, name): i64 {
+    var pkgs = nous_lock_pkgs(lock);
+    var lo = 0;
+    var hi = vec_len(pkgs);
+    while (lo < hi) {
+        var mid = (lo + hi) / 2;
+        var c = str_compare(nous_lp_name(vec_get(pkgs, mid)), name);
+        if (c == 0) { return vec_get(pkgs, mid); }
+        if (c < 0) { lo = mid + 1; } else { hi = mid; }
+    }
+    return 0;
+}
+
+# ---- helpers ----------------------------------------------------------
+
+# 1 when Str s can be a lockfile value: printable ASCII (0x20-0x7E) with no
+# '"' or '\'. nous's CYML reader decodes no escapes, so other bytes are
+# refused instead of escaped (ADR 0008).
+fn _nous_lock_ok(s): i64 {
+    if (s == 0) { return 0; }
+    var d = str_data(s);
+    var n = str_len(s);
+    var i = 0;
+    while (i < n) {
+        var c = load8(d + i);
+        if (c < 32 || c > 126 || c == 34 || c == 92) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# A byte-sorted copy of a vec of Str, with duplicates dropped.
+fn _nous_sorted_unique(v): i64 {
+    var cp = vec_new();
+    var i = 0;
+    while (i < vec_len(v)) { vec_push(cp, vec_get(v, i)); i = i + 1; }
+    _nous_sort_strs(cp);
+    var out = vec_new();
+    i = 0;
+    while (i < vec_len(cp)) {
+        var s = vec_get(cp, i);
+        if (vec_len(out) == 0 || str_eq(vec_get(out, vec_len(out) - 1), s) == 0) { vec_push(out, s); }
+        i = i + 1;
+    }
+    return out;
+}
+
+# 1 when two vecs of Str are equal, element by element.
+fn _nous_strs_eq(a, b): i64 {
+    if (vec_len(a) != vec_len(b)) { return 0; }
+    var i = 0;
+    while (i < vec_len(a)) {
+        if (str_eq(vec_get(a, i), vec_get(b, i)) == 0) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}
+
+# "[a, b]" text of a vec of Str, for diffs and messages.
+fn _nous_strs_text(v): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "[");
+    var i = 0;
+    while (i < vec_len(v)) {
+        if (i > 0) { str_builder_add_cstr(sb, ", "); }
+        str_builder_add(sb, vec_get(v, i));
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "]");
+    return str_builder_build(sb);
+}
+
+# "<source> <version>" text of a locked package, for added / removed diffs.
+fn _nous_lp_text(p): i64 {
+    var sb = str_builder_new();
+    str_builder_add(sb, source_to_str(nous_lp_source(p)));
+    str_builder_add_cstr(sb, " ");
+    str_builder_add(sb, nous_lp_version(p));
+    return str_builder_build(sb);
+}
+
+fn _nous_lock_err(name, why): Result {
+    var n = name;
+    if (n == 0) { n = str_from("lockfile"); }
+    return nous_err(NOUS_ERR_INVALID_LOCKFILE, n, str_from(why));
+}
+
+# ---- generate ---------------------------------------------------------
+
+# Every node of a ResPlan becomes a locked package. Its dependencies are its
+# edges to other nodes: a name apt could not show (nous_pl_unresolved) is
+# apt's to resolve and is not locked. Roots are copied, sorted and deduped,
+# and each must be a node. Err(NOUS_ERR_INVALID_LOCKFILE) when a name or
+# version holds a byte a lockfile cannot (see _nous_lock_ok).
+#
+# Ok(NousLock) recording ResPlan plan and its roots (vec of Str); Err when a value cannot be locked.
+fn nous_lock_from_plan(plan, roots): Result {
+    var nodes = map_new();
+    var src = pl_packages(plan);
+    var i = 0;
+    while (i < vec_len(src)) {
+        map_set(nodes, _nous_cstr(rp_name(vec_get(src, i))), 1);
+        i = i + 1;
+    }
+    var pkgs = vec_new();
+    i = 0;
+    while (i < vec_len(src)) {
+        var pkg = vec_get(src, i);
+        var name = rp_name(pkg);
+        var ver = rp_ver(pkg);
+        if (ver == 0) { ver = str_from(""); }
+        if (str_len(name) == 0 || _nous_lock_ok(name) == 0) {
+            return _nous_lock_err(name, "a package name a lockfile cannot hold");
+        }
+        if (_nous_lock_ok(ver) == 0) { return _nous_lock_err(name, "a version a lockfile cannot hold"); }
+        var edges = vec_new();
+        var deps = rp_deps(pkg);
+        var j = 0;
+        while (j < vec_len(deps)) {
+            var dn = vec_get(deps, j);
+            if (map_has(nodes, _nous_cstr(dn)) == 1) { vec_push(edges, dn); }
+            j = j + 1;
+        }
+        vec_push(pkgs, nous_lock_pkg_new(name, ver, rp_src(pkg), _nous_sorted_unique(edges)));
+        i = i + 1;
+    }
+    _nous_sort_by_key(pkgs, &nous_lp_name);
+    var rs = _nous_sorted_unique(roots);
+    i = 0;
+    while (i < vec_len(rs)) {
+        if (map_has(nodes, _nous_cstr(vec_get(rs, i))) == 0) {
+            return _nous_lock_err(vec_get(rs, i), "a root that is not in the plan");
+        }
+        i = i + 1;
+    }
+    return Ok(nous_lock_new(NOUS_LOCK_FORMAT, rs, pkgs));
+}
+
+# `key = [` one quoted item per line `]`, or `key = []` (the Cargo.lock shape).
+fn _nous_lock_put_arr(sb, key, v): i64 {
+    str_builder_add_cstr(sb, key);
+    if (vec_len(v) == 0) {
+        str_builder_add_cstr(sb, " = []\n");
+        return 0;
+    }
+    str_builder_add_cstr(sb, " = [\n");
+    var i = 0;
+    while (i < vec_len(v)) {
+        str_builder_add_cstr(sb, "    \"");
+        str_builder_add(sb, vec_get(v, i));
+        str_builder_add_cstr(sb, "\",\n");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "]\n");
+    return 0;
+}
+
+# The lockfile text (CYML, ADR 0008): byte-stable for the same lock, with
+# packages, roots and dependencies in byte order and no timestamp.
+#
+# Lockfile text (Str) of a NousLock; inverse of nous_lock_parse.
+fn nous_lock_to_str(lock): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "# nous lockfile: generated by nous_lock_to_str; do not edit by hand.\n");
+    str_builder_add_cstr(sb, "version = ");
+    str_builder_add_int(sb, nous_lock_version(lock));
+    str_builder_add_cstr(sb, "\n");
+    _nous_lock_put_arr(sb, "roots", nous_lock_roots(lock));
+    var pkgs = nous_lock_pkgs(lock);
+    var i = 0;
+    while (i < vec_len(pkgs)) {
+        var p = vec_get(pkgs, i);
+        str_builder_add_cstr(sb, "\n[[package]]\nname = \"");
+        str_builder_add(sb, nous_lp_name(p));
+        str_builder_add_cstr(sb, "\"\nversion = \"");
+        str_builder_add(sb, nous_lp_version(p));
+        str_builder_add_cstr(sb, "\"\nsource = \"");
+        str_builder_add(sb, source_to_str(nous_lp_source(p)));
+        str_builder_add_cstr(sb, "\"\n");
+        _nous_lock_put_arr(sb, "dependencies", nous_lp_deps(p));
+        i = i + 1;
+    }
+    return str_builder_build(sb);
+}
+
+# ---- parse ------------------------------------------------------------
+
+# The PackageSource a lockfile names, or -1 for a name that is not a source.
+fn _nous_lock_source(s): i64 {
+    if (str_eq_cstr(s, "system") == 1) { return SOURCE_SYSTEM; }
+    if (str_eq_cstr(s, "marketplace") == 1) { return SOURCE_MARKETPLACE; }
+    if (str_eq_cstr(s, "flutter-app") == 1) { return SOURCE_FLUTTER_APP; }
+    if (str_eq_cstr(s, "community") == 1) { return SOURCE_COMMUNITY; }
+    if (str_eq_cstr(s, "unknown") == 1) { return SOURCE_UNKNOWN; }
+    return 0 - 1;
+}
+
+# Owned copies of a CYML array's items (the reader returns views into the text).
+fn _nous_lock_arr(raw): i64 {
+    var items = parse_toml_array(raw);
+    var out = vec_new();
+    var i = 0;
+    while (i < vec_len(items)) { vec_push(out, str_clone(vec_get(items, i))); i = i + 1; }
+    return out;
+}
+
+# Parse lockfile text (ADR 0008). Strict about what it needs: format version 1, every
+# [[package]] with a name (unique), version, source (a known one) and
+# dependency list, and every dependency and root a locked package. Lenient
+# about the rest: unknown keys and sections are ignored (1.7.3 adds one), and
+# any order is accepted and put in byte order. Values are copied out of text.
+#
+# Ok(NousLock) from lockfile text (Str), or Err(NOUS_ERR_INVALID_LOCKFILE) saying what is wrong.
+fn nous_lock_parse(text): Result {
+    if (text == 0 || str_len(text) == 0) { return _nous_lock_err(0, "empty: not a nous lockfile"); }
+    var sections = nous_cyml_parse(text);
+    var top = cyml_section_by_name(sections, "");
+    if (top == 0) { return _nous_lock_err(0, "no `version`: not a nous lockfile"); }
+    var vt = cyml_get(top, "version");
+    if (vt == 0) { return _nous_lock_err(0, "no `version`: not a nous lockfile"); }
+    if (str_eq_cstr(str_trim(vt), "1") == 0) {
+        return _nous_lock_err(0, "unsupported lockfile version (this nous reads version 1)");
+    }
+    var rraw = cyml_get(top, "roots");
+    if (rraw == 0) { return _nous_lock_err(0, "no `roots`"); }
+    var roots = _nous_lock_arr(rraw);
+    var pkgs = vec_new();
+    var names = map_new();
+    var i = 0;
+    while (i < vec_len(sections)) {
+        var sec = vec_get(sections, i);
+        if (str_eq_cstr(bayan_toml_section_name(sec), "package") == 1) {
+            var pairs = bayan_toml_section_pairs(sec);
+            var nm = cyml_get(pairs, "name");
+            if (nm == 0 || str_len(nm) == 0) { return _nous_lock_err(0, "a [[package]] with no name"); }
+            nm = str_clone(nm);
+            if (_nous_lock_ok(nm) == 0) { return _nous_lock_err(0, "a package name outside printable ASCII"); }
+            if (map_has(names, _nous_cstr(nm)) == 1) { return _nous_lock_err(nm, "locked twice"); }
+            map_set(names, _nous_cstr(nm), 1);
+            var ver = cyml_get(pairs, "version");
+            if (ver == 0) { return _nous_lock_err(nm, "no `version`"); }
+            ver = str_clone(ver);
+            if (_nous_lock_ok(ver) == 0) { return _nous_lock_err(nm, "a version outside printable ASCII"); }
+            var st = cyml_get(pairs, "source");
+            if (st == 0) { return _nous_lock_err(nm, "no `source`"); }
+            var src = _nous_lock_source(st);
+            if (src < 0) { return _nous_lock_err(nm, "an unknown `source`"); }
+            var draw = cyml_get(pairs, "dependencies");
+            if (draw == 0) { return _nous_lock_err(nm, "no `dependencies`"); }
+            vec_push(pkgs, nous_lock_pkg_new(nm, ver, src, _nous_sorted_unique(_nous_lock_arr(draw))));
+        }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < vec_len(pkgs)) {
+        var ds = nous_lp_deps(vec_get(pkgs, i));
+        var j = 0;
+        while (j < vec_len(ds)) {
+            if (map_has(names, _nous_cstr(vec_get(ds, j))) == 0) {
+                return _nous_lock_err(nous_lp_name(vec_get(pkgs, i)), "a dependency that is not locked");
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    var rs = _nous_sorted_unique(roots);
+    i = 0;
+    while (i < vec_len(rs)) {
+        if (map_has(names, _nous_cstr(vec_get(rs, i))) == 0) {
+            return _nous_lock_err(vec_get(rs, i), "a root that is not locked");
+        }
+        i = i + 1;
+    }
+    _nous_sort_by_key(pkgs, &nous_lp_name);
+    return Ok(nous_lock_new(NOUS_LOCK_FORMAT, rs, pkgs));
+}
+
+# ---- diff -------------------------------------------------------------
+
+# How lock `now` differs from lock `was`: root changes first, then package
+# changes in byte order of name. For a package in both, the version, the
+# source and the dependency list are compared, in that order. Empty when
+# they lock the same graph.
+#
+# The differences from NousLock `was` to `now`: a vec of NousLockDiff (empty when equal).
+fn nous_lock_diff(was, now): i64 {
+    var out = vec_new();
+    var ra = nous_lock_roots(was);
+    var rb = nous_lock_roots(now);
+    var i = 0;
+    var j = 0;
+    while (i < vec_len(ra) || j < vec_len(rb)) {
+        var c = 0;
+        if (i >= vec_len(ra)) { c = 1; }
+        elif (j >= vec_len(rb)) { c = 0 - 1; }
+        else { c = str_compare(vec_get(ra, i), vec_get(rb, j)); }
+        if (c == 0) { i = i + 1; j = j + 1; }
+        elif (c < 0) {
+            vec_push(out, _nous_ld_new(NOUS_LOCK_ROOT_REMOVED, vec_get(ra, i), vec_get(ra, i), 0));
+            i = i + 1;
+        } else {
+            vec_push(out, _nous_ld_new(NOUS_LOCK_ROOT_ADDED, vec_get(rb, j), 0, vec_get(rb, j)));
+            j = j + 1;
+        }
+    }
+    var pa = nous_lock_pkgs(was);
+    var pb = nous_lock_pkgs(now);
+    i = 0;
+    j = 0;
+    while (i < vec_len(pa) || j < vec_len(pb)) {
+        var c2 = 0;
+        if (i >= vec_len(pa)) { c2 = 1; }
+        elif (j >= vec_len(pb)) { c2 = 0 - 1; }
+        else { c2 = str_compare(nous_lp_name(vec_get(pa, i)), nous_lp_name(vec_get(pb, j))); }
+        if (c2 < 0) {
+            var x = vec_get(pa, i);
+            vec_push(out, _nous_ld_new(NOUS_LOCK_REMOVED, nous_lp_name(x), _nous_lp_text(x), 0));
+            i = i + 1;
+        } elif (c2 > 0) {
+            var y = vec_get(pb, j);
+            vec_push(out, _nous_ld_new(NOUS_LOCK_ADDED, nous_lp_name(y), 0, _nous_lp_text(y)));
+            j = j + 1;
+        } else {
+            var a = vec_get(pa, i);
+            var b = vec_get(pb, j);
+            var n = nous_lp_name(a);
+            if (str_eq(nous_lp_version(a), nous_lp_version(b)) == 0) {
+                vec_push(out, _nous_ld_new(NOUS_LOCK_VERSION_CHANGED, n, nous_lp_version(a), nous_lp_version(b)));
+            }
+            if (nous_lp_source(a) != nous_lp_source(b)) {
+                vec_push(out, _nous_ld_new(NOUS_LOCK_SOURCE_CHANGED, n,
+                    source_to_str(nous_lp_source(a)), source_to_str(nous_lp_source(b))));
+            }
+            if (_nous_strs_eq(nous_lp_deps(a), nous_lp_deps(b)) == 0) {
+                vec_push(out, _nous_ld_new(NOUS_LOCK_DEPS_CHANGED, n,
+                    _nous_strs_text(nous_lp_deps(a)), _nous_strs_text(nous_lp_deps(b))));
+            }
+            i = i + 1;
+            j = j + 1;
+        }
+    }
+    return out;
+}
+
+# One line of text for a NousLockDiff: "curl: version 8.19.0 -> 8.20.0".
+fn nous_lock_diff_text(d): i64 {
+    var sb = str_builder_new();
+    var k = nous_ld_kind(d);
+    str_builder_add(sb, nous_ld_name(d));
+    if (k == NOUS_LOCK_ADDED) {
+        str_builder_add_cstr(sb, ": added (");
+        str_builder_add(sb, nous_ld_new(d));
+        str_builder_add_cstr(sb, ")");
+    } elif (k == NOUS_LOCK_REMOVED) {
+        str_builder_add_cstr(sb, ": no longer resolved (locked ");
+        str_builder_add(sb, nous_ld_old(d));
+        str_builder_add_cstr(sb, ")");
+    } elif (k == NOUS_LOCK_ROOT_ADDED) {
+        str_builder_add_cstr(sb, ": a new root");
+    } elif (k == NOUS_LOCK_ROOT_REMOVED) {
+        str_builder_add_cstr(sb, ": no longer a root");
+    } else {
+        if (k == NOUS_LOCK_VERSION_CHANGED) { str_builder_add_cstr(sb, ": version "); }
+        elif (k == NOUS_LOCK_SOURCE_CHANGED) { str_builder_add_cstr(sb, ": source "); }
+        else { str_builder_add_cstr(sb, ": dependencies "); }
+        str_builder_add(sb, nous_ld_old(d));
+        str_builder_add_cstr(sb, " -> ");
+        str_builder_add(sb, nous_ld_new(d));
+    }
+    return str_builder_build(sb);
+}
+
+# The drift summary for an error: up to 8 differences, then a count.
+fn _nous_drift_text(diffs): i64 {
+    var sb = str_builder_new();
+    str_builder_add_int(sb, vec_len(diffs));
+    if (vec_len(diffs) == 1) { str_builder_add_cstr(sb, " difference from the lockfile: "); }
+    else { str_builder_add_cstr(sb, " differences from the lockfile: "); }
+    var i = 0;
+    while (i < vec_len(diffs) && i < 8) {
+        if (i > 0) { str_builder_add_cstr(sb, "; "); }
+        str_builder_add(sb, nous_lock_diff_text(vec_get(diffs, i)));
+        i = i + 1;
+    }
+    if (vec_len(diffs) > 8) {
+        str_builder_add_cstr(sb, "; and ");
+        str_builder_add_int(sb, vec_len(diffs) - 8);
+        str_builder_add_cstr(sb, " more");
+    }
+    str_builder_add_cstr(sb, ". Regenerate the lockfile to accept the change.");
+    return str_builder_build(sb);
+}
+
+# ---- locked resolution --------------------------------------------------
+
+# Resolve the lock's roots (with the recipe DB when the resolver has one, as
+# resolver_resolve_all_with_recipes does) and compare the result with the
+# lock. Any difference is drift and an error (ADR 0008: strict, like cargo
+# --locked). A resolution error comes through as it is.
+#
+# Ok(ResPlan) when resolving NousLock lock's roots gives exactly its graph; else Err(NOUS_ERR_LOCK_MISMATCH).
+fn nous_resolve_locked(r, lock): Result {
+    var use_rdb = 0;
+    if (rs_rdb(r) != 0) { use_rdb = 1; }
+    var pt, plan = _nous_resolve_closure(r, nous_lock_roots(lock), use_rdb);
+    if (is_err_result(pt) == 1) { return Err(plan); }
+    var lt, cur = nous_lock_from_plan(plan, nous_lock_roots(lock));
+    if (is_err_result(lt) == 1) { return Err(cur); }
+    var diffs = nous_lock_diff(lock, cur);
+    if (vec_len(diffs) == 0) { return Ok(plan); }
+    return nous_err(NOUS_ERR_LOCK_MISMATCH, nous_ld_name(vec_get(diffs, 0)), _nous_drift_text(diffs));
+}
+
+# ---- JSON (CLAUDE.md: every public type both ways) ----------------------
+
+# JSON object (Str) for a NousLock; inverse of nous_lock_from_json.
+fn nous_lock_to_json(lock): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"version\":");
+    str_builder_add_int(sb, nous_lock_version(lock));
+    str_builder_add_cstr(sb, ",\"roots\":");
+    str_builder_add(sb, json_str_vec(nous_lock_roots(lock)));
+    str_builder_add_cstr(sb, ",\"packages\":[");
+    var pkgs = nous_lock_pkgs(lock);
+    var i = 0;
+    while (i < vec_len(pkgs)) {
+        var p = vec_get(pkgs, i);
+        if (i > 0) { str_builder_add_cstr(sb, ","); }
+        _nj_field_str(sb, "{\"name\":", nous_lp_name(p));
+        _nj_field_str(sb, ",\"version\":", nous_lp_version(p));
+        str_builder_add_cstr(sb, ",\"source\":");
+        str_builder_add_cstr(sb, source_json(nous_lp_source(p)));
+        str_builder_add_cstr(sb, ",\"dependencies\":");
+        str_builder_add(sb, json_str_vec(nous_lp_deps(p)));
+        str_builder_add_cstr(sb, "}");
+        i = i + 1;
+    }
+    str_builder_add_cstr(sb, "]}");
+    return str_builder_build(sb);
+}
+
+# A JSON data encoding, lenient like the other *_from_json: a package with
+# no name is skipped. nous_lock_parse is the validating reader of lockfiles.
+#
+# NousLock from JSON Str data (as nous_lock_to_json writes), in byte order; 0 when not an object.
+fn nous_lock_from_json(data): i64 {
+    var o = _nj_obj(data);
+    if (o == 0) { return 0; }
+    var pkgs = vec_new();
+    var pa = bayan_json_v_obj_get_by_cstr(o, "packages");
+    if (pa != 0 && bayan_json_v_is_arr(pa) == 1) {
+        var i = 0;
+        while (i < bayan_json_v_arr_len(pa)) {
+            var e = bayan_json_v_arr_get(pa, i);
+            if (bayan_json_v_is_obj(e) == 1) {
+                var nm = _nj_str(e, "name");
+                if (nm != 0) {
+                    vec_push(pkgs, nous_lock_pkg_new(nm, _nj_or_empty(_nj_str(e, "version")),
+                        source_from_json(_nj_str(e, "source")), _nous_sorted_unique(_nj_str_vec(e, "dependencies"))));
+                }
+            }
+            i = i + 1;
+        }
+    }
+    _nous_sort_by_key(pkgs, &nous_lp_name);
+    return nous_lock_new(_nj_int(o, "version"), _nous_sorted_unique(_nj_str_vec(o, "roots")), pkgs);
+}
+
+# JSON object (Str) for a NousLockDiff; inverse of nous_lock_diff_from_json.
+fn nous_lock_diff_to_json(d): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "{\"kind\":");
+    str_builder_add_int(sb, nous_ld_kind(d));
+    _nj_field_str(sb, ",\"name\":", nous_ld_name(d));
+    _nj_field_str(sb, ",\"old\":", nous_ld_old(d));
+    _nj_field_str(sb, ",\"new\":", nous_ld_new(d));
+    str_builder_add_cstr(sb, "}");
+    return str_builder_build(sb);
+}
+
+# NousLockDiff from JSON Str data (as nous_lock_diff_to_json writes); 0 when invalid or unnamed.
+fn nous_lock_diff_from_json(data): i64 {
+    var o = _nj_obj(data);
+    if (o == 0) { return 0; }
+    var nm = _nj_str(o, "name");
+    if (nm == 0) { return 0; }
+    return _nous_ld_new(_nj_int(o, "kind"), nm, _nj_str(o, "old"), _nj_str(o, "new"));
+}

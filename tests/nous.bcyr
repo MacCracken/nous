@@ -14,6 +14,7 @@ include "src/json.cyr"
 include "src/version.cyr"
 include "src/graph.cyr"
 include "src/recipe.cyr"
+include "src/lock.cyr"
 
 var detect_names = 0;
 
@@ -211,6 +212,36 @@ fn b_range() {
 }
 var bench_manifest = 0;
 fn b_manifest() { manifest_from_json(bench_manifest); return 0; }
+# 1.7.2: a 100-package lock (each depends on the previous one): write + parse,
+# and a diff against a copy with one version changed.
+var bench_lock = 0;
+var bench_lock2 = 0;
+var bench_lock_text = 0;
+fn _b_mklock(bump): i64 {
+    var pkgs = vec_new();
+    var i = 0;
+    while (i < 100) {
+        var sb = str_builder_new();
+        str_builder_add_cstr(sb, "pkg-");
+        if (i < 10) { str_builder_add_cstr(sb, "0"); }
+        str_builder_add_int(sb, i);
+        var deps = vec_new();
+        if (i > 0) { vec_push(deps, nous_lp_name(vec_get(pkgs, i - 1))); }
+        var ver = str_from("1.2.3");
+        if (bump == 1 && i == 50) { ver = str_from("1.2.4"); }
+        vec_push(pkgs, nous_lock_pkg_new(str_builder_build(sb), ver, SOURCE_MARKETPLACE, deps));
+        i = i + 1;
+    }
+    var roots = vec_new();
+    vec_push(roots, nous_lp_name(vec_get(pkgs, 99)));
+    return nous_lock_new(1, roots, pkgs);
+}
+fn b_lock_rw() {
+    var t, l = nous_lock_parse(nous_lock_to_str(bench_lock));
+    return 0;
+}
+fn b_lock_diff() { nous_lock_diff(bench_lock, bench_lock2); return 0; }
+
 # 1.7.1: a compound range: parse two OR'd sets, match two versions, and check
 # compatibility with a Cargo-style AND.
 fn b_compound() {
@@ -339,6 +370,14 @@ fn main() {
     var bm4 = bench_new("constraint_compound");
     bench_run(bm4, &b_compound, 20000);
     vec_push(benches, bm4);
+    bench_lock = _b_mklock(0);
+    bench_lock2 = _b_mklock(1);
+    var bm5 = bench_new("lock_write_parse_100");
+    bench_run(bm5, &b_lock_rw, 200);
+    vec_push(benches, bm5);
+    var bm6 = bench_new("lock_diff_100");
+    bench_run(bm6, &b_lock_diff, 2000);
+    vec_push(benches, bm6);
 
     # Sort 2,000 installed packages (1.5.3)
     sort_src = vec_new();

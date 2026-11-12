@@ -1,6 +1,6 @@
 # Nous — Known Gaps & Hardening Targets
 
-> **Status**: Active | **Last Updated**: 2026-11-12 (1.7.1, cyrius 6.7.18)
+> **Status**: Active | **Last Updated**: 2026-11-12 (1.7.2, cyrius 6.7.18)
 >
 > This page tracks the gaps between what nous does and what a production
 > resolver needs. The prioritized, versioned plan lives in
@@ -10,7 +10,7 @@
 
 ## Current State
 
-nous has 15 `src/` modules behind a barrel (`src/nous.cyr`) and ships a
+nous has 16 `src/` modules behind a barrel (`src/nous.cyr`) and ships a
 single-file `dist/nous.cyr` bundle (`cyrius distlib`). It depends on bayan's
 `dist/bayan-toml.cyr` and `dist/bayan-json.cyr` profiles
 ([ADR 0004](../adr/0004-bayan-toml-profile-dependency.md)). Struct layouts are
@@ -56,7 +56,7 @@ suggestions, trace).
 
 | Gap | Why it matters | Roadmap |
 |---|---|---|
-| **No lockfile** | The same inputs always give the same graph, but nothing pins the result across time or machines | 1.7.2 |
+| **No artifact hashes in the lock** | A lock pins names, versions, sources and edges (1.7.2), but not the bytes installed | 1.7.3 |
 | **Recipe deps have no version constraints** | Only marketplace-manifest deps feed the solver; recipe-only graphs cannot detect conflicts | gated on a zugot syntax |
 | **No native source** | There is no `SOURCE_NATIVE`, signed index or local store, so the apt leg is required on a no-apt box | 1.8.x (gated on ark M0) |
 | **Registry is a stub** | It scans a local directory, and `registry_install_package` returns `Ok(0)` | 1.9.x |

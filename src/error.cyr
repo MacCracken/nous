@@ -73,6 +73,16 @@ fn nous_error_msg(e): i64 {
         str_builder_add(sb, msg);
         str_builder_add_cstr(sb, "` exists in more than one source: ");
         if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == NOUS_ERR_INVALID_LOCKFILE) {
+        str_builder_add_cstr(sb, "invalid lockfile (`");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`): ");
+        if (detail != 0) { str_builder_add(sb, detail); }
+    } elif (kind == NOUS_ERR_LOCK_MISMATCH) {
+        str_builder_add_cstr(sb, "resolution no longer matches the lockfile (first at `");
+        str_builder_add(sb, msg);
+        str_builder_add_cstr(sb, "`): ");
+        if (detail != 0) { str_builder_add(sb, detail); }
     }
     return str_builder_build(sb);
 }

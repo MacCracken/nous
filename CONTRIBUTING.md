@@ -9,7 +9,7 @@ git clone https://github.com/MacCracken/nous.git
 cd nous
 cyrius deps                      # vendors lib/ and bayan; needs network once
 cyrius test tests/nous.tcyr      # expect "0 failed"
-cyrius fuzz --poison=ab tests/   # 5 fuzz harnesses
+cyrius fuzz --poison=ab tests/   # 6 fuzz harnesses
 ./scripts/bench-history.sh       # benchmarks
 ```
 

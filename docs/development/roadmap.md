@@ -3,7 +3,7 @@
 What's next for nous. Shipped work is recorded in [CHANGELOG.md](../../CHANGELOG.md),
 not here.
 
-**Current state (1.7.1, cyrius 6.7.18).**
+**Current state (1.7.2, cyrius 6.7.18).**
 - **Resolution:** transitive resolution across system, marketplace, Flutter and
   community sources, with 4 strategies.
 - **Determinism:** byte-ordered everywhere; results never depend on the hash seed.
@@ -16,13 +16,15 @@ not here.
   with pre-releases (npm / Cargo matching rule) and pub build ordering for
   Flutter updates (1.7.0, ADR 0006). Compound ranges, npm and Cargo forms
   (1.7.1, ADR 0007).
+- **Lockfile:** CYML in the Cargo.lock shape; locked resolution refuses any
+  drift (1.7.2, ADR 0008).
 - **Inputs:** the zugot recipe DB (all categories, duplicates reported), and
   manifests and JSON via bayan's parser.
 - **Plumbing:** complete child-output capture with a default idle deadline, and
   apt queries batched per breadth-first wave.
 - **Docs:** a one-line doc comment on every public fn (232), checked per module
   in CI; every Result-returning fn is declared `: Result`.
-- **Size:** 15 modules, 651 assertions, 24 benchmarks, 5 fuzz harnesses
+- **Size:** 16 modules, 718 assertions, 26 benchmarks, 6 fuzz harnesses
   (`--poison=ab`), and a ~45 KB release smoke binary.
 
 ---
@@ -32,12 +34,13 @@ not here.
 One bite per release (CLAUDE.md task sizing). They are ordered by what each
 one builds on.
 
-- [ ] **1.7.2 — Lockfile generation + consumption.** Deterministic
-      dependency selection, the reproducibility half of the ark v2 M2 path
-      below. It is not gated on ark. Its format gets an ADR.
 - [ ] **1.7.3 — Lockfile integrity.** Every node, transitive ones included,
-      records name, source, exact version and artifact hash. Locked mode
-      refuses any unlocked node (pip / Cargo practice).
+      also records an artifact hash, and locked mode checks it. The 1.7.2
+      format already ignores unknown keys, so a 1.7.2 reader accepts a 1.7.3
+      lock. Locked mode already refuses an unlocked node (1.7.2). Open
+      question: where each source's hash comes from. A recipe has `sha256`,
+      apt has its `SHA256` field, and the marketplace manifest has none
+      (mela?).
 - [ ] **Constraint solving on recipe-level deps** (gated on zugot). zugot's
       `[depends]` lists carry names only (0 constrained entries in the tree), so
       nous has nothing to solve until zugot gains a versioned syntax. That is a
@@ -147,5 +150,10 @@ with a committed lock (1.7.x).
 - **ark → nous 1.7.1:** nothing breaks. Manifests with compound constraints
   (`^1 || ^2`, `>=1.2, <1.5`, `1.2 - 2.0`) now resolve instead of failing with
   `NOUS_ERR_INVALID_VERSION_CONSTRAINT`.
+- **ark → nous 1.7.2:** the lockfile is ready to wire in, and nothing changes
+  until ark does. ark owns the file: its path, an atomic write, and the commit.
+  It calls `nous_lock_from_plan` + `nous_lock_to_str` to write a lock, and
+  `nous_lock_parse` + `nous_resolve_locked` for a locked install. Two new
+  error kinds, 9 and 10, need handling if ark matches kinds exhaustively.
 - **zugot:** the nous recipe (`marketplace/nous.cyml`) is still at 1.2.6. Bump it
   after each release tag, since it needs the release asset and its checksum.

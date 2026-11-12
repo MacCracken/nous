@@ -1,0 +1,170 @@
+# Fuzz: nous_lock_parse, nous_lock_to_str, nous_lock_diff and the lock's JSON
+# (1.7.2). A lockfile is committed and may be edited or corrupted, so it is
+# untrusted input. Two kinds of case:
+#   - seeded mutations of lockfile text: parsing must not crash, and whatever
+#     parses must hold the invariants below;
+#   - random locks built in memory: writing then parsing must give the same
+#     lock back.
+# Invariants:
+#   51  the text of a parsed lock parses again
+#   52  ... and writes the same text (to_str is a fixed point)
+#   53  a lock does not differ from itself
+#   54  ... nor from its own reparse
+#   55  ... nor from its JSON roundtrip
+#   56  every dependency and root of a parsed lock is a locked package
+#   57  a random valid lock survives to_str + parse unchanged
+include "src/types.cyr"
+include "src/util.cyr"
+include "src/error.cyr"
+include "src/strategy.cyr"
+include "src/source.cyr"
+include "src/command.cyr"
+include "src/sort.cyr"
+include "src/registry.cyr"
+include "src/sysdb.cyr"
+include "src/resolver.cyr"
+include "src/json.cyr"
+include "src/version.cyr"
+include "src/graph.cyr"
+include "src/recipe.cyr"
+include "src/lock.cyr"
+include "src/updates.cyr"
+include "tests/fz_driver.cyr"
+
+# Join up to four cstr pieces into one Str (keeps fixtures under lint's
+# 120-character line limit).
+fn j4(a, b, c, d): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, a);
+    str_builder_add_cstr(sb, b);
+    str_builder_add_cstr(sb, c);
+    str_builder_add_cstr(sb, d);
+    return str_builder_build(sb);
+}
+fn j4c(a, b, c, d): i64 { return _nous_cstr(j4(a, b, c, d)); }
+
+var _lk_buf = 0;
+var _lk_seeds = 0;
+const _LK_CAP = 8192;
+
+# The invariants every parsed lock must hold.
+fn _lk_check(lock): i64 {
+    var t1 = nous_lock_to_str(lock);
+    var pt, again = nous_lock_parse(t1);
+    if (is_err_result(pt) == 1) { syscall(60, 51); }
+    if (str_eq(nous_lock_to_str(again), t1) == 0) { syscall(60, 52); }
+    if (vec_len(nous_lock_diff(lock, lock)) != 0) { syscall(60, 53); }
+    if (vec_len(nous_lock_diff(lock, again)) != 0) { syscall(60, 54); }
+    var js = nous_lock_from_json(nous_lock_to_json(lock));
+    if (js == 0 || vec_len(nous_lock_diff(lock, js)) != 0) { syscall(60, 55); }
+    var pkgs = nous_lock_pkgs(lock);
+    var i = 0;
+    while (i < vec_len(pkgs)) {
+        var ds = nous_lp_deps(vec_get(pkgs, i));
+        var j = 0;
+        while (j < vec_len(ds)) {
+            if (nous_lock_get(lock, vec_get(ds, j)) == 0) { syscall(60, 56); }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    var rs = nous_lock_roots(lock);
+    i = 0;
+    while (i < vec_len(rs)) {
+        if (nous_lock_get(lock, vec_get(rs, i)) == 0) { syscall(60, 56); }
+        i = i + 1;
+    }
+    fz_mix(vec_len(pkgs));
+    fz_mix(str_len(t1));
+    return 0;
+}
+
+# A random lockfile value: printable ASCII with no '"' or '\'.
+fn _lk_val(min): i64 {
+    var sb = str_builder_new();
+    var n = min + fz_below(6);
+    var i = 0;
+    while (i < n) {
+        var c = 32 + fz_below(95);
+        if (c == 34 || c == 92) { c = 46; }
+        str_builder_putc(sb, c);
+        i = i + 1;
+    }
+    return str_builder_build(sb);
+}
+
+# A random valid lock: unique names, deps and roots among them.
+fn _lk_random(): i64 {
+    var n = fz_below(6);
+    var names = vec_new();
+    var seen = map_new();
+    var i = 0;
+    while (i < n) {
+        var nm = _lk_val(1);
+        if (map_has(seen, _nous_cstr(nm)) == 0) {
+            map_set(seen, _nous_cstr(nm), 1);
+            vec_push(names, nm);
+        }
+        i = i + 1;
+    }
+    var pkgs = vec_new();
+    i = 0;
+    while (i < vec_len(names)) {
+        var deps = vec_new();
+        var k = fz_below(3);
+        while (k > 0 && vec_len(names) > 0) {
+            vec_push(deps, vec_get(names, fz_below(vec_len(names))));
+            k = k - 1;
+        }
+        vec_push(pkgs, nous_lock_pkg_new(vec_get(names, i), _lk_val(0), fz_below(5), _nous_sorted_unique(deps)));
+        i = i + 1;
+    }
+    _nous_sort_by_key(pkgs, &nous_lp_name);
+    var roots = vec_new();
+    if (vec_len(names) > 0 && fz_one_in(2) == 1) { vec_push(roots, vec_get(names, fz_below(vec_len(names)))); }
+    return nous_lock_new(1, _nous_sorted_unique(roots), pkgs);
+}
+
+fn _lk_case(k): i64 {
+    if (fz_one_in(3) == 1) {
+        var rl = _lk_random();
+        var pt, back = nous_lock_parse(nous_lock_to_str(rl));
+        if (is_err_result(pt) == 1) { syscall(60, 57); }
+        if (vec_len(nous_lock_diff(rl, back)) != 0) { syscall(60, 57); }
+        _lk_check(back);
+        return 0;
+    }
+    var seed = vec_get(_lk_seeds, k % vec_len(_lk_seeds));
+    var n = strlen(seed);
+    memcpy(_lk_buf, seed, n);
+    n = fz_mutate(_lk_buf, n, _LK_CAP);
+    var t, lock = nous_lock_parse(str_new(fz_exact(fz_arena(), _lk_buf, n), n));
+    if (is_ok(t) == 1) { _lk_check(lock); } else { fz_mix(ne_kind(lock)); }
+    return 0;
+}
+
+fn main(): i64 {
+    alloc_init();
+    _lk_buf = alloc(_LK_CAP + 16);
+    _lk_seeds = vec_new();
+    vec_push(_lk_seeds, j4c(
+        "# nous lockfile\nversion = 1\nroots = [\n    \"acme/app\",\n]\n\n[[package]]\nname = \"acme/app\"\n",
+        "version = \"1.0.0-rc.1\"\nsource = \"marketplace\"\ndependencies = [\n    \"libc6\",\n]\n",
+        "\n[[package]]\nname = \"libc6\"\nversion = \"2.36-9+deb12u7\"\nsource = \"system\"\ndependencies = []\n",
+        ""));
+    vec_push(_lk_seeds, j4c(
+        "version = 1\nroots = [\"b\", \"a\"]\n[[package]]\nname = \"b\"\nversion = \"2\"\n",
+        "source = \"community\"\ndependencies = [\"a\"]\nchecksum = \"x\"\n",
+        "[[package]]\nname = \"a\"\nversion = \"\"\nsource = \"flutter-app\"\n",
+        "dependencies = []\n"));
+    vec_push(_lk_seeds, "version = 1\nroots = []\n");
+    # Degenerate inputs must not crash.
+    nous_lock_parse(str_from(""));
+    nous_lock_parse(str_from("version"));
+    nous_lock_parse(str_from("version = 1\nroots = [\n"));
+    nous_lock_parse(str_from("[[package]]\n[[package]]\n"));
+    return fz_run("lock fuzz", 8000, &_lk_case);
+}
+
+var _ec = main();
+syscall(60, _ec);
