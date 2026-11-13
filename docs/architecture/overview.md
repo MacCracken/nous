@@ -20,12 +20,12 @@ src/
   version.cyr         SemVer, constraint ranges (npm/Cargo), Debian version order
   graph.cyr           Dependency graph, Tarjan SCC (cycles + install order), Kahn sort
   recipe.cyr          Zugot CYML parsing, recipe DB, trace, transitive resolution
-  lock.cyr            Lockfile: generate, parse, diff, locked resolution (ADR 0008)
+  lock.cyr            Lockfile: generate, parse, diff, locked resolution (ADR 0008, 0009)
   updates.cyr         Update detection: apt leg + a pluggable lookup per source
 
 tests/
-  nous.tcyr           Test suite (718 assertions)
-  nous.bcyr           Benchmarks (26 benches)
+  nous.tcyr           Test suite (786 assertions)
+  nous.bcyr           Benchmarks (28 benches)
   nous.fcyr           Fuzz smoke harness
   fuzz_*.fcyr         Mutation fuzz targets: cyml, json, version, apt, lock (5)
   fz_driver.cyr       Fuzz driver, vendored from sandhi
@@ -94,7 +94,11 @@ listed at the top of `src/types.cyr`.
   writes it as byte-stable CYML in the Cargo.lock shape. `nous_lock_parse`
   reads it back, strictly. `nous_resolve_locked` re-resolves the roots, and
   any drift is `Err(NOUS_ERR_LOCK_MISMATCH)`. nous does no file I/O for it;
-  the consumer writes the file ([ADR-0008](../adr/0008-lockfile.md)).
+  the consumer writes the file ([ADR-0008](../adr/0008-lockfile.md)). Since
+  1.7.3 each package also locks the artifact checksum its source publishes,
+  carried on the ResolvedPkg (`nous_rp_checksum`): apt's `SHA256` and a
+  recipe's `sha256`. A changed one under the same version is drift
+  ([ADR-0009](../adr/0009-lockfile-checksums.md)).
 - **Child processes** — every apt/dpkg query goes through `nous_capture*`
   (`src/command.cyr`), which captures the complete output as an owned Str. It
   returns `Err(NOUS_ERR_COMMAND_EXEC)` past 16 MiB or on an idle-deadline cut,

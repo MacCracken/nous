@@ -1,6 +1,6 @@
 # Nous — Known Gaps & Hardening Targets
 
-> **Status**: Active | **Last Updated**: 2026-11-12 (1.7.2, cyrius 6.7.18)
+> **Status**: Active | **Last Updated**: 2026-11-12 (1.7.3, cyrius 6.7.18)
 >
 > This page tracks the gaps between what nous does and what a production
 > resolver needs. The prioritized, versioned plan lives in
@@ -56,7 +56,7 @@ suggestions, trace).
 
 | Gap | Why it matters | Roadmap |
 |---|---|---|
-| **No artifact hashes in the lock** | A lock pins names, versions, sources and edges (1.7.2), but not the bytes installed | 1.7.3 |
+| **Marketplace and Flutter nodes lock no checksum** | Since 1.7.3 a lock pins the bytes of apt packages and recipes (ADR 0009), but nous's marketplace view has no hash to pin, so "same version, other bytes" goes unseen there | 1.8.x (the native index) |
 | **Recipe deps have no version constraints** | Only marketplace-manifest deps feed the solver; recipe-only graphs cannot detect conflicts | gated on a zugot syntax |
 | **No native source** | There is no `SOURCE_NATIVE`, signed index or local store, so the apt leg is required on a no-apt box | 1.8.x (gated on ark M0) |
 | **Registry is a stub** | It scans a local directory, and `registry_install_package` returns `Ok(0)` | 1.9.x |
@@ -68,8 +68,9 @@ suggestions, trace).
 
 Not nous's job:
 - **Verifying downloaded artifacts against a recipe's SHA256.** nous carries
-  the checksum (`rc_sha256`), but nous never downloads anything. The installer
-  (ark / takumi) does that check.
+  the checksum (`rc_sha256`, and since 1.7.3 `nous_rp_checksum` and the lock's
+  `checksum`), but nous never downloads anything. The installer (ark /
+  takumi) does that check, and apt checks its own `.deb`s.
 - **Resolving a `github_release` asset URL.** That needs the GitHub API, and
   nous does no network access. takumi resolves it at fetch time
   (`takumi/src/fetch.cyr`). Since 1.7.0 nous exposes the recipe's

@@ -41,7 +41,8 @@ enum ErrKind {
 # AgentInfo:    ai_name(0) ai_version(8) ai_desc(16)      = 24 bytes
 # Manifest:     mf_agent(0) mf_deps(8) mf_runtime(16)     = 24 bytes
 # InstalledMPkg: mp_manifest(0) mp_size(8) mp_path(16) mp_at(24) = 32 bytes
-# ResolvedPkg:  rp_name(0) rp_ver(8) rp_src(16) rp_desc(24) rp_size(32) rp_deps(40) rp_trust(48) = 56 bytes
+# ResolvedPkg:  rp_name(0) rp_ver(8) rp_src(16) rp_desc(24) rp_size(32) rp_deps(40) rp_trust(48)
+#               rp_checksum(56) = 64 bytes (1.7.3)
 # InstalledPkg: ip_name(0) ip_ver(8) ip_src(16) ip_date(24) ip_size(32) ip_auto(40) = 48 bytes
 # AvailUpdate:  au_name(0) au_src(8) au_inst_ver(16) au_avail_ver(24) au_log(32) = 40 bytes
 # SearchResult: sr_results(0) sr_sources(8) sr_total(16)   = 24 bytes
@@ -50,7 +51,8 @@ enum ErrKind {
 # Strategy:     st_kind(0) st_only(8)                      = 16 bytes
 # Resolver:     rs_strat(0) rs_cache(8) rs_reg(16) rs_sys(24) rs_rdb(32) rs_trace(40) rs_trace_on(48) = 56 bytes
 # SemVer:       sv_major(0) sv_minor(8) sv_patch(16) sv_pre(24) sv_build(32) = 40 bytes (1.7.0)
-# Constraint:   ct_op(0) ct_ver(8) ct_prec(16) ct_err(24) ct_range(32) = 40 bytes (src/version.cyr)
+# Constraint:   ct_op(0) ct_ver(8) ct_prec(16) ct_err(24) ct_range(32) ct_sets(40)
+#               ct_rset(48) = 56 bytes (1.7.1; src/version.cyr)
 # DepGraph:     dg_nodes(0) dg_edges(8) dg_versions(16)      = 24 bytes
 # ResPlan:      pl_packages(0) pl_order(8) pl_unresolved(16)   = 24 bytes
 # Recipe:       rc_name(0) rc_ver(8) rc_desc(16) rc_license(24) rc_arch(32)
@@ -99,12 +101,16 @@ fn installed_mpkg_new(manifest, size, path, at): i64 {
     return p;
 }
 
+# 1.7.3: +checksum at 56, set with nous_rp_set_checksum. The constructor
+# keeps its seven arguments and starts it at 0 (none).
+#
 # ResolvedPkg constructor: name, ver, src (PackageSource), desc, size, deps (vec of Str), trusted.
 fn resolved_pkg_new(name, ver, src, desc, size, deps, trusted): i64 {
-    var p = alloc(56);
+    var p = alloc(64);
     store64(p, name); store64(p + 8, ver); store64(p + 16, src);
     store64(p + 24, desc); store64(p + 32, size);
     store64(p + 40, deps); store64(p + 48, trusted);
+    store64(p + 56, 0);
     return p;
 }
 
@@ -217,6 +223,10 @@ fn rp_size(p): i64 { return load64(p + 32); }
 fn rp_deps(p): i64 { return load64(p + 40); }
 # ResolvedPkg field: trust flag (0 until a signature check sets it).
 fn rp_trust(p): i64 { return load64(p + 48); }
+# ResolvedPkg field: the artifact checksum its source publishes ("sha256:<hex>" Str), or 0 when none (1.7.3).
+fn nous_rp_checksum(p): i64 { return load64(p + 56); }
+# ResolvedPkg: set the checksum in place (a "sha256:<hex>" Str, or 0 for none); returns p.
+fn nous_rp_set_checksum(p, checksum): i64 { store64(p + 56, checksum); return p; }
 
 # InstalledPkg field: package name (Str).
 fn ip_name(p): i64 { return load64(p); }

@@ -1,6 +1,6 @@
 # Nous API Reference
 
-> **Version**: 1.7.2 | **Language**: Cyrius 6.7.18 (pinned in `cyrius.cyml`)
+> **Version**: 1.7.3 | **Language**: Cyrius 6.7.18 (pinned in `cyrius.cyml`)
 >
 > **In-tree:** `include "src/nous.cyr"` (the barrel). **As a dependency:** pull
 > `dist/nous.cyr` (see [ADR 0002](adr/0002-flat-modules-dist-bundle.md)), and
@@ -248,7 +248,9 @@ if (sysdb_available(db) == 1) {
 1.5.3:
 - **`sysdb_info`** reads the candidate only (`apt-cache show --no-all-versions`).
   `Pre-Depends` count as dependencies; `:any` / `:<arch>` qualifiers are stripped;
-  the first `|` alternative is kept.
+  the first `|` alternative is kept. Since 1.7.3 the stanza's `SHA256` (the
+  `.deb`'s digest) is the package's `nous_rp_checksum`; a package only dpkg's
+  status file knows has none.
 - **"Installed"** is dpkg's `${db:Status-Status}` = `installed`, so a held package
   is installed and a removed-with-config one is not.
 - **`sysdb_updates`** reads `apt-get -s dist-upgrade` `Inst` lines, not `apt list`
@@ -324,8 +326,10 @@ var curl = recipe_db_get(rdb, str_from("curl"));
 # Build order from build-order.txt
 var order = recipe_db_order(rdb);  # vec of "category/name" Str
 
-# Convert a recipe to a ResolvedPkg for the graph
+# Convert a recipe to a ResolvedPkg for the graph. Since 1.7.3 its checksum is
+# "sha256:<sha256>" when the recipe's sha256 is 64 hex digits, else 0.
 var pkg = recipe_to_resolved(curl);
+nous_rp_checksum(pkg);             # "sha256:9e2a..." Str, or 0
 
 # The CYML parser itself: a vec of bayan_toml sections
 var sections = nous_cyml_parse(str_from("[package]\nname = \"x\"\n"));
@@ -409,7 +413,7 @@ nous_deb_version_cmp(str_from("2.30-0ubuntu2"), str_from("2.30~rc1-1"));  # > 0
 
 ---
 
-## Lockfile (1.7.2)
+## Lockfile (1.7.2; checksums 1.7.3)
 
 Pin a resolution and verify it later ([ADR 0008](adr/0008-lockfile.md)). nous
 has one candidate per name, so a lock **pins and verifies**: it cannot pick
@@ -439,13 +443,19 @@ var rt, plan2 = nous_resolve_locked(r, locked);     # Err(NOUS_ERR_LOCK_MISMATCH
 var now_t, now = nous_lock_from_plan(plan2, roots);
 var diffs = nous_lock_diff(locked, now);            # vec of NousLockDiff; empty when equal
 nous_ld_kind(vec_get(diffs, 0));   # NOUS_LOCK_ADDED / _REMOVED / _VERSION_CHANGED /
-                                   # _SOURCE_CHANGED / _DEPS_CHANGED / _ROOT_ADDED / _ROOT_REMOVED
+                                   # _SOURCE_CHANGED / _DEPS_CHANGED / _ROOT_ADDED / _ROOT_REMOVED /
+                                   # _CHECKSUM_CHANGED (1.7.3)
 nous_lock_diff_text(vec_get(diffs, 0));   # "curl: version 8.19.0 -> 8.20.0"
 
 # Reading a lock
 nous_lock_roots(locked);                  # byte-sorted vec of Str
 nous_lock_get(locked, str_from("curl"));  # NousLockPkg or 0
-# nous_lp_name / nous_lp_version / nous_lp_source / nous_lp_deps
+# nous_lp_name / nous_lp_version / nous_lp_source / nous_lp_deps /
+# nous_lp_checksum (1.7.3: "sha256:<hex>" Str, or 0)
+
+# Building one by hand: nous_lock_new(1, roots, pkgs) with
+nous_lock_pkg_new(name, version, source, deps);                  # no checksum
+nous_lock_pkg_new_full(name, version, source, deps, checksum);   # 1.7.3
 ```
 
 The file looks like this. A package's `dependencies` are its edges to other
@@ -471,8 +481,31 @@ dependencies = [
 name = "libc6"
 version = "2.36-9+deb12u7"
 source = "system"
+checksum = "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 dependencies = []
 ```
+
+**Checksums (1.7.3, [ADR 0009](adr/0009-lockfile-checksums.md)).** A package
+whose source publishes a hash also locks it, as `sha256:` and 64 lowercase
+hex digits:
+
+| Source | Checksum |
+|--------|----------|
+| system (apt) | the candidate stanza's `SHA256`, the `.deb`'s digest |
+| community (recipe) | the recipe's `sha256`, its source archive's digest (none when empty) |
+| marketplace, flutter-app | none until the 1.8.x native index |
+
+- The `checksum` line is written only when there is one. The format version
+  stays 1, so a 1.7.2 reader ignores it.
+- `nous_lock_parse` takes it as optional and refuses one in any other form.
+- Locked resolution reports `<name>: checksum <old> -> <new>` (or `-> none`)
+  when the version and source are the same but the bytes are not.
+- A checksum the lock does not have is not drift, so a 1.7.2 lock keeps
+  passing. Regenerate it to pin the bytes.
+- `nous_lock_diff(was, now)` compares checksums only where `was` has one;
+  compare both ways for equality.
+- nous hashes nothing itself: apt, takumi and ark verify the downloaded
+  bytes.
 
 apt packages are locked and enforced like the rest (ADR 0008), so on Debian
 a lock goes stale after apt security updates: locked mode names each
@@ -565,7 +598,7 @@ field (1.5.3). Strings are escaped on output (`"`, `\`, control characters) and
 decoded on input, by the stdlib escaper and bayan's JSON parser.
 
 ```cyrius
-var json = resolved_to_json(pkg);          var back = resolved_from_json(json);
+var json = resolved_to_json(pkg);          var back = resolved_from_json(json);   # 1.7.3: + "checksum" (or null)
 var json2 = installed_to_json(ipkg);       var back2 = installed_from_json(json2);
 var json3 = update_to_json(upd);         var back3 = update_from_json(json3);
 var json4 = strategy_to_json(strat);       var back4 = strategy_from_json(json4);
@@ -621,7 +654,7 @@ layouts.
 
 | Struct | Constructor | Key Accessors |
 |--------|-------------|---------------|
-| ResolvedPkg | `resolved_pkg_new(name,ver,src,desc,size,deps,trusted)` | `rp_name`, `rp_ver`, `rp_src`, `rp_desc`, `rp_size`, `rp_deps`, `rp_trust` |
+| ResolvedPkg | `resolved_pkg_new(name,ver,src,desc,size,deps,trusted)` | `rp_name`, `rp_ver`, `rp_src`, `rp_desc`, `rp_size`, `rp_deps`, `rp_trust`, `nous_rp_checksum` (1.7.3; set with `nous_rp_set_checksum`) |
 | InstalledPkg | `installed_pkg_new(name,ver,src,date,size,auto)` | `ip_name`, `ip_ver`, `ip_src`, `ip_date`, `ip_size`, `ip_auto` |
 | InstalledMPkg | `installed_mpkg_new(manifest,size,path,at)` | `mpkg_name`, `mpkg_version`, `mpkg_desc`, `mpkg_runtime`, `mpkg_deps` |
 | AvailUpdate | `avail_update_new(name,src,inst_ver,avail_ver,changelog)` | see `src/types.cyr` |

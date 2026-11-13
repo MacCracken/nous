@@ -13,6 +13,7 @@ Significant design decisions for nous, in the format required by `CLAUDE.md`
 | [0006](0006-semver-prerelease-and-build.md) | SemVer pre-release and build semantics | Accepted (1.7.0) |
 | [0007](0007-compound-ranges.md) | Compound version ranges | Accepted (1.7.1) |
 | [0008](0008-lockfile.md) | The nous lockfile: format and locked resolution | Accepted (1.7.2) |
+| [0009](0009-lockfile-checksums.md) | Artifact checksums in the lockfile | Accepted (1.7.3) |
 
 New ADRs: copy the four-heading shape from any record above, number sequentially
 (`NNNN-short-title.md`), and add a row here. Create one when choosing between

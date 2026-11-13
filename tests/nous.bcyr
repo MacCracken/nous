@@ -212,12 +212,35 @@ fn b_range() {
 }
 var bench_manifest = 0;
 fn b_manifest() { manifest_from_json(bench_manifest); return 0; }
+# 1.7.3: one `apt-cache show --no-all-versions` stanza in the shape Debian 12
+# prints for curl (17 fields), parsed into a ResolvedPkg with its checksum.
+var bench_stanza = 0;
+fn _b_stanza(): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "Package: curl\nVersion: 7.88.1-10+deb12u8\nInstalled-Size: 500\n");
+    str_builder_add_cstr(sb, "Maintainer: Alessandro Ghedini <ghedo@debian.org>\nArchitecture: amd64\n");
+    str_builder_add_cstr(sb, "Depends: libc6 (>= 2.34), libcurl4 (= 7.88.1-10+deb12u8), zlib1g (>= 1:1.1.4)\n");
+    str_builder_add_cstr(sb, "Description: command line tool for transferring data with URL syntax\n");
+    str_builder_add_cstr(sb, "Homepage: https://curl.se/\nDescription-md5: 50c2d3ccbcc7c3bc4c5d5b5b5a9b5c4e\n");
+    str_builder_add_cstr(sb, "Tag: implemented-in::c, interface::commandline, network::client,\n");
+    str_builder_add_cstr(sb, " protocol::ftp, protocol::http, protocol::ssl, role::program\n");
+    str_builder_add_cstr(sb, "Section: web\nPriority: optional\n");
+    str_builder_add_cstr(sb, "Filename: pool/main/c/curl/curl_7.88.1-10+deb12u8_amd64.deb\nSize: 315540\n");
+    str_builder_add_cstr(sb, "MD5sum: 1b9f8f5b1b0e6a1a2c4b7f2e3d4c5b6a\n");
+    str_builder_add_cstr(sb, "SHA256: 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824\n");
+    return str_builder_build(sb);
+}
+fn b_apt_info() { _sysdb_parse_info(str_from("curl"), bench_stanza); return 0; }
 # 1.7.2: a 100-package lock (each depends on the previous one): write + parse,
-# and a diff against a copy with one version changed.
+# and a diff against a copy with one version changed. 1.7.3: the same lock
+# with a checksum on every package (`sum` = 1), written and parsed.
 var bench_lock = 0;
 var bench_lock2 = 0;
+var bench_lock_sum = 0;
 var bench_lock_text = 0;
-fn _b_mklock(bump): i64 {
+fn _b_mklock(bump, sum): i64 {
+    var cs = 0;
+    if (sum == 1) { cs = str_from("sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"); }
     var pkgs = vec_new();
     var i = 0;
     while (i < 100) {
@@ -229,7 +252,7 @@ fn _b_mklock(bump): i64 {
         if (i > 0) { vec_push(deps, nous_lp_name(vec_get(pkgs, i - 1))); }
         var ver = str_from("1.2.3");
         if (bump == 1 && i == 50) { ver = str_from("1.2.4"); }
-        vec_push(pkgs, nous_lock_pkg_new(str_builder_build(sb), ver, SOURCE_MARKETPLACE, deps));
+        vec_push(pkgs, nous_lock_pkg_new_full(str_builder_build(sb), ver, SOURCE_MARKETPLACE, deps, cs));
         i = i + 1;
     }
     var roots = vec_new();
@@ -241,6 +264,10 @@ fn b_lock_rw() {
     return 0;
 }
 fn b_lock_diff() { nous_lock_diff(bench_lock, bench_lock2); return 0; }
+fn b_lock_sum_rw() {
+    var t, l = nous_lock_parse(nous_lock_to_str(bench_lock_sum));
+    return 0;
+}
 
 # 1.7.1: a compound range: parse two OR'd sets, match two versions, and check
 # compatibility with a Cargo-style AND.
@@ -370,14 +397,22 @@ fn main() {
     var bm4 = bench_new("constraint_compound");
     bench_run(bm4, &b_compound, 20000);
     vec_push(benches, bm4);
-    bench_lock = _b_mklock(0);
-    bench_lock2 = _b_mklock(1);
+    bench_lock = _b_mklock(0, 0);
+    bench_lock2 = _b_mklock(1, 0);
+    bench_lock_sum = _b_mklock(0, 1);
     var bm5 = bench_new("lock_write_parse_100");
     bench_run(bm5, &b_lock_rw, 200);
     vec_push(benches, bm5);
+    bench_stanza = _b_stanza();
+    var bm8 = bench_new("apt_parse_info");
+    bench_run(bm8, &b_apt_info, 20000);
+    vec_push(benches, bm8);
     var bm6 = bench_new("lock_diff_100");
     bench_run(bm6, &b_lock_diff, 2000);
     vec_push(benches, bm6);
+    var bm7 = bench_new("lock_checksum_rw_100");
+    bench_run(bm7, &b_lock_sum_rw, 200);
+    vec_push(benches, bm7);
 
     # Sort 2,000 installed packages (1.5.3)
     sort_src = vec_new();

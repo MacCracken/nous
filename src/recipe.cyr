@@ -515,12 +515,17 @@ fn recipe_db_count(db): i64 {
     return map_count(rdb_recipes(db));
 }
 
+# 1.7.3: the checksum is the recipe's `sha256`, the digest of its source
+# archive, when that is 64 hex digits (none for an empty one: 43 of 563 zugot
+# recipes have no source hash yet).
+#
 # ResolvedPkg (SOURCE_COMMUNITY, size 0, trust 0) for a Recipe; deps are its runtime deps.
 fn recipe_to_resolved(recipe): i64 {
-    return resolved_pkg_new(
+    var p = resolved_pkg_new(
       rc_name(recipe), rc_ver(recipe), SOURCE_COMMUNITY,
       rc_desc(recipe), 0, rc_rt_deps(recipe), 0
       );
+    return nous_rp_set_checksum(p, _nous_sha256_checksum(rc_sha256(recipe)));
 }
 
 # --- Wire recipes into resolver ---

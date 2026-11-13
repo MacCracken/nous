@@ -1,7 +1,8 @@
 # Fuzz: the apt / dpkg output parsers (untrusted tool output; 1.5.3 made them
 # pure functions). Mutated apt-cache show, dpkg-query and apt-get -s output
 # must not crash, and every dependency name extracted must be clean: non-empty,
-# with no ':' ',' '|' '(' or space.
+# with no ':' ',' '|' '(' or space (41). 1.7.3: a package's checksum is none or
+# "sha256:<64 lowercase hex digits>" (46).
 include "src/types.cyr"
 include "src/util.cyr"
 include "src/error.cyr"
@@ -48,6 +49,13 @@ fn _ap_clean(name): i64 {
     return 1;
 }
 
+# 46: a checksum taken from apt output is none or in the lockfile form.
+fn _ap_sum_ok(pkg): i64 {
+    var c = nous_rp_checksum(pkg);
+    if (c != 0 && _nous_checksum_ok(c) == 0) { syscall(60, 46); }
+    return 0;
+}
+
 fn _ap_case(k): i64 {
     var seed = vec_get(_ap_seeds, k % vec_len(_ap_seeds));
     var n = strlen(seed);
@@ -56,6 +64,7 @@ fn _ap_case(k): i64 {
     var s = str_new(fz_exact(fz_arena(), _ap_buf, n), n);
     var info = _sysdb_parse_info(str_from("p"), s);
     if (info != 0) {
+        _ap_sum_ok(info);
         var deps = rp_deps(info);
         var i = 0;
         while (i < vec_len(deps)) {
@@ -64,7 +73,11 @@ fn _ap_case(k): i64 {
         }
         fz_mix(vec_len(deps));
     }
-    fz_mix(map_count(_sysdb_parse_info_many(s)));
+    var many = _sysdb_parse_info_many(s);
+    var ks = map_keys(many);
+    var j = 0;
+    while (j < vec_len(ks)) { _ap_sum_ok(map_get(many, vec_get(ks, j))); j = j + 1; }
+    fz_mix(map_count(many));
     fz_mix(vec_len(_sysdb_parse_installed(s)));
     fz_mix(vec_len(_sysdb_parse_upgrades(s)));
     fz_mix(vec_len(_sysdb_parse_search(s)));
@@ -79,7 +92,7 @@ fn main(): i64 {
         "Package: multi\nVersion: 3.0-1\nPre-Depends: predep (>= 1)\n",
         "Depends: libnew (>= 3.0), python3:any, a | b\nDescription-en: x\nSize: 4096\n\n",
         "Package: multi\nVersion: 2.0-1\n\n",
-        ""));
+        "Package: z\nVersion: 1\nSHA256: E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855\n"));
     vec_push(_ap_seeds, "bash\t5.2-2\t7164\tinstalled\nfoo\t1.0\t10\tconfig-files\n");
     vec_push(_ap_seeds, j4c(
         "Inst perl-base [5.36.0-7+deb12u3] (5.36.0-7+deb12u4 Debian-Security:12 [amd64])\n",

@@ -1284,9 +1284,9 @@ fn test_lockfile_parse() {
     var tab = lk_pkg("a", "1\t2", "system", "[]");
     assert_eq(lk_parse_err(j4c(e0, tab, "", "")), 1, "a control character in a value");
     var future = j4c("[[package]]\nname = \"a\"\nversion = \"1\"\n",
-      "source = \"system\"\nchecksum = \"x\"\ndependencies = []\n", "", "");
+      "source = \"system\"\nsignature = \"x\"\ndependencies = []\n", "", "");
     assert_eq(lk_parse_err(j4c("version = 1\nroots = [\"a\"]\nfuture = \"x\"\n", future, "", "")), 0,
-      "unknown keys are ignored (1.7.3 adds one)");
+      "unknown keys are ignored");
     var et, ee = nous_lock_parse(str_from("version = 2\nroots = []\n"));
     assert_eq(ne_kind(ee), NOUS_ERR_INVALID_LOCKFILE, "kind INVALID_LOCKFILE");
     assert(str_contains(nous_error_msg(ee), str_from("invalid lockfile")), "message");
@@ -1360,6 +1360,220 @@ fn test_lockfile_recipes() {
     var tt, back = nous_lock_parse(nous_lock_to_str(lk));
     var rt, rp = nous_resolve_locked(r, back);
     assert_eq(is_ok(rt), 1, "locked resolution uses the attached recipe DB");
+    rm_rf(z); rm_rf(d); rm_rf(c);
+}
+
+# 1.7.3: artifact checksums in the lock (ADR 0009). LK_H1 / LK_H2 are real
+# SHA-256 digests (of "" and of "hello").
+var LK_H1 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+var LK_H2 = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+# 1 when two Strs (either may be 0) are equal; 0 and 0 are equal.
+fn lk_eq(a, b): i64 {
+    if (a == 0 || b == 0) {
+        if (a == b) { return 1; }
+        return 0;
+    }
+    return str_eq(a, b);
+}
+# The first diff of a vec, or a blank one when it is empty (so a missing diff
+# fails its assertions instead of crashing).
+fn lk_d0(v): i64 {
+    if (vec_len(v) > 0) { return vec_get(v, 0); }
+    return _nous_ld_new(0 - 1, str_from("?"), str_from(""), str_from(""));
+}
+# "sha256:<hex>" as a cstr.
+fn lk_sum(hex): i64 { return j4c("sha256:", hex, "", ""); }
+# A [[package]] table with a checksum line, in the order nous writes it.
+fn lk_pkg_sum(name, ver, src, sum, deps): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "[[package]]\nname = \"");
+    str_builder_add_cstr(sb, name);
+    str_builder_add_cstr(sb, "\"\nversion = \"");
+    str_builder_add_cstr(sb, ver);
+    str_builder_add_cstr(sb, "\"\nsource = \"");
+    str_builder_add_cstr(sb, src);
+    str_builder_add_cstr(sb, "\"\nchecksum = \"");
+    str_builder_add_cstr(sb, sum);
+    str_builder_add_cstr(sb, "\"\ndependencies = ");
+    str_builder_add_cstr(sb, deps);
+    str_builder_add_cstr(sb, "\n");
+    return _nous_cstr(str_builder_build(sb));
+}
+# One locked package (no deps) with a checksum Str or 0, as a one-package lock.
+fn lk_one(name, ver, src, sum): i64 {
+    var pkgs = vec_new();
+    vec_push(pkgs, nous_lock_pkg_new_full(str_from(name), str_from(ver), src, vec_new(), sum));
+    return nous_lock_new(1, vec_new(), pkgs);
+}
+fn test_lockfile_checksums() {
+    test_group("lockfile_checksums");
+    var h1 = str_from(LK_H1);
+    var s1 = str_from(lk_sum(LK_H1));
+    var s2 = str_from(lk_sum(LK_H2));
+    # The published-digest helper and the lockfile form.
+    assert(lk_eq(_nous_sha256_checksum(h1), s1), "64 hex digits become sha256:<hex>");
+    var upper = j4("  E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855", " ", "", "");
+    assert(lk_eq(_nous_sha256_checksum(upper), s1), "uppercase is lowercased and the value trimmed");
+    assert_eq(_nous_sha256_checksum(str_sub(h1, 0, 63)), 0, "63 digits: none");
+    assert_eq(_nous_sha256_checksum(j4(LK_H1, "0", "", "")), 0, "65 digits: none");
+    assert_eq(_nous_sha256_checksum(j4("g", str_cstr(str_sub(h1, 1, 63)), "", "")), 0, "a non-hex digit: none");
+    assert_eq(_nous_sha256_checksum(str_from("")), 0, "empty: none");
+    assert_eq(_nous_sha256_checksum(0), 0, "0: none");
+    assert_eq(_nous_checksum_ok(s1), 1, "the lockfile form");
+    var upsum = "sha256:E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
+    assert_eq(_nous_checksum_ok(str_from(upsum)), 0, "uppercase is not the lockfile form");
+    assert_eq(_nous_checksum_ok(j4("sha512:", LK_H1, "", "")), 0, "another algorithm");
+    assert_eq(_nous_checksum_ok(str_sub(s1, 0, 70)), 0, "one digit short");
+    assert_eq(_nous_checksum_ok(h1), 0, "no algorithm");
+    assert_eq(_nous_checksum_ok(0), 0, "0");
+    # apt: the candidate stanza's SHA256 field.
+    var st1 = j4("Package: libz\nVersion: 1:1.2.13-1\nMD5sum: d41d8cd98f00b204e9800998ecf8427e\n",
+      "SHA256: ", LK_H1, "\nDescription: zlib\n");
+    var ap = _sysdb_parse_info(str_from("libz"), st1);
+    assert(lk_eq(nous_rp_checksum(ap), s1), "apt: SHA256 is the checksum (not MD5sum)");
+    var st2 = j4("Package: libz\nVersion: 1\nSHA256: ", LK_H2, "\n\nPackage: libz\nVersion: 0.9\nSHA256: ", LK_H1);
+    assert(lk_eq(nous_rp_checksum(_sysdb_parse_info(str_from("libz"), st2)), s2), "apt: the first stanza's");
+    var st3 = j4("Package: libz\nVersion: 1\nStatus: install ok installed\n\nPackage: libz\nVersion: 0.9\nSHA256: ",
+      LK_H1, "\n", "");
+    assert_eq(nous_rp_checksum(_sysdb_parse_info(str_from("libz"), st3)), 0, "apt: dpkg status only, none");
+    var st4 = str_from("Package: libz\nVersion: 1\nSHA256: not-a-digest\n");
+    assert_eq(nous_rp_checksum(_sysdb_parse_info(str_from("libz"), st4)), 0, "apt: malformed, none");
+    var two = j4("Package: a\nVersion: 1\nSHA256: ", LK_H1, "\n\nPackage: b\nVersion: 2\n", "");
+    var many = _sysdb_parse_info_many(two);
+    assert(lk_eq(nous_rp_checksum(map_get(many, "a")), s1), "apt batch: a's checksum");
+    assert_eq(nous_rp_checksum(map_get(many, "b")), 0, "apt batch: b has none");
+    # ResolvedPkg JSON carries it.
+    var jp = resolved_from_json(resolved_to_json(ap));
+    assert(lk_eq(nous_rp_checksum(jp), s1), "ResolvedPkg JSON roundtrips the checksum");
+    var nj = resolved_to_json(lk_rp("n", "1", SOURCE_MARKETPLACE, vec_new()));
+    assert(str_contains(nj, str_from("\"checksum\":null")), "no checksum is null");
+    assert_eq(nous_rp_checksum(resolved_from_json(str_from("{\"name\":\"n\"}"))), 0, "absent in JSON: none");
+    # Locking a plan: the checksum is written between source and dependencies.
+    var pkgs = vec_new();
+    vec_push(pkgs, nous_rp_set_checksum(lk_rp("ca", "1.0", SOURCE_SYSTEM, vec_new()), s1));
+    vec_push(pkgs, lk_rp("cb", "2.0", SOURCE_MARKETPLACE, vec_new()));
+    var roots = vec_new();
+    vec_push(roots, str_from("ca"));
+    var lt, lk = nous_lock_from_plan(res_plan_new(pkgs, vec_new()), roots);
+    assert_eq(is_ok(lt), 1, "a plan with checksums locks");
+    assert(lk_eq(nous_lp_checksum(nous_lock_get(lk, str_from("ca"))), s1), "the checksum is locked");
+    assert_eq(nous_lp_checksum(nous_lock_get(lk, str_from("cb"))), 0, "none stays none");
+    var want = j4(j4c(LK_HEAD, "roots = ", lk_a1("ca"), "\n"),
+      j4c("\n", lk_pkg_sum("ca", "1.0", "system", lk_sum(LK_H1), "[]"), "", ""),
+      lk_out("cb", "2.0", "marketplace", "[]"), "");
+    assert(str_eq(nous_lock_to_str(lk), want), "exact text: a checksum line only where there is one");
+    var pt, back = nous_lock_parse(nous_lock_to_str(lk));
+    assert_eq(is_ok(pt), 1, "parses");
+    assert(lk_eq(nous_lp_checksum(nous_lock_get(back, str_from("ca"))), s1), "parsed checksum");
+    assert_eq(vec_len(nous_lock_diff(lk, back)), 0, "no differences one way");
+    assert_eq(vec_len(nous_lock_diff(back, lk)), 0, "nor the other");
+    var jl = nous_lock_from_json(nous_lock_to_json(lk));
+    assert(lk_eq(nous_lp_checksum(nous_lock_get(jl, str_from("ca"))), s1), "lock JSON carries the checksum");
+    assert_eq(nous_lp_checksum(nous_lock_get(jl, str_from("cb"))), 0, "and null back to none");
+    assert_eq(vec_len(nous_lock_diff(lk, jl)) + vec_len(nous_lock_diff(jl, lk)), 0, "lock JSON roundtrips");
+    assert_eq(nous_lp_checksum(nous_lock_get(lk_one("x", "1", 0, 0), str_from("x"))), 0, "pkg_new_full with 0");
+    var bad = vec_new();
+    vec_push(bad, nous_rp_set_checksum(lk_rp("x", "1", SOURCE_SYSTEM, vec_new()), str_from(LK_H1)));
+    var bt, be = nous_lock_from_plan(res_plan_new(bad, vec_new()), vec_new());
+    assert_eq(ne_kind(be), NOUS_ERR_INVALID_LOCKFILE, "a checksum without its algorithm cannot be locked");
+    assert(str_contains(ne_detail(be), str_from("sha256:<64 lowercase hex digits>")), "says the form");
+    # Parsing: optional, and strict when present.
+    var e0 = "version = 1\nroots = []\n";
+    assert_eq(lk_parse_err(j4c(e0, lk_pkg_sum("a", "1", "system", lk_sum(LK_H1), "[]"), "", "")), 0, "valid");
+    assert_eq(lk_parse_err(j4c(e0, lk_pkg_sum("a", "1", "system", "x", "[]"), "", "")), 1, "not a checksum");
+    assert_eq(lk_parse_err(j4c(e0, lk_pkg_sum("a", "1", "system", "", "[]"), "", "")), 1, "empty");
+    assert_eq(lk_parse_err(j4c(e0, lk_pkg_sum("a", "1", "system", LK_H1, "[]"), "", "")), 1, "no algorithm");
+    assert_eq(lk_parse_err(j4c(e0, lk_pkg_sum("a", "1", "system", upsum, "[]"), "", "")), 1, "uppercase");
+    assert_eq(lk_parse_err(j4c(e0, lk_pkg_sum("a", "1", "system", j4c("md5:", LK_H1, "", ""), "[]"), "", "")), 1,
+      "another algorithm");
+    var ct, ce = nous_lock_parse(str_from(j4c(e0, lk_pkg_sum("a", "1", "system", "x", "[]"), "", "")));
+    assert(str_eq_cstr(ne_msg(ce), "a"), "the error names the package");
+    # Diff: one-sided, and only for the same version and source.
+    var dc = nous_lock_diff(lk_one("p", "1", SOURCE_SYSTEM, s1), lk_one("p", "1", SOURCE_SYSTEM, s2));
+    assert_eq(vec_len(dc), 1, "other bytes, same version: one difference");
+    assert_eq(nous_ld_kind(lk_d0(dc)), NOUS_LOCK_CHECKSUM_CHANGED, "CHECKSUM_CHANGED");
+    assert(lk_eq(nous_ld_old(lk_d0(dc)), s1), "old checksum");
+    assert(lk_eq(nous_ld_new(lk_d0(dc)), s2), "new checksum");
+    assert(str_eq(nous_lock_diff_text(lk_d0(dc)), j4("p: checksum ", lk_sum(LK_H1), " -> ", lk_sum(LK_H2))),
+      "checksum diff text");
+    var dg = nous_lock_diff(lk_one("p", "1", SOURCE_SYSTEM, s1), lk_one("p", "1", SOURCE_SYSTEM, 0));
+    assert_eq(nous_ld_kind(lk_d0(dg)), NOUS_LOCK_CHECKSUM_CHANGED, "a checksum that is gone is a change");
+    assert_eq(nous_ld_new(lk_d0(dg)), 0, "new is 0");
+    assert(str_eq(nous_lock_diff_text(lk_d0(dg)), j4("p: checksum ", lk_sum(LK_H1), " -> none", "")),
+      "gone reads as none");
+    var gj = nous_lock_diff_from_json(nous_lock_diff_to_json(lk_d0(dg)));
+    assert_eq(nous_ld_kind(gj), NOUS_LOCK_CHECKSUM_CHANGED, "diff JSON: kind 7");
+    assert_eq(nous_ld_new(gj), 0, "diff JSON: null new");
+    assert_eq(vec_len(nous_lock_diff(lk_one("p", "1", SOURCE_SYSTEM, 0), lk_one("p", "1", SOURCE_SYSTEM, s1))), 0,
+      "a checksum the old lock did not pin is not a change");
+    var dv = nous_lock_diff(lk_one("p", "1", SOURCE_SYSTEM, s1), lk_one("p", "2", SOURCE_SYSTEM, s2));
+    assert_eq(vec_len(dv), 1, "a new version: no separate checksum change");
+    assert_eq(nous_ld_kind(lk_d0(dv)), NOUS_LOCK_VERSION_CHANGED, "VERSION_CHANGED only");
+    var ds = nous_lock_diff(lk_one("p", "1", SOURCE_SYSTEM, s1), lk_one("p", "1", SOURCE_COMMUNITY, s2));
+    assert_eq(vec_len(ds), 1, "a new source: no separate checksum change");
+    assert_eq(nous_ld_kind(lk_d0(ds)), NOUS_LOCK_SOURCE_CHANGED, "SOURCE_CHANGED only");
+}
+
+# 1.7.3: locked resolution checks recipe checksums.
+fn lk_recipe(dir, sha): i64 {
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "[package]\nname = \"rc-b\"\nversion = \"2.0\"\n\n[source]\nsha256 = \"");
+    str_builder_add_cstr(sb, sha);
+    str_builder_add_cstr(sb, "\"\n");
+    write_text(path_join(dir, str_from("rc-b.cyml")), _nous_cstr(str_builder_build(sb)));
+    return 0;
+}
+fn test_lockfile_checksum_drift() {
+    test_group("lockfile_checksum_drift");
+    var z = mkdir_test();
+    var base = path_join(z, str_from("base"));
+    mkdir_str(base);
+    write_text(path_join(base, str_from("rc-a.cyml")),
+      "[package]\nname = \"rc-a\"\nversion = \"1.0\"\n\n[source]\nsha256 = \"\"\n\n[depends]\nruntime = [\"rc-b\"]\n");
+    lk_recipe(base, LK_H1);
+    var d = mkdir_test();
+    var c = mkdir_test();
+    var r_t, r = resolver_new(d, c);
+    resolver_with_recipes(r, recipe_db_load(z));
+    var roots = vec_new();
+    vec_push(roots, str_from("rc-a"));
+    var pt, plan = resolver_resolve_all_with_recipes(r, roots);
+    var lt, lk = nous_lock_from_plan(plan, roots);
+    assert(lk_eq(nous_lp_checksum(nous_lock_get(lk, str_from("rc-b"))), str_from(lk_sum(LK_H1))),
+      "a recipe's sha256 is locked");
+    assert_eq(nous_lp_checksum(nous_lock_get(lk, str_from("rc-a"))), 0, "an empty sha256 locks none");
+    var text = nous_lock_to_str(lk);
+    var tt, locked = nous_lock_parse(text);
+    var ot, op = nous_resolve_locked(r, locked);
+    assert_eq(is_ok(ot), 1, "same checksum: locked resolution passes");
+    # A 1.7.2 lock has no checksums: it still holds.
+    var old = vec_new();
+    var pk = nous_lock_pkgs(locked);
+    var i = 0;
+    while (i < vec_len(pk)) {
+        var p = vec_get(pk, i);
+        vec_push(old, nous_lock_pkg_new(nous_lp_name(p), nous_lp_version(p), nous_lp_source(p), nous_lp_deps(p)));
+        i = i + 1;
+    }
+    var ol = nous_lock_new(1, nous_lock_roots(locked), old);
+    var o2t, o2 = nous_resolve_locked(r, ol);
+    assert_eq(is_ok(o2t), 1, "a lock without checksums (1.7.2) still passes");
+    # The recipe's source hash changes, the version does not.
+    lk_recipe(base, LK_H2);
+    resolver_with_recipes(r, recipe_db_load(z));
+    var dt, de = nous_resolve_locked(r, locked);
+    assert_eq(is_err_result(dt), 1, "other bytes under the same version are drift");
+    assert_eq(ne_kind(de), NOUS_ERR_LOCK_MISMATCH, "kind LOCK_MISMATCH");
+    assert(str_contains(ne_detail(de), str_from(j4c("rc-b: checksum ", lk_sum(LK_H1), " -> ", lk_sum(LK_H2)))),
+      "says which checksum moved");
+    var d2t, d2 = nous_resolve_locked(r, ol);
+    assert_eq(is_ok(d2t), 1, "the 1.7.2 lock pinned no bytes, so it still passes");
+    # The hash is removed from the recipe.
+    lk_recipe(base, "");
+    resolver_with_recipes(r, recipe_db_load(z));
+    var gt, ge = nous_resolve_locked(r, locked);
+    assert_eq(is_err_result(gt), 1, "a checksum that is gone is drift");
+    assert(str_contains(ne_detail(ge), str_from(j4c("rc-b: checksum ", lk_sum(LK_H1), " -> none", ""))), "says none");
     rm_rf(z); rm_rf(d); rm_rf(c);
 }
 
@@ -2769,6 +2983,8 @@ fn main() {
     test_lockfile_parse();
     test_lockfile_from_plan();
     test_lockfile_recipes();
+    test_lockfile_checksums();
+    test_lockfile_checksum_drift();
     test_deb_versions();
     test_conflicts_sound();
     test_json_roundtrip_all();

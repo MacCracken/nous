@@ -74,7 +74,7 @@ on drift, and how apt is treated. The rest are defaults, recorded here.
     package name; a missing version, source or dependency list; an unknown
     source; a dependency or root that is not a locked package.
   - Unknown keys are ignored, so 1.7.3 can add an artifact checksum without
-    breaking 1.7.2 readers.
+    breaking 1.7.2 readers. (1.7.3 did: `checksum`, ADR 0009.)
   - Input in any order is accepted and normalized to byte order.
 - **Locked resolution uses the recipe DB when the resolver has one attached**
   (`resolver_with_recipes`), as `resolver_resolve_all_with_recipes` does.
@@ -93,4 +93,6 @@ on drift, and how apt is treated. The rest are defaults, recorded here.
   `NOUS_ERR_LOCK_MISMATCH` (10). A consumer matching kinds exhaustively must
   handle them.
 - **1.7.3 adds integrity:** an artifact hash per node, which locked mode then
-  checks. The format reserves room for it through the unknown-key rule.
+  checks. The format reserves room for it through the unknown-key rule. That
+  is [ADR 0009](0009-lockfile-checksums.md): an optional `checksum` key, with
+  the format still at version 1.

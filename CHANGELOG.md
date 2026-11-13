@@ -5,6 +5,149 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.3] - 2026-11-12
+
+**Lockfile integrity.** A lock now pins the bytes as well as the version.
+When a source publishes a hash, the lock records it and locked resolution
+checks it, so "same version, other bytes" is drift. The maintainer chose
+where marketplace hashes come from; the rest are defaults. All of it is in
+[ADR 0009](docs/adr/0009-lockfile-checksums.md).
+
+| Source | Checksum |
+|---|---|
+| system (apt) | the candidate stanza's `SHA256`, the `.deb`'s digest |
+| community (recipe) | the recipe's `sha256`, its source archive's digest; none when empty (43 of 563 zugot recipes) |
+| marketplace, flutter-app | none until the 1.8.x native index (maintainer decision) |
+
+### Added
+
+- **`ResolvedPkg` gets an artifact checksum:**
+  - `nous_rp_checksum(p)` reads it: a `"sha256:<hex>"` Str, or 0 for none;
+  - `nous_rp_set_checksum(p, c)` sets it;
+  - the struct grows from 56 to 64 bytes. `resolved_pkg_new` keeps its
+    seven arguments and starts the field at 0.
+  - **Filled in by:** `sysdb_info` / `sysdb_info_many` from apt's `SHA256`
+    field, and `recipe_to_resolved` from the recipe's `sha256`.
+  - Its JSON gains `"checksum"` (a string, or `null`).
+- **A `checksum` key in the lockfile**, written between `source` and
+  `dependencies` and only when there is one, as Cargo.lock does. The format
+  version stays 1, so a 1.7.2 reader ignores the line.
+  - `nous_lp_checksum(p)` reads it.
+  - `nous_lock_pkg_new_full(name, version, source, deps, checksum)` builds a
+    package with one. `nous_lock_pkg_new` keeps its four arguments and locks
+    none.
+  - The lock JSON carries it too.
+- **`NOUS_LOCK_CHECKSUM_CHANGED` (7)**, a new `LockDiffKind`. Its text is
+  `curl: checksum sha256:… -> sha256:…`, or `-> none` when the hash is gone.
+  A consumer that matches `LockDiffKind` exhaustively must handle it.
+- **ADR 0009**, "Artifact checksums in the lockfile".
+
+### Checksum semantics (ADR 0009)
+
+- **The form is `sha256:` and 64 lowercase hex digits**, the OCI image spec's
+  digest grammar.
+  - A published digest is trimmed and lowercased.
+  - Anything that is not 64 hex digits gives no checksum. That includes an
+    empty recipe `sha256`, and an apt stanza that only dpkg's status file
+    knows.
+- **Parsing:** `checksum` is optional. When present it must be in exactly
+  that form, or `NOUS_ERR_INVALID_LOCKFILE` names the package. Locking a plan
+  refuses a malformed one too.
+- **Drift** is reported when the old lock has a checksum, the version and
+  source are unchanged, and the new checksum differs or is missing.
+  - A new version or source is reported on its own, without a second entry
+    for the checksum.
+  - **A checksum the old lock lacks is not drift**, so every 1.7.2 lock keeps
+    passing `nous_resolve_locked`. Regenerate it to pin the bytes. Cargo
+    refuses this case, but here that would break 1.7.2 locks in a minor
+    release.
+  - So `nous_lock_diff(was, now)` is one-sided. Compare both ways for
+    equality.
+  - **apt checksums need apt's package lists.** Without them, `apt-cache
+    show` has no `SHA256`, and a locked apt package reads `-> none`, which
+    is drift.
+- **nous still hashes nothing.** apt, takumi and ark check the downloaded
+  bytes; nous pins the hash the source published.
+
+### Performance
+
+Measured as medians of 5 alternating rounds against the 1.7.2 build, in
+two separate runs. In the same runs, benches whose code did not change moved
+by up to ±10%, so read small numbers as noise.
+
+| Bench | 1.7.2 | 1.7.3 | Change | Why |
+|---|---|---|---|---|
+| `apt_parse_info` (new; a 17-field curl stanza) | 8.04 µs | 8.61 µs | +7% | reading, checking and lowercasing the digest (7-run A/B) |
+| `serde_roundtrip` | 6.69 µs | 7.27 µs | +9% to +11% | the new `"checksum"` JSON field |
+| `lock_write_parse_100` | 406 µs | 413 µs | +2% to +4% | one more key lookup per package |
+| `lock_diff_100` | 13.3 µs | 13.5 µs | +1% | the checksum compare |
+| `resolve_mkt_*`, `strat_*` | | | +1% to +3% | the 64-byte ResolvedPkg |
+| `lock_checksum_rw_100` (new) | | 549 µs | | a lock with a checksum on all 100 packages |
+
+- **Two first drafts were too slow, and were fixed before release:**
+  - **The digest:** built through a string builder, it cost more than the
+    rest of the stanza's parse (+27%). It is now filled into a 71-byte
+    buffer in place.
+  - **The diff:** calling two accessors for every package cost +5.6%. It
+    now reads the field in place, and only when the old lock has a
+    checksum.
+- **In context:** apt spends about 430 ms per `apt-cache` call, so +0.6 µs
+  per apt package does not show in a real resolution.
+- **Release binary:** 46,504 → 46,696 B.
+
+### Verification
+
+- **Tests:** 786 passed, 0 failed (+68 assertions). They cover:
+  - the digest helper: case, trimming, length and non-hex input;
+  - apt stanzas:
+    - SHA256 taken, not MD5sum;
+    - only the first stanza's checksum is used;
+    - a stanza dpkg's status file alone knows, or a malformed digest, gives
+      none;
+    - batch parsing;
+  - the ResolvedPkg JSON roundtrip, with `null` for none;
+  - the exact lockfile text, with a `checksum` line only where there is one;
+  - roundtrips through text and through JSON;
+  - 7 parse cases;
+  - refusing an unlockable checksum;
+  - every diff rule: a changed, gone or newly gained checksum, a changed
+    version, a changed source;
+  - with the recipe DB:
+    - a recipe whose `sha256` changes or is removed under the same version
+      is drift;
+    - a lock without checksums (1.7.2) still passes.
+- **Mutation checks:** 27 targeted breaks. Each one fails the suite on a
+  named assertion: none of them gets through as a crash. Five also trip
+  `fuzz_lock` (invariants 54, 55, 57 and 58), and one trips `fuzz_apt`
+  (invariant 46).
+- **Fuzzing:**
+  - `fuzz_lock` gives its random locks random checksums, and its seeds
+    include a checksum line;
+  - its equality invariants now check both directions;
+  - new invariant 58: every parsed checksum is in the lockfile form;
+  - `fuzz_apt` seeds an uppercase SHA256, with new invariant 46: a checksum
+    taken from apt output is none or in the lockfile form;
+  - all 6 harnesses pass under `--poison=ab`.
+- **Gates:** fmt, lint, vet, deny, the doc gate and the Result-annotation
+  check are clean, and `dist/nous.cyr` is regenerated (v1.7.3).
+- **Against real apt output:** stanzas captured from debian:12 were run
+  through nous's parser.
+  - After `apt-get update`, curl, libc6, bash and zlib1g each got exactly
+    their stanza's `SHA256`.
+  - With no apt lists, bash and coreutils (known only to dpkg's status
+    file) got none.
+  - So a lock made with apt lists fails locked mode on a host without them:
+    run `apt-get update` first (ADR 0009, Consequences).
+
+### Changed
+
+- **Doc fix in `src/types.cyr`:** the Constraint layout said 40 bytes, but it
+  has been 56 since 1.7.1.
+- **`SECURITY.md`:**
+  - only 1.7.x is supported (it listed 0.1.x);
+  - the security practices described the Rust port (`cargo audit`,
+    `std::process::Command`), and now describe what nous does today.
+
 ## [1.7.2] - 2026-11-12
 
 **The lockfile.** A resolution can now be pinned and checked later: the same

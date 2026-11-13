@@ -9,10 +9,13 @@
 #   51  the text of a parsed lock parses again
 #   52  ... and writes the same text (to_str is a fixed point)
 #   53  a lock does not differ from itself
-#   54  ... nor from its own reparse
-#   55  ... nor from its JSON roundtrip
+#   54  ... nor from its own reparse, either way round
+#   55  ... nor from its JSON roundtrip, either way round
 #   56  every dependency and root of a parsed lock is a locked package
-#   57  a random valid lock survives to_str + parse unchanged
+#   57  a random valid lock survives to_str + parse unchanged (either way)
+#   58  every checksum of a parsed lock is "sha256:<64 lowercase hex>" (1.7.3)
+# The diff compares a checksum only when the first lock has one (ADR 0009), so
+# equality takes both directions.
 include "src/types.cyr"
 include "src/util.cyr"
 include "src/error.cyr"
@@ -54,12 +57,15 @@ fn _lk_check(lock): i64 {
     if (is_err_result(pt) == 1) { syscall(60, 51); }
     if (str_eq(nous_lock_to_str(again), t1) == 0) { syscall(60, 52); }
     if (vec_len(nous_lock_diff(lock, lock)) != 0) { syscall(60, 53); }
-    if (vec_len(nous_lock_diff(lock, again)) != 0) { syscall(60, 54); }
+    if (vec_len(nous_lock_diff(lock, again)) + vec_len(nous_lock_diff(again, lock)) != 0) { syscall(60, 54); }
     var js = nous_lock_from_json(nous_lock_to_json(lock));
-    if (js == 0 || vec_len(nous_lock_diff(lock, js)) != 0) { syscall(60, 55); }
+    if (js == 0) { syscall(60, 55); }
+    if (vec_len(nous_lock_diff(lock, js)) + vec_len(nous_lock_diff(js, lock)) != 0) { syscall(60, 55); }
     var pkgs = nous_lock_pkgs(lock);
     var i = 0;
     while (i < vec_len(pkgs)) {
+        var sum = nous_lp_checksum(vec_get(pkgs, i));
+        if (sum != 0 && _nous_checksum_ok(sum) == 0) { syscall(60, 58); }
         var ds = nous_lp_deps(vec_get(pkgs, i));
         var j = 0;
         while (j < vec_len(ds)) {
@@ -93,6 +99,20 @@ fn _lk_val(min): i64 {
     return str_builder_build(sb);
 }
 
+# A random checksum: none, or "sha256:" and 64 random lowercase hex digits.
+fn _lk_sum(): i64 {
+    if (fz_one_in(2) == 1) { return 0; }
+    var sb = str_builder_new();
+    str_builder_add_cstr(sb, "sha256:");
+    var i = 0;
+    while (i < 64) {
+        var v = fz_below(16);
+        if (v < 10) { str_builder_putc(sb, 48 + v); } else { str_builder_putc(sb, 87 + v); }
+        i = i + 1;
+    }
+    return str_builder_build(sb);
+}
+
 # A random valid lock: unique names, deps and roots among them.
 fn _lk_random(): i64 {
     var n = fz_below(6);
@@ -116,7 +136,8 @@ fn _lk_random(): i64 {
             vec_push(deps, vec_get(names, fz_below(vec_len(names))));
             k = k - 1;
         }
-        vec_push(pkgs, nous_lock_pkg_new(vec_get(names, i), _lk_val(0), fz_below(5), _nous_sorted_unique(deps)));
+        var nd = _nous_sorted_unique(deps);
+        vec_push(pkgs, nous_lock_pkg_new_full(vec_get(names, i), _lk_val(0), fz_below(5), nd, _lk_sum()));
         i = i + 1;
     }
     _nous_sort_by_key(pkgs, &nous_lp_name);
@@ -130,7 +151,7 @@ fn _lk_case(k): i64 {
         var rl = _lk_random();
         var pt, back = nous_lock_parse(nous_lock_to_str(rl));
         if (is_err_result(pt) == 1) { syscall(60, 57); }
-        if (vec_len(nous_lock_diff(rl, back)) != 0) { syscall(60, 57); }
+        if (vec_len(nous_lock_diff(rl, back)) + vec_len(nous_lock_diff(back, rl)) != 0) { syscall(60, 57); }
         _lk_check(back);
         return 0;
     }
@@ -150,11 +171,11 @@ fn main(): i64 {
     vec_push(_lk_seeds, j4c(
         "# nous lockfile\nversion = 1\nroots = [\n    \"acme/app\",\n]\n\n[[package]]\nname = \"acme/app\"\n",
         "version = \"1.0.0-rc.1\"\nsource = \"marketplace\"\ndependencies = [\n    \"libc6\",\n]\n",
-        "\n[[package]]\nname = \"libc6\"\nversion = \"2.36-9+deb12u7\"\nsource = \"system\"\ndependencies = []\n",
-        ""));
+        "checksum = \"sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"\n",
+        "\n[[package]]\nname = \"libc6\"\nversion = \"2.36-9+deb12u7\"\nsource = \"system\"\ndependencies = []\n"));
     vec_push(_lk_seeds, j4c(
         "version = 1\nroots = [\"b\", \"a\"]\n[[package]]\nname = \"b\"\nversion = \"2\"\n",
-        "source = \"community\"\ndependencies = [\"a\"]\nchecksum = \"x\"\n",
+        "source = \"community\"\ndependencies = [\"a\"]\nsignature = \"x\"\n",
         "[[package]]\nname = \"a\"\nversion = \"\"\nsource = \"flutter-app\"\n",
         "dependencies = []\n"));
     vec_push(_lk_seeds, "version = 1\nroots = []\n");

@@ -1,7 +1,8 @@
 # nous/lock — the lockfile: generate, parse, diff, locked resolution (1.7.2)
 # ===================================================================
 # ADR 0008. A lock records a resolved graph: its roots and every package
-# (name, version, source, dependencies). nous has one candidate per name, so
+# (name, version, source, dependencies, and since 1.7.3 the artifact checksum
+# its source publishes, ADR 0009). nous has one candidate per name, so
 # a lock pins and verifies: nous_resolve_locked refuses a resolution that
 # differs from the lock (Err(NOUS_ERR_LOCK_MISMATCH)), and nous_lock_diff says
 # what would change without failing. The file format is CYML in the
@@ -9,7 +10,8 @@
 # nous does no file I/O: the consumer (ark) picks the path and writes it.
 #
 # NousLock:     lk_version(0) lk_roots(8) lk_pkgs(16)                = 24 bytes
-# NousLockPkg:  lp_name(0) lp_version(8) lp_source(16) lp_deps(24)    = 32 bytes
+# NousLockPkg:  lp_name(0) lp_version(8) lp_source(16) lp_deps(24)
+#               lp_checksum(32)                                       = 40 bytes (1.7.3)
 # NousLockDiff: ld_kind(0) ld_name(8) ld_old(16) ld_new(24)           = 32 bytes
 
 # The only lockfile format version (1.7.2).
@@ -24,6 +26,7 @@ enum LockDiffKind {
     NOUS_LOCK_DEPS_CHANGED = 4;
     NOUS_LOCK_ROOT_ADDED = 5;
     NOUS_LOCK_ROOT_REMOVED = 6;
+    NOUS_LOCK_CHECKSUM_CHANGED = 7;   # 1.7.3: same version and source, other bytes (or none now)
 }
 
 # ---- types ------------------------------------------------------------
@@ -41,11 +44,16 @@ fn nous_lock_roots(l): i64 { return load64(l + 8); }
 # NousLock field: the locked packages, a vec of NousLockPkg in byte order of name.
 fn nous_lock_pkgs(l): i64 { return load64(l + 16); }
 
-# NousLockPkg constructor: name, version (Str), source (PackageSource), deps (vec of Str).
-fn nous_lock_pkg_new(name, version, source, deps): i64 {
-    var p = alloc(32);
+# NousLockPkg constructor with a checksum: a "sha256:<hex>" Str, or 0 for none (1.7.3).
+fn nous_lock_pkg_new_full(name, version, source, deps, checksum): i64 {
+    var p = alloc(40);
     store64(p, name); store64(p + 8, version); store64(p + 16, source); store64(p + 24, deps);
+    store64(p + 32, checksum);
     return p;
+}
+# NousLockPkg constructor: name, version (Str), source (PackageSource), deps (vec of Str); no checksum.
+fn nous_lock_pkg_new(name, version, source, deps): i64 {
+    return nous_lock_pkg_new_full(name, version, source, deps, 0);
 }
 # NousLockPkg field: package name (Str).
 fn nous_lp_name(p): i64 { return load64(p); }
@@ -55,6 +63,8 @@ fn nous_lp_version(p): i64 { return load64(p + 8); }
 fn nous_lp_source(p): i64 { return load64(p + 16); }
 # NousLockPkg field: its dependencies on other locked packages, a byte-sorted vec of Str.
 fn nous_lp_deps(p): i64 { return load64(p + 24); }
+# NousLockPkg field: the artifact checksum ("sha256:<hex>" Str), or 0 when none is locked (1.7.3).
+fn nous_lp_checksum(p): i64 { return load64(p + 32); }
 
 fn _nous_ld_new(kind, name, was, now): i64 {
     var p = alloc(32);
@@ -67,7 +77,7 @@ fn nous_ld_kind(d): i64 { return load64(d); }
 fn nous_ld_name(d): i64 { return load64(d + 8); }
 # NousLockDiff field: the old value as text (Str), or 0 for an addition.
 fn nous_ld_old(d): i64 { return load64(d + 16); }
-# NousLockDiff field: the new value as text (Str), or 0 for a removal.
+# NousLockDiff field: the new value as text (Str), or 0 for a removal (or a checksum that is gone).
 fn nous_ld_new(d): i64 { return load64(d + 24); }
 
 # The NousLockPkg named Str name in a lock (binary search), or 0.
@@ -163,8 +173,10 @@ fn _nous_lock_err(name, why): Result {
 # Every node of a ResPlan becomes a locked package. Its dependencies are its
 # edges to other nodes: a name apt could not show (nous_pl_unresolved) is
 # apt's to resolve and is not locked. Roots are copied, sorted and deduped,
-# and each must be a node. Err(NOUS_ERR_INVALID_LOCKFILE) when a name or
-# version holds a byte a lockfile cannot (see _nous_lock_ok).
+# and each must be a node. A node's checksum (nous_rp_checksum) is locked
+# with it. Err(NOUS_ERR_INVALID_LOCKFILE) when a name or version holds a byte
+# a lockfile cannot (see _nous_lock_ok), or a checksum is not
+# "sha256:<64 lowercase hex digits>".
 #
 # Ok(NousLock) recording ResPlan plan and its roots (vec of Str); Err when a value cannot be locked.
 fn nous_lock_from_plan(plan, roots): Result {
@@ -186,6 +198,10 @@ fn nous_lock_from_plan(plan, roots): Result {
             return _nous_lock_err(name, "a package name a lockfile cannot hold");
         }
         if (_nous_lock_ok(ver) == 0) { return _nous_lock_err(name, "a version a lockfile cannot hold"); }
+        var sum = nous_rp_checksum(pkg);
+        if (sum != 0 && _nous_checksum_ok(sum) == 0) {
+            return _nous_lock_err(name, "a checksum that is not sha256:<64 lowercase hex digits>");
+        }
         var edges = vec_new();
         var deps = rp_deps(pkg);
         var j = 0;
@@ -194,7 +210,7 @@ fn nous_lock_from_plan(plan, roots): Result {
             if (map_has(nodes, _nous_cstr(dn)) == 1) { vec_push(edges, dn); }
             j = j + 1;
         }
-        vec_push(pkgs, nous_lock_pkg_new(name, ver, rp_src(pkg), _nous_sorted_unique(edges)));
+        vec_push(pkgs, nous_lock_pkg_new_full(name, ver, rp_src(pkg), _nous_sorted_unique(edges), sum));
         i = i + 1;
     }
     _nous_sort_by_key(pkgs, &nous_lp_name);
@@ -229,7 +245,9 @@ fn _nous_lock_put_arr(sb, key, v): i64 {
 }
 
 # The lockfile text (CYML, ADR 0008): byte-stable for the same lock, with
-# packages, roots and dependencies in byte order and no timestamp.
+# packages, roots and dependencies in byte order and no timestamp. A
+# package's `checksum` line (1.7.3) is written only when it has one, as
+# Cargo.lock does.
 #
 # Lockfile text (Str) of a NousLock; inverse of nous_lock_parse.
 fn nous_lock_to_str(lock): i64 {
@@ -250,6 +268,12 @@ fn nous_lock_to_str(lock): i64 {
         str_builder_add_cstr(sb, "\"\nsource = \"");
         str_builder_add(sb, source_to_str(nous_lp_source(p)));
         str_builder_add_cstr(sb, "\"\n");
+        var cs = nous_lp_checksum(p);
+        if (cs != 0) {
+            str_builder_add_cstr(sb, "checksum = \"");
+            str_builder_add(sb, cs);
+            str_builder_add_cstr(sb, "\"\n");
+        }
         _nous_lock_put_arr(sb, "dependencies", nous_lp_deps(p));
         i = i + 1;
     }
@@ -279,9 +303,11 @@ fn _nous_lock_arr(raw): i64 {
 
 # Parse lockfile text (ADR 0008). Strict about what it needs: format version 1, every
 # [[package]] with a name (unique), version, source (a known one) and
-# dependency list, and every dependency and root a locked package. Lenient
-# about the rest: unknown keys and sections are ignored (1.7.3 adds one), and
-# any order is accepted and put in byte order. Values are copied out of text.
+# dependency list, and every dependency and root a locked package. A
+# `checksum` (1.7.3, ADR 0009) is optional; when present it must be
+# "sha256:<64 lowercase hex digits>". Lenient about the rest: unknown keys
+# and sections are ignored, and any order is accepted and put in byte order.
+# Values are copied out of the text.
 #
 # Ok(NousLock) from lockfile text (Str), or Err(NOUS_ERR_INVALID_LOCKFILE) saying what is wrong.
 fn nous_lock_parse(text): Result {
@@ -320,7 +346,14 @@ fn nous_lock_parse(text): Result {
             if (src < 0) { return _nous_lock_err(nm, "an unknown `source`"); }
             var draw = cyml_get(pairs, "dependencies");
             if (draw == 0) { return _nous_lock_err(nm, "no `dependencies`"); }
-            vec_push(pkgs, nous_lock_pkg_new(nm, ver, src, _nous_sorted_unique(_nous_lock_arr(draw))));
+            var sum = cyml_get(pairs, "checksum");
+            if (sum != 0) {
+                if (_nous_checksum_ok(sum) == 0) {
+                    return _nous_lock_err(nm, "a `checksum` that is not sha256:<64 lowercase hex digits>");
+                }
+                sum = str_clone(sum);
+            }
+            vec_push(pkgs, nous_lock_pkg_new_full(nm, ver, src, _nous_sorted_unique(_nous_lock_arr(draw)), sum));
         }
         i = i + 1;
     }
@@ -352,8 +385,14 @@ fn nous_lock_parse(text): Result {
 
 # How lock `now` differs from lock `was`: root changes first, then package
 # changes in byte order of name. For a package in both, the version, the
-# source and the dependency list are compared, in that order. Empty when
-# they lock the same graph.
+# source, the checksum and the dependency list are compared, in that order.
+# Empty when they lock the same graph.
+#
+# The checksum (1.7.3, ADR 0009) is compared only when `was` locks one, and
+# only when the version and the source are unchanged (a new version is new
+# bytes anyway). A checksum `now` lacks is a change. One `was` lacks is not:
+# nothing about the bytes was pinned, so a 1.7.2 lock still holds. That makes
+# the diff one-sided; nous_lock_diff(b, a) shows what `a` alone pins.
 #
 # The differences from NousLock `was` to `now`: a vec of NousLockDiff (empty when equal).
 fn nous_lock_diff(was, now): i64 {
@@ -397,12 +436,24 @@ fn nous_lock_diff(was, now): i64 {
             var a = vec_get(pa, i);
             var b = vec_get(pb, j);
             var n = nous_lp_name(a);
+            var same = 1;
             if (str_eq(nous_lp_version(a), nous_lp_version(b)) == 0) {
+                same = 0;
                 vec_push(out, _nous_ld_new(NOUS_LOCK_VERSION_CHANGED, n, nous_lp_version(a), nous_lp_version(b)));
             }
             if (nous_lp_source(a) != nous_lp_source(b)) {
+                same = 0;
                 vec_push(out, _nous_ld_new(NOUS_LOCK_SOURCE_CHANGED, n,
                     source_to_str(nous_lp_source(a)), source_to_str(nous_lp_source(b))));
+            }
+            # lp_checksum read in place: nous_lock_diff is per package, and
+            # a lock without checksums should not pay for two calls each.
+            var sa = load64(a + 32);
+            if (same == 1 && sa != 0) {
+                var sb = load64(b + 32);
+                if (sb == 0 || str_eq(sa, sb) == 0) {
+                    vec_push(out, _nous_ld_new(NOUS_LOCK_CHECKSUM_CHANGED, n, sa, sb));
+                }
             }
             if (_nous_strs_eq(nous_lp_deps(a), nous_lp_deps(b)) == 0) {
                 vec_push(out, _nous_ld_new(NOUS_LOCK_DEPS_CHANGED, n,
@@ -435,10 +486,12 @@ fn nous_lock_diff_text(d): i64 {
     } else {
         if (k == NOUS_LOCK_VERSION_CHANGED) { str_builder_add_cstr(sb, ": version "); }
         elif (k == NOUS_LOCK_SOURCE_CHANGED) { str_builder_add_cstr(sb, ": source "); }
+        elif (k == NOUS_LOCK_CHECKSUM_CHANGED) { str_builder_add_cstr(sb, ": checksum "); }
         else { str_builder_add_cstr(sb, ": dependencies "); }
         str_builder_add(sb, nous_ld_old(d));
         str_builder_add_cstr(sb, " -> ");
-        str_builder_add(sb, nous_ld_new(d));
+        if (nous_ld_new(d) == 0) { str_builder_add_cstr(sb, "none"); }
+        else { str_builder_add(sb, nous_ld_new(d)); }
     }
     return str_builder_build(sb);
 }
@@ -503,6 +556,7 @@ fn nous_lock_to_json(lock): i64 {
         _nj_field_str(sb, ",\"version\":", nous_lp_version(p));
         str_builder_add_cstr(sb, ",\"source\":");
         str_builder_add_cstr(sb, source_json(nous_lp_source(p)));
+        _nj_field_str(sb, ",\"checksum\":", nous_lp_checksum(p));
         str_builder_add_cstr(sb, ",\"dependencies\":");
         str_builder_add(sb, json_str_vec(nous_lp_deps(p)));
         str_builder_add_cstr(sb, "}");
@@ -528,8 +582,9 @@ fn nous_lock_from_json(data): i64 {
             if (bayan_json_v_is_obj(e) == 1) {
                 var nm = _nj_str(e, "name");
                 if (nm != 0) {
-                    vec_push(pkgs, nous_lock_pkg_new(nm, _nj_or_empty(_nj_str(e, "version")),
-                        source_from_json(_nj_str(e, "source")), _nous_sorted_unique(_nj_str_vec(e, "dependencies"))));
+                    vec_push(pkgs, nous_lock_pkg_new_full(nm, _nj_or_empty(_nj_str(e, "version")),
+                        source_from_json(_nj_str(e, "source")), _nous_sorted_unique(_nj_str_vec(e, "dependencies")),
+                        _nj_str(e, "checksum")));
                 }
             }
             i = i + 1;

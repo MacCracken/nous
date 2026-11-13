@@ -120,6 +120,7 @@ fn resolved_to_json(pkg): i64 {
     str_builder_add(sb, json_str_vec(rp_deps(pkg)));
     str_builder_add_cstr(sb, ",\"trusted\":");
     str_builder_add_cstr(sb, bool_json(rp_trust(pkg)));
+    _nj_field_str(sb, ",\"checksum\":", nous_rp_checksum(pkg));
     str_builder_add_cstr(sb, "}");
     return str_builder_build(sb);
 }
@@ -127,9 +128,10 @@ fn resolved_to_json(pkg): i64 {
 fn _nj_resolved(o): i64 {
     var name = _nj_str(o, "name");
     if (name == 0) { return 0; }
-    return resolved_pkg_new(name, _nj_or_empty(_nj_str(o, "version")),
+    var p = resolved_pkg_new(name, _nj_or_empty(_nj_str(o, "version")),
       source_from_json(_nj_str(o, "source")), _nj_or_empty(_nj_str(o, "description")),
       _nj_int(o, "size_bytes"), _nj_str_vec(o, "dependencies"), _nj_bool(o, "trusted"));
+    return nous_rp_set_checksum(p, _nj_str(o, "checksum"));
 }
 
 # ResolvedPkg from JSON Str data (as resolved_to_json writes); 0 when not a valid object.

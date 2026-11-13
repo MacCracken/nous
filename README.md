@@ -33,7 +33,7 @@ Nous supports configurable resolution order:
 | Type | Description |
 |------|-------------|
 | Resolver | Main resolver engine — wraps system DB + marketplace registry |
-| ResolvedPkg | Resolution result (name, version, source, deps, trust status, size) |
+| ResolvedPkg | Resolution result (name, version, source, deps, trust status, size, artifact checksum) |
 | PackageSource | Where a package comes from (System, Marketplace, FlutterApp, Community, Unknown) |
 | Strategy | Resolution order preference |
 | SearchResult | Cross-source search results |
@@ -96,8 +96,8 @@ Nous uses heuristics to detect package source when no explicit source is provide
 
 ```bash
 cyrius build src/main.cyr build/nous    # compile
-cyrius test tests/nous.tcyr             # 718 assertions
-cyrius bench tests/nous.bcyr            # 26 benchmarks
+cyrius test tests/nous.tcyr             # 786 assertions
+cyrius bench tests/nous.bcyr            # 28 benchmarks
 cyrius fuzz --poison=ab tests/          # 6 fuzz harnesses
 ```
 

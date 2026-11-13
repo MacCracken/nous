@@ -203,3 +203,48 @@ fn _nous_read_file(path, cap): i64 {
 # mkdir(2) Str path with mode 0755; returns the syscall result (negative errno on failure).
 fn mkdir_str(path): i64 { sys_mkdir(_nous_cstr(path), 493); }
 
+# ===================================================================
+# Artifact checksums (1.7.3, ADR 0009)
+# ===================================================================
+
+# A checksum is "sha256:" then 64 lowercase hex digits. That is the OCI image
+# spec's digest grammar (`algorithm ":" encoded`; a sha256 encoded part
+# matches /[a-f0-9]{64}/). SHA-256 itself is FIPS 180-4. nous never hashes
+# anything: it carries the hash a source publishes (the SHA256 field of apt's
+# Packages index, a zugot recipe's `sha256`).
+#
+# The checksum Str "sha256:<hex, lowercased>" for a published hex digest (Str); 0 unless it is 64 hex digits.
+fn _nous_sha256_checksum(hex): i64 {
+    if (hex == 0) { return 0; }
+    var h = str_trim(hex);
+    if (str_len(h) != 64) { return 0; }
+    var d = str_data(h);
+    # Filled in place, not through a builder: 64 putc calls cost more than
+    # the rest of an apt stanza's parse (apt_parse_info bench).
+    var buf = alloc(71);
+    if (buf == 0) { return 0; }
+    memcpy(buf, "sha256:", 7);
+    var i = 0;
+    while (i < 64) {
+        var c = load8(d + i);
+        if (c >= 65 && c <= 70) { c = c + 32; }
+        if ((c < 48 || c > 57) && (c < 97 || c > 102)) { return 0; }
+        store8(buf + 7 + i, c);
+        i = i + 1;
+    }
+    return str_new(buf, 71);
+}
+
+# 1 when Str s is a checksum in the form nous writes ("sha256:" then 64 lowercase hex digits).
+fn _nous_checksum_ok(s): i64 {
+    if (s == 0 || str_len(s) != 71) { return 0; }
+    var d = str_data(s);
+    if (memeq(d, "sha256:", 7) == 0) { return 0; }
+    var i = 7;
+    while (i < 71) {
+        var c = load8(d + i);
+        if ((c < 48 || c > 57) && (c < 97 || c > 102)) { return 0; }
+        i = i + 1;
+    }
+    return 1;
+}

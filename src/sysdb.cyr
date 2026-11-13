@@ -213,6 +213,10 @@ fn _sysdb_parse_upgrades(output): i64 {
     return upd;
 }
 
+# 1.7.3: the stanza's `SHA256` (the .deb's digest in the Packages index; see
+# Debian's repository format) becomes the package's checksum. A package that
+# only dpkg's status file knows has none, and neither does a malformed one.
+#
 # `apt-cache show --no-all-versions NAME` → a ResolvedPkg from the FIRST
 # stanza, or 0 when there is no Version (a purely virtual name).
 fn _sysdb_parse_info(name, output): i64 {
@@ -223,6 +227,7 @@ fn _sysdb_parse_info(name, output): i64 {
     var version = 0;
     var desc = 0;
     var sz = 0;
+    var sum = 0;
     var deps = vec_new();
     var lines = str_split(output, 10);
     var li = 0;
@@ -246,12 +251,16 @@ fn _sysdb_parse_info(name, output): i64 {
             if (dv != 0) { _sysdb_dep_names(dv, deps); }
             var pv = _sysdb_field(line, "Pre-Depends: ");
             if (pv != 0) { _sysdb_dep_names(pv, deps); }
+            if (load8(str_data(line)) == 83) {                 # 'S': only then can it be SHA256
+                var hv = _sysdb_field(line, "SHA256: ");
+                if (hv != 0) { sum = _nous_sha256_checksum(hv); }
+            }
         }
         li = li + 1;
     }
     if (version == 0 || str_len(version) == 0) { return 0; }
     if (desc == 0) { desc = str_from(""); }
-    return resolved_pkg_new(name, version, SOURCE_SYSTEM, desc, sz, deps, 1);
+    return nous_rp_set_checksum(resolved_pkg_new(name, version, SOURCE_SYSTEM, desc, sz, deps, 1), sum);
 }
 
 # `apt-cache show --no-all-versions N1 N2 ...` (one stanza per name apt

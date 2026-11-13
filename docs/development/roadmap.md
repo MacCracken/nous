@@ -3,7 +3,7 @@
 What's next for nous. Shipped work is recorded in [CHANGELOG.md](../../CHANGELOG.md),
 not here.
 
-**Current state (1.7.2, cyrius 6.7.18).**
+**Current state (1.7.3, cyrius 6.7.18).**
 - **Resolution:** transitive resolution across system, marketplace, Flutter and
   community sources, with 4 strategies.
 - **Determinism:** byte-ordered everywhere; results never depend on the hash seed.
@@ -17,14 +17,15 @@ not here.
   Flutter updates (1.7.0, ADR 0006). Compound ranges, npm and Cargo forms
   (1.7.1, ADR 0007).
 - **Lockfile:** CYML in the Cargo.lock shape; locked resolution refuses any
-  drift (1.7.2, ADR 0008).
+  drift (1.7.2, ADR 0008). It also pins artifact checksums where the source
+  publishes one, apt's `SHA256` and a recipe's `sha256` (1.7.3, ADR 0009).
 - **Inputs:** the zugot recipe DB (all categories, duplicates reported), and
   manifests and JSON via bayan's parser.
 - **Plumbing:** complete child-output capture with a default idle deadline, and
   apt queries batched per breadth-first wave.
-- **Docs:** a one-line doc comment on every public fn (232), checked per module
+- **Docs:** a one-line doc comment on every public fn (268), checked per module
   in CI; every Result-returning fn is declared `: Result`.
-- **Size:** 16 modules, 718 assertions, 26 benchmarks, 6 fuzz harnesses
+- **Size:** 16 modules, 786 assertions, 28 benchmarks, 6 fuzz harnesses
   (`--poison=ab`), and a ~45 KB release smoke binary.
 
 ---
@@ -34,13 +35,6 @@ not here.
 One bite per release (CLAUDE.md task sizing). They are ordered by what each
 one builds on.
 
-- [ ] **1.7.3 — Lockfile integrity.** Every node, transitive ones included,
-      also records an artifact hash, and locked mode checks it. The 1.7.2
-      format already ignores unknown keys, so a 1.7.2 reader accepts a 1.7.3
-      lock. Locked mode already refuses an unlocked node (1.7.2). Open
-      question: where each source's hash comes from. A recipe has `sha256`,
-      apt has its `SHA256` field, and the marketplace manifest has none
-      (mela?).
 - [ ] **Constraint solving on recipe-level deps** (gated on zugot). zugot's
       `[depends]` lists carry names only (0 constrained entries in the tree), so
       nous has nothing to solve until zugot gains a versioned syntax. That is a
@@ -63,6 +57,12 @@ Today:
 - [ ] **`SOURCE_NATIVE`**: a source plus a resolver backend. It reads a **signed
       native index** and a **local content-addressed artifact store**, and
       resolves a name to its `.ark` by root hash, with no apt and no mela network.
+- [ ] **Checksums for marketplace and Flutter nodes** (ADR 0009). Since 1.7.3
+      they lock without one: nous's `installed/<pkg>/manifest.json` has no hash,
+      and mela's `package_hash` lives in its own `index.json`, under another
+      layout. The native index's entries carry a `.ark` root hash, which is the
+      checksum to lock (`sha256:<hex>`). That also settles which view of the
+      marketplace nous reads (ark v2 open question 4).
 - [ ] **Native-first strategy selector**, threaded through `src/sysdb.cyr` and
       `src/resolver.cyr`. The apt (`SOURCE_SYSTEM`) leg becomes **mode-gated behind
       ark's `system_backend`** instead of implicit, with apt fallback behind a
@@ -155,5 +155,18 @@ with a committed lock (1.7.x).
   It calls `nous_lock_from_plan` + `nous_lock_to_str` to write a lock, and
   `nous_lock_parse` + `nous_resolve_locked` for a locked install. Two new
   error kinds, 9 and 10, need handling if ark matches kinds exhaustively.
+- **ark → nous 1.7.3:** nothing breaks. 1.7.2 locks keep passing.
+  - **Locks gain checksums.** A regenerated lock has a `checksum` line for each
+    apt package and each recipe with a source hash, and locked mode then
+    refuses other bytes under the same version.
+  - **A new diff kind.** `NOUS_LOCK_CHECKSUM_CHANGED` (7) needs a case if ark
+    matches diff kinds exhaustively. The error kind is still
+    `NOUS_ERR_LOCK_MISMATCH`.
+  - **On Debian, the host needs apt's package lists** (`apt-get update`).
+    Without them, apt shows no `SHA256`, and a lock made with them reads as
+    drift.
+- **zugot:** 43 of 563 recipes have an empty `sha256`, so they lock no
+  checksum (1.7.3). Filling one in pins that recipe's bytes from the next
+  regenerated lock on.
 - **zugot:** the nous recipe (`marketplace/nous.cyml`) is still at 1.2.6. Bump it
   after each release tag, since it needs the release asset and its checksum.
