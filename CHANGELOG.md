@@ -5,6 +5,79 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.4] - 2026-11-13
+
+**`manifest_from_json` / `update_from_json` collide with mela; they are now `nous_*`. The
+bundle compiles for x86_64-agnos again.** No behaviour change on Linux. The bare names stay as
+deprecated aliases, and a consumer can leave them out. No toolchain change.
+
+### Fixed — ⛔ nous and mela could not be compiled into one program
+
+1.5.3 added `manifest_from_json(data)` and `update_from_json(data)`. mela has had both names for
+years, as `manifest_from_json(json: Str)` and `update_from_json(json: Str)`. cyrius has one flat
+namespace, so a program that includes both bundles defines each name twice:
+
+- **cyrius 6.6.20 – 6.7.17:** every call binds to whichever definition comes last, with a
+  `duplicate fn` warning, so one library's calls reach the other library's decoder.
+- **cyrius 6.7.18:** a duplicate whose parameter types differ is an error, so the build stops.
+
+ark is the only repo that vendors both. It was on nous 1.5.0 until now, so no ark release
+shipped the pair. It found the clash moving to nous 1.7.3 and mela 1.5.2.
+
+### Changed — the two decoders are namespaced
+
+| Was (1.5.3 – 1.7.3) | Now |
+|---|---|
+| `manifest_from_json(data)` | **`nous_manifest_from_json(data)`** |
+| `update_from_json(data)` | **`nous_update_from_json(data)`** |
+
+- Same signature, same body. `parse_manifest_file` and the tests, fuzz harness and bench call
+  the new names. Their `_to_json` inverses keep their names, because nothing collides with them.
+- **The bare names still work.** Each is a `#deprecated` alias that forwards, and each call site
+  warns with the replacement. They go in 2.0.0, with the other deprecated bare names.
+- **`NOUS_NO_BARE_JSON` leaves both aliases out.** A deprecated alias alone cannot fix this: the
+  alias is the collision. So a consumer that compiles mela beside nous defines it:
+
+  ```
+  [build]
+  defines = ["NOUS_NO_BARE_JSON"]
+
+  [test]
+  defines = ["NOUS_NO_BARE_JSON"]
+  ```
+
+  `[build] defines` does not reach `cyrius test` / `bench` / `fuzz` builds, so it goes in both.
+  Without the define, nous is unchanged for every other consumer.
+- ⚖️ Measured: across `src/` in every repo under `~/Repos`, the bare names are defined only by
+  nous and mela, and called only by nous, mela and ark. ark's one call
+  (`src/marketplace.cyr`, the marketplace `/latest` lookup) wants **mela's** `manifest_from_json`,
+  which is why the nous name is the one that moves.
+
+### Fixed — `dist/nous.cyr` did not compile for x86_64-agnos (since 1.5.3)
+
+distlib's verify warned about both, and ark's agnos cross-build failed on them:
+
+- **The idle deadline.** `nous_capture_n` calls `proc_timeout_ms` / `proc_set_timeout_ms`.
+  `lib/process_agnos.cyr` defines neither, on purpose: agnos verbs have no deadline, so a call
+  fails to compile rather than silently bounding nothing. On agnos, `nous_capture_n` now runs the
+  capture without one, as every capture ran before 1.5.3. Linux is unchanged.
+- **The no-follow size walk.** `_nous_dir_size` called the 2-argument Linux `sys_lstat`. agnos's
+  `lstat` (#102) takes the path's length and fills its own 48-byte record. There the mode is at
+  `STAT_MODE` (0) and the size at `STAT_SIZE` (16), not x86_64's 24 / 48. It now uses those on
+  agnos. Linux is unchanged.
+- Not fixed here: the older raw `syscall(SYS_STAT, …)` sites in `src/util.cyr` and
+  `src/command.cyr` compile for agnos but read x86_64 offsets. That is the roadmap's 2.0.0
+  portability item. distlib still names `SYS_STAT` / `sys_lstat` for Windows and aarch64, as
+  1.7.3 did.
+- `cyrius build --agnos src/main.cyr` builds again (485,320 B).
+
+### Docs
+
+- `docs/api.md`: the round-trip example uses the new names.
+- Roadmap: both names are on the 2.0.0 removal list. The 1.5.3 audit's "no other collision" is
+  corrected. A collision sweep has to check the new names a release adds, as well as the old
+  ones. The ark coordination list gains its 1.7.4 entry.
+
 ## [1.7.3] - 2026-11-12
 
 **Lockfile integrity.** A lock now pins the bytes as well as the version.

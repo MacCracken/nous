@@ -86,7 +86,19 @@ fn _nous_cap_overflow(args, max): Result {
 # Set NOUS_CAPTURE_IDLE_MS = 0 to turn the default off.
 #
 # Ok(Str) all stdout of argv `args` (init..max byte buffer), Ok(0) for none; Err past max or on a deadline cut.
+#
+# agnos (1.7.4): there is no deadline to apply. lib/process_agnos.cyr defines no
+# proc_timeout_ms / proc_set_timeout_ms, on purpose, so that a call fails to compile
+# rather than silently bounding nothing. 1.5.3 to 1.7.3 called them on every target,
+# so the bundle did not link for x86_64-agnos (distlib's verify warned). On agnos a
+# capture is unbounded, as every capture was before 1.5.3.
 fn nous_capture_n(args, init, max): Result {
+    #ifdef CYRIUS_TARGET_AGNOS
+    var at, av = _nous_capture_run(args, init, max);
+    if (is_err_result(at) == 1) { return Err(av); }
+    return Ok(av);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
     var prev = proc_timeout_ms();
     var applied = 0;
     if (prev == 0 && NOUS_CAPTURE_IDLE_MS > 0) {
@@ -97,6 +109,7 @@ fn nous_capture_n(args, init, max): Result {
     if (applied == 1) { proc_set_timeout_ms(prev); }
     if (is_err_result(t) == 1) { return Err(v); }
     return Ok(v);
+    #endif
 }
 
 fn _nous_capture_run(args, init, max): Result {

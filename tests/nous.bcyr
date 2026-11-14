@@ -211,7 +211,7 @@ fn b_range() {
     return 0;
 }
 var bench_manifest = 0;
-fn b_manifest() { manifest_from_json(bench_manifest); return 0; }
+fn b_manifest() { nous_manifest_from_json(bench_manifest); return 0; }
 # 1.7.3: one `apt-cache show --no-all-versions` stanza in the shape Debian 12
 # prints for curl (17 fields), parsed into a ResolvedPkg with its checksum.
 var bench_stanza = 0;

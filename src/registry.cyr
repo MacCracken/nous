@@ -63,7 +63,7 @@ fn json_extract_deps(data): i64 {
     return deps;
 }
 
-# 1.5.3 (decision D7): parsed with bayan's JSON parser (`manifest_from_json`),
+# 1.5.3 (decision D7): parsed with bayan's JSON parser (`nous_manifest_from_json`),
 # by structure. nous's scanners took the first `"name"` anywhere, so
 # `{"author":{"name":"mallory"},"name":"real"}` read as mallory. A string
 # value "dependencies" hijacked the deps scan. Escapes were never decoded. A
@@ -74,7 +74,7 @@ fn parse_manifest_file(file_path): i64 {
     # Whole file or nothing (1.5.3): never a half-read prefix.
     var content = _nous_read_file(file_path, NOUS_FILE_MAX);
     if (content == 0) { return 0; }
-    return manifest_from_json(content);
+    return nous_manifest_from_json(content);
 }
 
 # Read every <base_dir>/installed/<pkg>/manifest.json; a byte-sorted vec of InstalledMPkg.

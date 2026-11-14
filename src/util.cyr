@@ -150,12 +150,26 @@ var NOUS_DIR_DEPTH_MAX = 64;
 # Total size in bytes of the files under `path`.
 fn dir_size_recursive(path): i64 { return _nous_dir_size(path, 0); }
 
+#
+# agnos (1.7.4): its lstat (#102) takes the path's length and fills its own 48-byte
+# record, mode at STAT_MODE (0) and size at STAT_SIZE (16), both u64. 1.5.3 to 1.7.3
+# called the 2-argument Linux form, so the bundle did not compile for x86_64-agnos.
+# The Linux offsets below are x86_64's (roadmap: portability, 2.0.0).
 fn _nous_dir_size(path, depth): i64 {
     var statbuf[144];
-    if (sys_lstat(_nous_cstr(path), &statbuf) < 0) { return 0; }
+    var cpath = _nous_cstr(path);
+    #ifdef CYRIUS_TARGET_AGNOS
+    if (sys_lstat(cpath, strlen(cpath), &statbuf) < 0) { return 0; }
+    var kind = load64(&statbuf + STAT_MODE) & 61440;
+    var size = load64(&statbuf + STAT_SIZE);
+    #endif
+    #ifndef CYRIUS_TARGET_AGNOS
+    if (sys_lstat(cpath, &statbuf) < 0) { return 0; }
     var kind = load32(&statbuf + 24) & 61440;
+    var size = load64(&statbuf + 48);
+    #endif
     if (kind == 40960) { return 0; }                          # S_IFLNK
-    if (kind != 16384) { return load64(&statbuf + 48); }      # not S_IFDIR: its size
+    if (kind != 16384) { return size; }                       # not S_IFDIR: its size
     if (depth >= NOUS_DIR_DEPTH_MAX) { return 0; }
     var entries = dir_list(path);
     var total = 0;

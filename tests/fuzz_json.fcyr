@@ -74,12 +74,12 @@ fn _js_case(k): i64 {
     memcpy(_js_buf, seed, n);
     n = fz_mutate(_js_buf, n, _JS_CAP);
     var s = str_new(fz_exact(fz_arena(), _js_buf, n), n);
-    var m = manifest_from_json(s);
+    var m = nous_manifest_from_json(s);
     if (m != 0) { fz_mix(map_count(mf_deps(m))); }
     var r = resolved_from_json(s);
     if (r != 0) { fz_mix(vec_len(rp_deps(r))); }
     installed_from_json(s);
-    update_from_json(s);
+    nous_update_from_json(s);
     var sr = search_result_from_json(s);
     if (sr != 0) { fz_mix(vec_len(sr_results(sr))); }
     error_kind_from_json(s);
@@ -107,8 +107,8 @@ fn main(): i64 {
     vec_push(_js_seeds, "{\"results\":[{\"name\":\"q\"}],\"sources\":[\"marketplace\"],\"total_matches\":1}");
     vec_push(_js_seeds, "{\"kind\":7,\"message\":\"m\",\"detail\":null}");
     vec_push(_js_seeds, "{\"OnlySource\":\"system\"}");
-    manifest_from_json(str_from(""));
-    manifest_from_json(str_from("{"));
+    nous_manifest_from_json(str_from(""));
+    nous_manifest_from_json(str_from("{"));
     resolved_from_json(str_from("[1,2"));
     json_extract_str(str_from("{\"name\":\"abc\\"), "name");
     return fz_run("json fuzz", 6000, &_js_case);

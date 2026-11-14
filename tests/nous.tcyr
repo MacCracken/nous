@@ -1675,10 +1675,10 @@ fn test_json_roundtrip_all() {
     assert_eq(ip_auto(ipb), 1, "auto_installed roundtrips");
     # AvailUpdate (new from_json), with and without a changelog.
     var u = avail_update_new(str_from("upk"), SOURCE_MARKETPLACE, str_from("1.0"), str_from("1.1"), evil);
-    var ub = update_from_json(update_to_json(u));
+    var ub = nous_update_from_json(update_to_json(u));
     assert(str_eq(load64(ub + 24), str_from("1.1")), "available_version roundtrips");
     assert(str_eq(load64(ub + 32), evil), "changelog roundtrips");
-    var u0 = update_from_json(update_to_json(avail_update_new(j4(
+    var u0 = nous_update_from_json(update_to_json(avail_update_new(j4(
             "z",
             "",
             "",
@@ -1705,7 +1705,7 @@ fn test_json_roundtrip_all() {
     assert(str_eq(ai_desc(agb), evil), "agent description roundtrips");
     var md = map_new();
     map_set(md, "dep\\x", str_from("^1.0"));
-    var mb = manifest_from_json(manifest_to_json(manifest_new(ag, md, str_from("flutter"))));
+    var mb = nous_manifest_from_json(manifest_to_json(manifest_new(ag, md, str_from("flutter"))));
     assert(str_eq(mf_runtime(mb), str_from("flutter")), "runtime roundtrips");
     assert_eq(map_has(mf_deps(mb), "dep\\x"), 1, "a dependency key ending in a backslash roundtrips");
     # Strategy (parsed, not substring-matched).
@@ -1718,7 +1718,7 @@ fn test_json_roundtrip_all() {
 # 1.5.3 (D7): manifest fields are read by structure.
 fn test_manifest_structure() {
     test_group("manifest_structure");
-    var m = manifest_from_json(j4(
+    var m = nous_manifest_from_json(j4(
         "{\"author\":{\"name\":\"mallory\"},\"agent\":{\"name\":\"real\",\"version\":\"1.0\",",
         "\"description\":\"dependencies\"},\"meta\":{\"evil\":\"1.0\"},",
         "\"dependencies\":{\"good\":\"*\"},\"runtime\":\"native\"}",
@@ -1727,7 +1727,7 @@ fn test_manifest_structure() {
     assert(str_eq(ai_name(mf_agent(m)), str_from("real")), "a nested \"name\" elsewhere is ignored");
     assert_eq(map_has(mf_deps(m), "evil"), 0, "a string \"dependencies\" cannot hijack the deps");
     assert_eq(map_has(mf_deps(m), "good"), 1, "the real dependency is kept");
-    assert_eq(manifest_from_json(str_from("not json {")), 0, "not JSON is not a manifest");
+    assert_eq(nous_manifest_from_json(str_from("not json {")), 0, "not JSON is not a manifest");
     # The kept public helper no longer reads past a trailing backslash.
     var t = json_extract_str(str_from("{\"name\":\"abc\\"), "name");
     assert(str_len(t) <= 4, "json_extract_str stays inside its input");

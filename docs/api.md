@@ -600,11 +600,11 @@ decoded on input, by the stdlib escaper and bayan's JSON parser.
 ```cyrius
 var json = resolved_to_json(pkg);          var back = resolved_from_json(json);   # 1.7.3: + "checksum" (or null)
 var json2 = installed_to_json(ipkg);       var back2 = installed_from_json(json2);
-var json3 = update_to_json(upd);         var back3 = update_from_json(json3);
+var json3 = update_to_json(upd);         var back3 = nous_update_from_json(json3);
 var json4 = strategy_to_json(strat);       var back4 = strategy_from_json(json4);
 var json5 = search_result_to_json(sr);   var back5 = search_result_from_json(json5);
 var json6 = error_kind_to_json(err);       var back6 = error_kind_from_json(json6);
-var json7 = manifest_to_json(m);         var back7 = manifest_from_json(json7);
+var json7 = manifest_to_json(m);         var back7 = nous_manifest_from_json(json7);
 var json8 = agent_info_to_json(a);       var back8 = agent_info_from_json(json8);
 
 # PackageSource

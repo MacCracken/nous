@@ -112,11 +112,15 @@ with a committed lock (1.7.x).
 
 ## 2.0.0 backlog (breaking)
 
-- [ ] Remove the nine deprecated bare names: `which_exists`, `cmd_run` (1.5.2);
+- [ ] Remove the deprecated bare names: `which_exists`, `cmd_run` (1.5.2);
       `to_cstr`, `join_path`, `registry_get`, `registry_list`, `search_result_new`,
-      `recipe_parse_file` (1.5.3).
+      `recipe_parse_file` (1.5.3); `manifest_from_json`, `update_from_json`
+      (1.7.4, and with them the `NOUS_NO_BARE_JSON` switch).
 - [ ] Decide on prefixing the rest of the public API (`nous_*`), as mela 0.9.3
-      did. The 1.5.3 audit found no other live or latent collision.
+      did. The 1.5.3 audit reported no other collision, but it missed the two
+      JSON decoders that 1.5.3 itself added, which collide with mela (fixed in
+      1.7.4). A sweep has to check the new names a release adds, as well as the
+      old ones.
 - [ ] Portability: the `struct stat` offsets in `src/util.cyr` are x86_64-only.
 - [ ] A plugin system for additional package sources (likely reshapes the
       resolver API).
@@ -155,6 +159,13 @@ with a committed lock (1.7.x).
   It calls `nous_lock_from_plan` + `nous_lock_to_str` to write a lock, and
   `nous_lock_parse` + `nous_resolve_locked` for a locked install. Two new
   error kinds, 9 and 10, need handling if ark matches kinds exhaustively.
+- **ark → nous 1.7.4:** define `NOUS_NO_BARE_JSON` in both `[build] defines`
+  and `[test] defines`. ark compiles mela beside nous, and without the define
+  cyrius 6.7.18 refuses the build: `manifest_from_json` / `update_from_json`
+  are defined by both with different parameter types. ark calls neither nous
+  name. Done in ark 1.5.1. 1.7.4 also compiles for x86_64-agnos again (the
+  idle deadline and the no-follow size walk, both 1.5.3), which ark's agnos
+  cross-build needs.
 - **ark → nous 1.7.3:** nothing breaks. 1.7.2 locks keep passing.
   - **Locks gain checksums.** A regenerated lock has a `checksum` line for each
     apt package and each recipe with a source hash, and locked mode then
